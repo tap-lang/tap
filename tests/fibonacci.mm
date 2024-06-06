@@ -1,0 +1,17 @@
+
+fn main() {
+    let n = 10
+    print("斐波那契数列递归实现：\n")
+
+    for(let i = 0; i < 10; i++) {
+        print("fib(%d) = %d\n", i, fibonacci_recursive(i))
+    }
+}
+
+// 斐波那契数列的递归实现
+fn fibonacci_recursive(n: u32): u32 {
+    if(n == 0 || n == 1){
+        return n
+    }
+    return fibonacci_recursive(n - 1) + fibonacci_recursive(n - 2)
+}
