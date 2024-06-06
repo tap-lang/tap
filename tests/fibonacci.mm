@@ -3,7 +3,7 @@ fn main() {
     let n = 10
     print("斐波那契数列递归实现：\n")
 
-    for(let i = 0; i < 10; i++) {
+    for(let i = 0; i <= n; i++) {
         print("fib(%d) = %d\n", i, fibonacci_recursive(i))
     }
 }
