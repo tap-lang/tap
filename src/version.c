@@ -44,3 +44,4 @@ const char *get_version_from_file()
 
     return version;
 }
+
