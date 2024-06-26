@@ -1,7 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h> // 为了使用 malloc 和 free
 
+#include "version.h"
+
 const char *get_version()
+{
+    return VERSION;
+}
+
+const char *get_version_from_file()
 {
     FILE *fp;
     char *version = NULL;

@@ -8,6 +8,8 @@ int main(int argc, char *argv[])
     {
         const char *version = get_version();
         printf("4yue version %s\n", version);
+        printf("Usage:\n\t -v   show version\n");
+        return 0;
     }
     // printf("Hello 4yue\n");
     return 0;
