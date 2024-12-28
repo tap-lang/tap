@@ -3,18 +3,18 @@
 
 #include "version.h"
 
-const char *get_version()
+const char *get_version(void)
 {
     return VERSION;
 }
 
-const char *get_version_from_file()
+const char *get_version_from_file(const char *file)
 {
     FILE *fp;
     char *version = NULL;
     long length;
 
-    fp = fopen("./VERSION", "r");
+    fp = fopen(file, "r");
     if (fp == NULL)
     {
         perror("Error to get version");
