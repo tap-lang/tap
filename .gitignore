@@ -2,3 +2,5 @@ build/
 mylangc
 output.ll
 hello
+
+.vscode/

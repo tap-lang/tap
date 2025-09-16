@@ -1,6 +1,5 @@
 
 // 主函数
-fn main(){
+fn main() {
     print("Hello world ~ 😀\n"); // 输出
-    return 0;  // 返回值
 }
