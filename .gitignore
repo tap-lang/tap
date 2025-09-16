@@ -1,0 +1,4 @@
+build/
+mylangc
+output.ll
+hello
