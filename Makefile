@@ -1,8 +1,8 @@
-# Makefile for My Lang compiler
+# Makefile for 4yue Lang compiler
 
 # 编译器和编译选项
 CC = clang
-CXX = clang++
+# CXX = clang++
 CFLAGS = -Wall -Wextra -g -I/opt/homebrew/opt/llvm/include
 CXXFLAGS = $(CFLAGS)
 LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib
@@ -21,7 +21,7 @@ SOURCES = $(C_SOURCES) $(CPP_SOURCES)
 OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES)) $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(CPP_SOURCES))
 
 # 目标可执行文件
-TARGET = mylangc
+TARGET = 4yue
 
 # 默认目标
 all: $(TARGET)
@@ -48,7 +48,8 @@ clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
 
 # 运行测试
-run: $(TARGET)
+test: $(TARGET)
 	./$(TARGET) tests/hello.ta
+	./output
 
 .PHONY: all clean run

@@ -1,6 +1,7 @@
 build/
-mylangc
+4yue
 output.ll
+output
 hello
 
 .vscode/

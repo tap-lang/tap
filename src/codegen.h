@@ -3,20 +3,13 @@
 
 #include "ast.h"
 
-// 确保正确包含LLVM头文件
-#ifdef __APPLE__
-    #include "/opt/homebrew/opt/llvm/include/llvm-c/Core.h"
-    #include "/opt/homebrew/opt/llvm/include/llvm-c/ExecutionEngine.h"
-    #include "/opt/homebrew/opt/llvm/include/llvm-c/Target.h"
-    #include "/opt/homebrew/opt/llvm/include/llvm-c/Analysis.h"
-    #include "/opt/homebrew/opt/llvm/include/llvm-c/BitWriter.h"
-#else
-    #include <llvm-c/Core.h>
-    #include <llvm-c/ExecutionEngine.h>
-    #include <llvm-c/Target.h>
-    #include <llvm-c/Analysis.h>
-    #include <llvm-c/BitWriter.h>
-#endif
+
+#include <llvm-c/Core.h>
+#include <llvm-c/ExecutionEngine.h>
+#include <llvm-c/Target.h>
+#include <llvm-c/Analysis.h>
+#include <llvm-c/BitWriter.h>
+
 
 // 代码生成器上下文
 typedef struct {

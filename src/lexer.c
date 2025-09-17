@@ -1,12 +1,13 @@
 #include "lexer.h"
 
 // 创建词法分析器
-Lexer *create_lexer(const char *source) {
+Lexer *create_lexer(const char *filename, const char *source) {
     Lexer *lexer = (Lexer *)malloc(sizeof(Lexer));
     if (!lexer) {
         fprintf(stderr, "内存分配失败\n");
         exit(1);
     }
+    lexer->filename = filename;
     lexer->source = source;
     lexer->current = source;
     lexer->line = 1;
@@ -395,7 +396,9 @@ Token *get_next_token(Lexer *lexer) {
     }
     
     // 未识别的字符
-    fprintf(stderr, "错误：未识别的字符 '%c' (行 %d, 列 %d)\n", c, lexer->line, lexer->column - 1);
+    fprintf(stderr, "错误：未识别的字符 '%c' (文件 %s, 行 %d, 列 %d)\n", c, 
+        lexer->filename, lexer->line, lexer->column - 1
+    );
     exit(1);
     return NULL; // 不会执行到这里
 }

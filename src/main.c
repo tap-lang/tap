@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {
     }
 
     // 1. 词法分析
-    Lexer *lexer = create_lexer(source_code);
+    Lexer *lexer = create_lexer(input_file, source_code);
     if (!lexer) {
         free(source_code);
         return 1;
@@ -165,7 +165,7 @@ int main(int argc, char *argv[]) {
         }
     } else {
         // 默认行为：生成可执行文件
-        char *exe_file = output_file ? output_file : "hello";
+        char *exe_file = output_file ? output_file : "output";
         
         printf("生成可执行文件...\n");
         

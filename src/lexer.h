@@ -65,6 +65,7 @@ typedef struct {
 
 // 词法分析器结构体
 typedef struct {
+    const char *filename;
     const char *source;
     const char *current;
     int line;
@@ -72,7 +73,7 @@ typedef struct {
 } Lexer;
 
 // 函数声明
-Lexer *create_lexer(const char *source);
+Lexer *create_lexer(const char *filename, const char *source);
 Token *get_next_token(Lexer *lexer);
 void free_token(Token *token);
 void free_lexer(Lexer *lexer);
