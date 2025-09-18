@@ -46,6 +46,7 @@ $(TARGET): $(OBJECTS)
 # 清理生成的文件
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
+	rm -rf output output.ll
 
 # 运行测试
 test: $(TARGET)

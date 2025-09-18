@@ -24,7 +24,8 @@ void free_parser(Parser *parser) {
 
 // 解析错误处理
 void parser_error(Parser *parser, const char *message) {
-    fprintf(stderr, "解析错误 (行 %d, 列 %d): %s\n", 
+    fprintf(stderr, "解析错误 (文件 %s, 行 %d, 列 %d): %s\n", 
+            parser->lexer->filename,
             parser->current_token->line, 
             parser->current_token->column, 
             message);

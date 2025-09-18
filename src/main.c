@@ -37,7 +37,7 @@ static char *read_file(const char *filename) {
 
 // 打印用法
 static void print_usage() {
-    printf("用法: mylangc <源文件>\n");
+    printf("用法: 4yue <源文件>\n");
     printf("选项:\n");
     printf("  -h, --help    显示此帮助信息\n");
     printf("  -o <文件>     指定输出文件\n");
@@ -117,7 +117,7 @@ int main(int argc, char *argv[]) {
     ProgramNode *program = parse_program(parser);
 
     // 3. 代码生成
-    CodeGenContext *codegen_context = create_codegen_context("my_lang_module");
+    CodeGenContext *codegen_context = create_codegen_context("4yue_lang_module");
     if (!codegen_context) {
         free_ast((ASTNode *)program);
         free_parser(parser);
