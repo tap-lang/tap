@@ -1,0 +1,4 @@
+CompileFlags: # Tweak the parse settings, example directory given to show format
+  Add:
+    # - "-I=[folder]"         # old answer
+    - "-I/opt/homebrew/opt/llvm/include"  
