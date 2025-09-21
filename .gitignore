@@ -1,7 +1,11 @@
+.vscode/
+
 build/
 4yue
 output.ll
 output
 hello
+a.out
 
-.vscode/
+*.dSYM/
+

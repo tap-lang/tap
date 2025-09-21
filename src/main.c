@@ -93,6 +93,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+
     // 读取源文件
     char *source_code = read_file(input_file);
     if (!source_code) {
@@ -117,7 +118,7 @@ int main(int argc, char *argv[]) {
     ProgramNode *program = parse_program(parser);
 
     // 3. 代码生成
-    CodeGenContext *codegen_context = create_codegen_context("4yue_lang_module");
+    CodeGenContext *codegen_context = create_codegen_context(input_file);
     if (!codegen_context) {
         free_ast((ASTNode *)program);
         free_parser(parser);
@@ -136,7 +137,7 @@ int main(int argc, char *argv[]) {
         } else {
             printf("IR代码已写入到 %s\n", ir_file);
         }
-    } else if (emit_obj) {
+    } else if (emit_obj) {  // todo 
         char *obj_file = output_file ? output_file : "output.o";
         if (write_object_to_file(codegen_context, obj_file) != 0) {
             fprintf(stderr, "写入目标文件失败\n");
