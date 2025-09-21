@@ -14,7 +14,7 @@ int main() {
     
     // 创建上下文和模块
     LLVMContextRef context = LLVMContextCreate();
-    LLVMModuleRef module = LLVMModuleCreateWithNameInContext("my_module", context);
+    LLVMModuleRef module = LLVMModuleCreateWithNameInContext("hello_module", context);
     
     // 创建函数类型: i32 () - 使用带上下文的类型创建函数
     LLVMTypeRef return_type = LLVMInt32TypeInContext(context);
@@ -84,8 +84,8 @@ int main() {
 /**
 # 编译命令
 # 使用系统LLVM
-clang -o build/ir_generator tests/ir_generator.c `llvm-config --cflags --ldflags --libs core analysis executionengine target`
+clang -o build/ir_hello tests/llvm_ir_hello.c `llvm-config --cflags --ldflags --libs core analysis executionengine target`
 
 # 或者使用brew安装的LLVM（macOS）
-clang -o ir_generator tests/ir_generator.c -I/opt/homebrew/opt/llvm/include -L/opt/homebrew/opt/llvm/lib -lLLVM
+clang -o build/ir_hello tests/llvm_ir_hello.c -I/opt/homebrew/opt/llvm/include -L/opt/homebrew/opt/llvm/lib -lLLVM
 */
