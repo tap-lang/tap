@@ -1,4 +1,4 @@
-# My Lang
+# 4yue Lang
 一个使用llvm后端的编程语言
 
 ## 依赖
