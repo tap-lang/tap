@@ -1,10 +1,13 @@
-// aaa
-// bbb
-// ccc
-fn main(): i32 {
-    let a = 1;
-    let b = -2;
-    let c = a + b;
-    print(c);
+
+fn main() {
+    //let a = 1;
+    //let b = -2;
+    //let c = a + b;
+    //print(c);
+    let c = 1;
     return c;  // 返回值
+}
+
+fn test(){
+    return 0;
 }

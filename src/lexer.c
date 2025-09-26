@@ -116,6 +116,9 @@ static Token *create_token(Lexer *lexer, enum TokenType type, const char *start,
 // 检查是否是关键字
 static enum TokenType check_keyword(const char *text, int length) {
     if (length == 2 && strncmp(text, "fn", 2) == 0) return TOKEN_FN;
+    if (length == 3 && strncmp(text, "let", 3) == 0) return TOKEN_LET;
+    if (length == 2 && strncmp(text, "if", 2) == 0) return TOKEN_IF;
+    if (length == 4 && strncmp(text, "else", 4) == 0) return TOKEN_ELSE;
     if (length == 6 && strncmp(text, "return", 6) == 0) return TOKEN_RETURN;
     if (length == 5 && strncmp(text, "print", 5) == 0) return TOKEN_PRINT;
     if (length == 4 && strncmp(text, "true", 4) == 0) return TOKEN_BOOL;
@@ -393,6 +396,8 @@ Token *get_next_token(Lexer *lexer) {
                 return create_token(lexer, TOKEN_OR, lexer->current - 2, lexer->current);
             }
             break;
+        case ':':
+            return create_token(lexer, TOKEN_COLON, lexer->current - 1, lexer->current);
     }
     
     // 未识别的字符
