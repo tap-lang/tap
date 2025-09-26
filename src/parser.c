@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include "parser.h"
 
 // 创建解析器
@@ -22,15 +24,40 @@ void free_parser(Parser *parser) {
     }
 }
 
+// 打印代码当前行以及上下各context_lines行
+void print_code_line(const char *source_code, int line, int context_lines) {
+    int start_line = line - context_lines;
+    int end_line = line + context_lines;
+    int max_line_len = (int)log10(end_line) + 1;
+    char *lines = strtok((char *)source_code, "\n");
+    int current_line = 1;
+    while (lines != NULL) {
+        if (current_line >= start_line && current_line <= end_line) {
+            if (current_line == line) {
+                printf("%*d  %s    <-- \n", max_line_len, current_line, lines);
+            } else {
+                printf("%*d  %s\n", max_line_len, current_line, lines);
+            }
+        }
+        lines = strtok(NULL, "\n");
+        current_line++;
+    }
+}
+
 // 解析错误处理
 void parser_error(Parser *parser, const char *message) {
-    fprintf(stderr, "解析错误 (文件 %s, 行 %d, 列 %d): %s\n", 
+    fprintf(stderr, "Parse error: (file %s, line %d, column %d): %s\n", 
             parser->lexer->filename,
             parser->current_token->line, 
             parser->current_token->column, 
             message);
+    printf("Current token: %s\n", parser->current_token->lexeme);
+    // 打印当前代码行的上下3行
+    print_code_line(parser->lexer->source, parser->current_token->line, 3);
+  
     exit(1);
 }
+
 
 // 消费当前标记并获取下一个
 static void consume(Parser *parser, enum TokenType expected_type) {

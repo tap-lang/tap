@@ -42,6 +42,7 @@ enum TokenType {
     TOKEN_RBRACE,      // }
     TOKEN_SEMICOLON,   // ;
     TOKEN_COMMA,       // ,
+    TOKEN_COLON,       // :
     
     // 特殊标记
     TOKEN_EOF          // 文件结束

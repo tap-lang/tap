@@ -1,5 +1,7 @@
-
-fn main() {
+// aaa
+// bbb
+// ccc
+fn main(): i32 {
     let a = 1;
     let b = -2;
     let c = a + b;

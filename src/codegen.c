@@ -121,6 +121,9 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     ASTNode *function_node = program->functions;
     while (function_node) {
         if (function_node->type == NODE_FUNCTION) {
+             // 打印每个函数的名称
+            printf("生成函数: %s\n", ((FunctionNode *)function_node)->name);
+            
             generate_function(context, (FunctionNode *)function_node);
         }
         function_node = function_node->next;
