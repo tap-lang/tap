@@ -7,39 +7,39 @@
 
 // AST节点类型
 enum NodeType {
-    NODE_PROGRAM,
-    NODE_FUNCTION,
-    NODE_STATEMENT,
-    NODE_EXPRESSION,
-    NODE_IDENTIFIER,
-    NODE_LITERAL,
-    NODE_RETURN,
-    NODE_PRINT,
-    NODE_BINARY_OP
+    NODE_PROGRAM,                   // 程序节点
+    NODE_FUNCTION,                  // 函数节点
+    NODE_STATEMENT,                 // 语句节点
+    NODE_EXPRESSION,                // 表达式节点
+    NODE_IDENTIFIER,                // 标识符节点
+    NODE_LITERAL,                   // 字面量节点
+    NODE_RETURN,                    // 返回语句节点
+    NODE_PRINT,                     // 打印语句节点
+    NODE_BINARY_OP                  // 二元操作符节点
 };
 
 // 字面量类型
 enum LiteralType {
-    LITERAL_INT,
-    LITERAL_STRING,
-    LITERAL_FLOAT,
-    LITERAL_BOOL
+    LITERAL_INT,                    // 整数
+    LITERAL_STRING,                 // 字符串
+    LITERAL_FLOAT,                  // 浮点数
+    LITERAL_BOOL                    // 布尔值
 };
 
 // 二元操作符类型
 enum BinaryOpType {
-    OP_ADD,
-    OP_SUBTRACT,
-    OP_MULTIPLY,
-    OP_DIVIDE,
-    OP_EQUAL,
-    OP_NOT_EQUAL,
-    OP_LESS_THAN,
-    OP_GREATER_THAN,
-    OP_LESS_THAN_OR_EQUAL,
-    OP_GREATER_THAN_OR_EQUAL,
-    OP_AND,
-    OP_OR
+    OP_ADD,                         // 加号
+    OP_SUBTRACT,                    // 减号
+    OP_MULTIPLY,                    // 乘号
+    OP_DIVIDE,                      // 除号
+    OP_EQUAL,                       // 等于号
+    OP_NOT_EQUAL,                   // 不等于号
+    OP_LESS_THAN,                   // 小于号
+    OP_GREATER_THAN,                // 大于号
+    OP_LESS_THAN_OR_EQUAL,          // 小于等于号
+    OP_GREATER_THAN_OR_EQUAL,       // 大于等于号
+    OP_AND,                         // 与运算符
+    OP_OR                           // 或运算符
 };
 
 // 基础AST节点结构
