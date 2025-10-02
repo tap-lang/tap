@@ -72,6 +72,11 @@ static void consume(Parser *parser, enum TokenType expected_type) {
     }
 }
 
+// 前置声明
+static ASTNode *parse_expression(Parser *parser);
+static ASTNode *parse_term(Parser *parser);
+static ASTNode *parse_factor(Parser *parser);
+
 // 解析函数定义
 static FunctionNode *parse_function(Parser *parser) {
     // 解析 fn 关键字
@@ -119,21 +124,55 @@ static FunctionNode *parse_function(Parser *parser) {
             // 创建打印节点并添加到函数体
             PrintNode *print_node = create_print((ASTNode *)string_literal);
             add_statement(function, (ASTNode *)print_node);
+        } else if (parser->current_token->type == TOKEN_LET) {
+            // 解析let语句
+            consume(parser, TOKEN_LET);
+            
+            // 解析变量名
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "期望变量名");
+            }
+            char *var_name = strdup(parser->current_token->lexeme);
+            consume(parser, TOKEN_IDENTIFIER);
+            
+            // 解析等号
+            consume(parser, TOKEN_ASSIGN);
+            
+            // 解析表达式作为变量的初始值
+            ASTNode *expression = parse_expression(parser);
+            
+            consume(parser, TOKEN_SEMICOLON);
+            
+            // 创建变量声明节点并添加到函数体
+            VarDeclNode *var_decl = create_var_decl(var_name, expression);
+            free(var_name);
+            add_statement(function, (ASTNode *)var_decl);
         } else if (parser->current_token->type == TOKEN_RETURN) {
             // 解析返回语句
             consume(parser, TOKEN_RETURN);
             
-            // 解析返回表达式（暂时只支持整数）
-            if (parser->current_token->type != TOKEN_INTEGER) {
-                parser_error(parser, "期望整数字面量作为return语句的值");
+            // 解析返回表达式（支持整数和变量）
+            ASTNode *expression = NULL;
+            if (parser->current_token->type == TOKEN_INTEGER) {
+                // 整数字面量
+                LiteralNode *int_literal = create_int_literal(parser->current_token->value.int_value);
+                consume(parser, TOKEN_INTEGER);
+                expression = (ASTNode *)int_literal;
+            } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
+                // 标识符（变量）
+                char *var_name = strdup(parser->current_token->lexeme);
+                consume(parser, TOKEN_IDENTIFIER);
+                IdentifierNode *identifier = create_identifier(var_name);
+                free(var_name);
+                expression = (ASTNode *)identifier;
+            } else {
+                parser_error(parser, "期望整数字面量或标识符作为return语句的值");
             }
-            LiteralNode *int_literal = create_int_literal(parser->current_token->value.int_value);
-            consume(parser, TOKEN_INTEGER);
             
             consume(parser, TOKEN_SEMICOLON);
             
             // 创建返回节点并添加到函数体
-            ReturnNode *return_node = create_return((ASTNode *)int_literal);
+            ReturnNode *return_node = create_return(expression);
             add_statement(function, (ASTNode *)return_node);
         } else {
             parser_error(parser, "期望语句");
@@ -143,6 +182,78 @@ static FunctionNode *parse_function(Parser *parser) {
     consume(parser, TOKEN_RBRACE);
     
     return function;
+}
+
+// 解析因子（标识符或整数）
+static ASTNode *parse_factor(Parser *parser) {
+    Token *token = parser->current_token;
+    
+    if (token->type == TOKEN_INTEGER) {
+        // 整数字面量
+        LiteralNode *int_literal = create_int_literal(token->value.int_value);
+        consume(parser, TOKEN_INTEGER);
+        return (ASTNode *)int_literal;
+    } else if (token->type == TOKEN_IDENTIFIER) {
+        // 标识符（变量）
+        char *var_name = strdup(token->lexeme);
+        consume(parser, TOKEN_IDENTIFIER);
+        IdentifierNode *identifier = create_identifier(var_name);
+        free(var_name);
+        return (ASTNode *)identifier;
+    } else if (token->type == TOKEN_LPAREN) {
+        // 括号表达式
+        consume(parser, TOKEN_LPAREN);
+        ASTNode *expression = parse_expression(parser);
+        consume(parser, TOKEN_RPAREN);
+        return expression;
+    } else if (token->type == TOKEN_MINUS) {
+        // 负号表达式
+        consume(parser, TOKEN_MINUS);
+        ASTNode *factor = parse_factor(parser);
+        // 创建一个表示 -factor 的表达式
+        LiteralNode *zero = create_int_literal(0);
+        BinaryOpNode *binary_op = create_binary_op(OP_SUBTRACT, (ASTNode *)zero, factor);
+        return (ASTNode *)binary_op;
+    }
+    
+    parser_error(parser, "期望因子（整数、标识符、括号表达式或负号表达式）");
+    return NULL; // 不会执行到这里
+}
+
+// 解析项（乘除）
+static ASTNode *parse_term(Parser *parser) {
+    ASTNode *left = parse_factor(parser);
+    
+    while (parser->current_token->type == TOKEN_MULTIPLY || parser->current_token->type == TOKEN_DIVIDE) {
+        Token *token = parser->current_token;
+        if (token->type == TOKEN_MULTIPLY) {
+            consume(parser, TOKEN_MULTIPLY);
+            left = (ASTNode *)create_binary_op(OP_MULTIPLY, left, parse_factor(parser));
+        } else if (token->type == TOKEN_DIVIDE) {
+            consume(parser, TOKEN_DIVIDE);
+            left = (ASTNode *)create_binary_op(OP_DIVIDE, left, parse_factor(parser));
+        }
+    }
+    
+    return left;
+}
+
+// 解析表达式（加减）
+static ASTNode *parse_expression(Parser *parser) {
+    ASTNode *left = parse_term(parser);
+    
+    while (parser->current_token->type == TOKEN_PLUS || parser->current_token->type == TOKEN_MINUS) {
+        Token *token = parser->current_token;
+        if (token->type == TOKEN_PLUS) {
+            consume(parser, TOKEN_PLUS);
+            left = (ASTNode *)create_binary_op(OP_ADD, left, parse_term(parser));
+        } else if (token->type == TOKEN_MINUS) {
+            consume(parser, TOKEN_MINUS);
+            left = (ASTNode *)create_binary_op(OP_SUBTRACT, left, parse_term(parser));
+        }
+    }
+    
+    return left;
 }
 
 // 解析程序

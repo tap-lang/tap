@@ -3,6 +3,8 @@
 
 #include "ast.h"
 
+// Forward declaration of Symbol struct
+typedef struct Symbol Symbol;
 
 #include <llvm-c/Core.h>
 #include <llvm-c/ExecutionEngine.h>
@@ -14,13 +16,11 @@
 
 // 代码生成器上下文
 typedef struct {
-    LLVMModuleRef module;
-    LLVMBuilderRef builder;
-    LLVMExecutionEngineRef engine;
-    LLVMContextRef context;
-
-    // 存储函数和变量的映射表
-    // 注意：在实际实现中可能需要更复杂的数据结构
+    LLVMModuleRef module;           // LLVM模块，用于存储生成的代码
+    LLVMBuilderRef builder;         // LLVM构建器，用于生成LLVM IR
+    LLVMExecutionEngineRef engine;  // LLVM执行引擎，用于执行生成的代码
+    LLVMContextRef context;         // LLVM上下文，用于存储LLVM值
+    Symbol *symbols;                // 符号表，用于存储变量和它们对应的LLVM值
 } CodeGenContext;
 
 // 函数声明

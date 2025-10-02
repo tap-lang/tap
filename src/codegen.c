@@ -1,5 +1,12 @@
 #include "codegen.h"
 
+// 符号表条目
+typedef struct Symbol {
+    char *name;
+    LLVMValueRef value;
+    struct Symbol *next;
+} Symbol;
+
 // 创建代码生成器上下文
 CodeGenContext *create_codegen_context(const char *module_name) {
     CodeGenContext *context = (CodeGenContext *)malloc(sizeof(CodeGenContext));
@@ -18,8 +25,97 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     context->module = LLVMModuleCreateWithNameInContext(module_name, context->context);
     context->builder = LLVMCreateBuilderInContext(context->context);
     context->engine = NULL;
+    context->symbols = NULL; // 初始化符号表为空
 
     return context;
+}
+
+// 在符号表中查找变量
+static LLVMValueRef find_symbol(CodeGenContext *context, const char *name) {
+    Symbol *current = context->symbols;
+    while (current) {
+        if (strcmp(current->name, name) == 0) {
+            return current->value;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
+// 在符号表中插入变量
+static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRef value) {
+    Symbol *symbol = (Symbol *)malloc(sizeof(Symbol));
+    if (!symbol) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    symbol->name = strdup(name);
+    symbol->value = value;
+    symbol->next = context->symbols;
+    context->symbols = symbol;
+}
+
+// 释放符号表
+static void free_symbols(Symbol *symbols) {
+    while (symbols) {
+        Symbol *next = symbols->next;
+        free(symbols->name);
+        free(symbols);
+        symbols = next;
+    }
+}
+
+// 生成表达式代码
+static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression) {
+    if (!expression) return NULL;
+    
+    switch (expression->type) {
+        case NODE_LITERAL: {
+            LiteralNode *literal = (LiteralNode *)expression;
+            if (literal->literal_type == LITERAL_INT) {
+                return LLVMConstInt(LLVMInt32TypeInContext(context->context), literal->value.int_value, 0);
+            }
+            break;
+        }
+        case NODE_IDENTIFIER: {
+            IdentifierNode *identifier = (IdentifierNode *)expression;
+            LLVMValueRef var = find_symbol(context, identifier->name);
+            if (var) {
+                return LLVMBuildLoad2(context->builder, LLVMInt32TypeInContext(context->context), var, "loaded_var");
+            } else {
+                fprintf(stderr, "错误：未定义的变量 '%s'\n", identifier->name);
+                exit(1);
+            }
+            break;
+        }
+        case NODE_BINARY_OP: {
+            BinaryOpNode *binary_op = (BinaryOpNode *)expression;
+            LLVMValueRef left = generate_expression(context, binary_op->left);
+            LLVMValueRef right = generate_expression(context, binary_op->right);
+            
+            if (!left || !right) return NULL;
+            
+            switch (binary_op->op_type) {
+                case OP_ADD:
+                    return LLVMBuildAdd(context->builder, left, right, "add_result");
+                case OP_SUBTRACT:
+                    return LLVMBuildSub(context->builder, left, right, "sub_result");
+                case OP_MULTIPLY:
+                    return LLVMBuildMul(context->builder, left, right, "mul_result");
+                case OP_DIVIDE:
+                    return LLVMBuildSDiv(context->builder, left, right, "div_result");
+                default:
+                    fprintf(stderr, "错误：不支持的二元操作符\n");
+                    exit(1);
+            }
+            break;
+        }
+        default:
+            fprintf(stderr, "错误：不支持的表达式类型\n");
+            exit(1);
+    }
+    
+    return NULL;
 }
 
 // 释放代码生成器上下文
@@ -37,6 +133,7 @@ void free_codegen_context(CodeGenContext *context) {
             LLVMDisposeModule(context->module);
             context->module = NULL;
         }
+        free_symbols(context->symbols);
         free(context);
     }
 }
@@ -93,13 +190,27 @@ static void generate_function(CodeGenContext *context, FunctionNode *function) {
                 }
                 break;
             }
+            case NODE_VAR_DECL: {
+                VarDeclNode *var_decl = (VarDeclNode *)statement;
+                // 创建整型变量 - 使用上下文
+                LLVMTypeRef int_type = LLVMInt32TypeInContext(context->context);
+                // 分配变量内存
+                LLVMValueRef alloca = LLVMBuildAlloca(context->builder, int_type, var_decl->name);
+                // 将变量添加到符号表
+                insert_symbol(context, var_decl->name, alloca);
+                // 生成表达式代码并存储结果
+                if (var_decl->expression) {
+                    LLVMValueRef expr_value = generate_expression(context, var_decl->expression);
+                    LLVMBuildStore(context->builder, expr_value, alloca);
+                }
+                break;
+            }
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
-                if (return_node->expression && return_node->expression->type == NODE_LITERAL) {
-                    LiteralNode *literal = (LiteralNode *)return_node->expression;
-                    if (literal->literal_type == LITERAL_INT) {
-                        // 返回整数值 - 使用上下文
-                        LLVMBuildRet(context->builder, LLVMConstInt(LLVMInt32TypeInContext(context->context), literal->value.int_value, 0));
+                if (return_node->expression) {
+                    LLVMValueRef expr_value = generate_expression(context, return_node->expression);
+                    if (expr_value) {
+                        LLVMBuildRet(context->builder, expr_value);
                     }
                 }
                 break;

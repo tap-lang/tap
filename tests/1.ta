@@ -1,11 +1,12 @@
 
 fn main() {
-    //let a = 1;
-    //let b = -2;
-    //let c = a + b;
-    //print(c);
-    //let c = 1;
-    return 1;  // 返回值
+    let a = 5;
+    let b = -2;
+    let c = a + b;
+    // print(c);
+    // let c = 1;
+    // return 1;  // 返回值
+    return c;
 }
 
 fn test(){

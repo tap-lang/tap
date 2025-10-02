@@ -138,6 +138,20 @@ BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode
     return binary_op;
 }
 
+// 创建变量声明节点
+VarDeclNode *create_var_decl(char *name, ASTNode *expression) {
+    VarDeclNode *var_decl = (VarDeclNode *)malloc(sizeof(VarDeclNode));
+    if (!var_decl) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    var_decl->base.type = NODE_VAR_DECL;
+    var_decl->base.next = NULL;
+    var_decl->name = strdup(name);
+    var_decl->expression = expression;
+    return var_decl;
+}
+
 // 添加函数到程序
 void add_function(ProgramNode *program, FunctionNode *function) {
     if (!program->functions) {                  // 如果程序中没有函数，直接添加
@@ -224,6 +238,12 @@ void free_ast(ASTNode *node) {
             BinaryOpNode *binary_op = (BinaryOpNode *)node;
             free_ast(binary_op->left);
             free_ast(binary_op->right);
+            break;
+        }
+        case NODE_VAR_DECL: {
+            VarDeclNode *var_decl = (VarDeclNode *)node;
+            free(var_decl->name);
+            free_ast(var_decl->expression);
             break;
         }
         default:
