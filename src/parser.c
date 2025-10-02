@@ -111,18 +111,14 @@ static FunctionNode *parse_function(Parser *parser) {
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);
             
-            // 解析打印参数（暂时只支持字符串字面量）
-            if (parser->current_token->type != TOKEN_STRING) {
-                parser_error(parser, "期望字符串字面量作为print函数参数");
-            }
-            LiteralNode *string_literal = create_string_literal(parser->current_token->value.string_value);
-            consume(parser, TOKEN_STRING);
+            // 解析打印参数（支持表达式）
+            ASTNode *expression = parse_expression(parser);
             
             consume(parser, TOKEN_RPAREN);
             consume(parser, TOKEN_SEMICOLON);
             
             // 创建打印节点并添加到函数体
-            PrintNode *print_node = create_print((ASTNode *)string_literal);
+            PrintNode *print_node = create_print(expression);
             add_statement(function, (ASTNode *)print_node);
         } else if (parser->current_token->type == TOKEN_LET) {
             // 解析let语句
@@ -193,6 +189,11 @@ static ASTNode *parse_factor(Parser *parser) {
         LiteralNode *int_literal = create_int_literal(token->value.int_value);
         consume(parser, TOKEN_INTEGER);
         return (ASTNode *)int_literal;
+    } else if (token->type == TOKEN_STRING) {
+        // 字符串字面量
+        LiteralNode *string_literal = create_string_literal(token->value.string_value);
+        consume(parser, TOKEN_STRING);
+        return (ASTNode *)string_literal;
     } else if (token->type == TOKEN_IDENTIFIER) {
         // 标识符（变量）
         char *var_name = strdup(token->lexeme);
@@ -216,7 +217,7 @@ static ASTNode *parse_factor(Parser *parser) {
         return (ASTNode *)binary_op;
     }
     
-    parser_error(parser, "期望因子（整数、标识符、括号表达式或负号表达式）");
+    parser_error(parser, "期望因子（整数、字符串、标识符、括号表达式或负号表达式）");
     return NULL; // 不会执行到这里
 }
 

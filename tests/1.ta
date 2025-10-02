@@ -3,12 +3,11 @@ fn main() {
     let a = 5;
     let b = -2;
     let c = a + b;
-    // print(c);
-    // let c = 1;
-    // return 1;  // 返回值
+    // let c = test_add(a, b); // todo
+    print(c);
     return c;
 }
 
-fn test(){
-    return 0;
-}
+// fn test_add(a, b){
+//   return a + b;
+// }

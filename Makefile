@@ -50,7 +50,11 @@ clean:
 
 # 运行测试
 test: $(TARGET)
-	./$(TARGET) tests/hello.ta
+	./$(TARGET) tests/1.ta
 	./output
+
+test_hello: $(TARGET)
+	./$(TARGET) tests/hello.ta -o hello
+	./hello
 
 .PHONY: all clean run
