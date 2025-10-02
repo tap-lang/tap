@@ -13,10 +13,10 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     LLVMInitializeNativeAsmPrinter();
     LLVMInitializeNativeAsmParser();
 
-    // 创建上下文、模块和构建器
-    context->context = LLVMGetGlobalContext();
-    context->module = LLVMModuleCreateWithName(module_name);
-    context->builder = LLVMCreateBuilder();
+    // 创建上下文、模块和构建器 - 使用新的上下文而不是全局上下文
+    context->context = LLVMContextCreate();
+    context->module = LLVMModuleCreateWithNameInContext(module_name, context->context);
+    context->builder = LLVMCreateBuilderInContext(context->context);
     context->engine = NULL;
 
     return context;
@@ -57,8 +57,8 @@ static int initialize_execution_engine(CodeGenContext *context) {
 
 // 生成函数代码
 static void generate_function(CodeGenContext *context, FunctionNode *function) {
-    // 创建函数类型: int()
-    LLVMTypeRef return_type = LLVMInt32Type();
+    // 创建函数类型: int() - 使用上下文
+    LLVMTypeRef return_type = LLVMInt32TypeInContext(context->context);
     LLVMTypeRef param_types[0];
     LLVMTypeRef function_type = LLVMFunctionType(return_type, param_types, 0, 0);
 
@@ -78,10 +78,11 @@ static void generate_function(CodeGenContext *context, FunctionNode *function) {
                 if (print_node->expression && print_node->expression->type == NODE_LITERAL) {
                     LiteralNode *literal = (LiteralNode *)print_node->expression;
                     if (literal->literal_type == LITERAL_STRING) {
-                        // 为print函数创建puts调用
-                        LLVMTypeRef char_ptr_type = LLVMPointerType(LLVMInt8Type(), 0);
-                        LLVMTypeRef puts_type = LLVMFunctionType(LLVMInt32Type(), &char_ptr_type, 1, 0);
-                        LLVMValueRef puts_func = LLVMAddFunction(context->module, "puts", puts_type);
+                         // 为print函数创建puts调用 - 使用上下文
+                         LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
+                         LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
+                         LLVMTypeRef puts_type = LLVMFunctionType(LLVMInt32TypeInContext(context->context), &char_ptr_type, 1, 0);
+                         LLVMValueRef puts_func = LLVMAddFunction(context->module, "puts", puts_type);
                         
                         // 创建字符串常量，确保正确处理
                         LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
@@ -97,8 +98,8 @@ static void generate_function(CodeGenContext *context, FunctionNode *function) {
                 if (return_node->expression && return_node->expression->type == NODE_LITERAL) {
                     LiteralNode *literal = (LiteralNode *)return_node->expression;
                     if (literal->literal_type == LITERAL_INT) {
-                        // 返回整数值
-                        LLVMBuildRet(context->builder, LLVMConstInt(LLVMInt32Type(), literal->value.int_value, 0));
+                        // 返回整数值 - 使用上下文
+                        LLVMBuildRet(context->builder, LLVMConstInt(LLVMInt32TypeInContext(context->context), literal->value.int_value, 0));
                     }
                 }
                 break;
@@ -109,9 +110,9 @@ static void generate_function(CodeGenContext *context, FunctionNode *function) {
         statement = statement->next;
     }
 
-    // 如果没有显式的return语句，添加一个默认的return 0
+    // 如果没有显式的return语句，添加一个默认的return 0 - 使用上下文
     if (!LLVMGetBasicBlockTerminator(basic_block)) {
-        LLVMBuildRet(context->builder, LLVMConstInt(LLVMInt32Type(), 0, 0));
+        LLVMBuildRet(context->builder, LLVMConstInt(LLVMInt32TypeInContext(context->context), 0, 0));
     }
 }
 

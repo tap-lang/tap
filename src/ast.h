@@ -26,7 +26,7 @@ enum LiteralType {
     LITERAL_BOOL                    // 布尔值
 };
 
-// 二元操作符类型
+// 二元操作符类型  + - * / == != < > <= >= && ||
 enum BinaryOpType {
     OP_ADD,                         // 加号
     OP_SUBTRACT,                    // 减号
@@ -44,8 +44,8 @@ enum BinaryOpType {
 
 // 基础AST节点结构
 typedef struct ASTNode {
-    enum NodeType type;
-    struct ASTNode *next;  // 用于链表结构
+    enum NodeType type;             // 节点类型
+    struct ASTNode *next;           // 用于链表结构
 } ASTNode;
 
 // 程序节点

@@ -140,14 +140,14 @@ BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode
 
 // 添加函数到程序
 void add_function(ProgramNode *program, FunctionNode *function) {
-    if (!program->functions) {
-        program->functions = (ASTNode *)function;
+    if (!program->functions) {                  // 如果程序中没有函数，直接添加
+        program->functions = (ASTNode *)function;       
     } else {
         ASTNode *current = program->functions;
-        while (current->next) {
-            current = current->next;
+        while (current->next) {                 // 遍历到最后一个函数节点
+            current = current->next;            
         }
-        current->next = (ASTNode *)function;
+        current->next = (ASTNode *)function;    // 将新函数添加到最后
     }
 }
 

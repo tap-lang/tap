@@ -4,8 +4,8 @@ fn main() {
     //let b = -2;
     //let c = a + b;
     //print(c);
-    let c = 1;
-    return c;  // 返回值
+    //let c = 1;
+    return 1;  // 返回值
 }
 
 fn test(){
