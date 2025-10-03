@@ -3,10 +3,35 @@
 # 编译器和编译选项
 CC = clang
 # CXX = clang++
-CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer -I/opt/homebrew/opt/llvm/include
-CXXFLAGS = $(CFLAGS)
-LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib -fsanitize=address
 LIBS = -lLLVM-21
+
+# 根据操作系统类型设置不同的CFLAGS和LDFLAGS
+ifeq ($(OS),Windows_NT)
+    # Windows系统设置
+    CFLAGS = -Wall -Wextra -g -I"C:/Program Files/LLVM/include"
+    CXXFLAGS = $(CFLAGS)
+    LDFLAGS = -L"C:/Program Files/LLVM/lib"
+    # Windows下不使用address sanitizer
+else
+    # 非Windows系统
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+        # Linux系统设置
+        CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer -I/usr/lib/llvm-21/include
+        CXXFLAGS = $(CFLAGS)
+        LDFLAGS = -L/usr/lib/llvm-21/lib -Wl,-rpath,/usr/lib -fsanitize=address
+    else ifeq ($(UNAME_S),Darwin)
+        # macOS系统设置
+        CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer -I/opt/homebrew/opt/llvm/include
+        CXXFLAGS = $(CFLAGS)
+        LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib -fsanitize=address
+    else
+        # 其他系统，使用默认设置
+        CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer
+        CXXFLAGS = $(CFLAGS)
+        LDFLAGS = -fsanitize=address
+    endif
+endif
 
 # 源文件目录
 SRC_DIR = src
