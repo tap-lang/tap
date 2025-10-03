@@ -153,12 +153,10 @@ int main(int argc, char *argv[]) {
         if (write_ir_to_file(codegen_context, temp_ir_file) != 0) {
             fprintf(stderr, "写入临时IR文件失败\n");
         } else {
-            // 构建lli命令
-            char command[256];
-            snprintf(command, sizeof(command), "lli %s", temp_ir_file);
+            // 直接运行lli执行生成的IR代码
+            // 我们的修改确保了函数名不会被修改，所以main函数应该是可用的
+            int result = system("lli temp_output.ll");
             
-            // 执行lli命令
-            int result = system(command);
             printf("程序执行完毕，返回值: %d\n", WEXITSTATUS(result));
             
             // 删除临时文件

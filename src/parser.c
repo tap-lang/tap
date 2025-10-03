@@ -76,6 +76,7 @@ static void consume(Parser *parser, enum TokenType expected_type) {
 static ASTNode *parse_expression(Parser *parser);
 static ASTNode *parse_term(Parser *parser);
 static ASTNode *parse_factor(Parser *parser);
+static ASTNode *parse_function_call(Parser *parser, char *function_name);
 
 // 解析函数定义
 static FunctionNode *parse_function(Parser *parser) {
@@ -96,7 +97,30 @@ static FunctionNode *parse_function(Parser *parser) {
     // 解析参数列表
     consume(parser, TOKEN_LPAREN);
     
-    // 暂时不支持参数
+    // 解析参数
+    if (parser->current_token->type == TOKEN_IDENTIFIER) {
+        // 解析第一个参数
+        char *param_name = strdup(parser->current_token->lexeme);
+        consume(parser, TOKEN_IDENTIFIER);
+        IdentifierNode *param = create_identifier(param_name);
+        free(param_name);
+        add_param(function, param);
+        
+        // 解析更多参数
+        while (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "期望参数名");
+            }
+            
+            param_name = strdup(parser->current_token->lexeme);
+            consume(parser, TOKEN_IDENTIFIER);
+            param = create_identifier(param_name);
+            free(param_name);
+            add_param(function, param);
+        }
+    }
     
     consume(parser, TOKEN_RPAREN);
     
@@ -147,23 +171,8 @@ static FunctionNode *parse_function(Parser *parser) {
             // 解析返回语句
             consume(parser, TOKEN_RETURN);
             
-            // 解析返回表达式（支持整数和变量）
-            ASTNode *expression = NULL;
-            if (parser->current_token->type == TOKEN_INTEGER) {
-                // 整数字面量
-                LiteralNode *int_literal = create_int_literal(parser->current_token->value.int_value);
-                consume(parser, TOKEN_INTEGER);
-                expression = (ASTNode *)int_literal;
-            } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
-                // 标识符（变量）
-                char *var_name = strdup(parser->current_token->lexeme);
-                consume(parser, TOKEN_IDENTIFIER);
-                IdentifierNode *identifier = create_identifier(var_name);
-                free(var_name);
-                expression = (ASTNode *)identifier;
-            } else {
-                parser_error(parser, "期望整数字面量或标识符作为return语句的值");
-            }
+            // 解析返回表达式（支持整数、变量和表达式）
+            ASTNode *expression = parse_expression(parser);
             
             consume(parser, TOKEN_SEMICOLON);
             
@@ -178,6 +187,33 @@ static FunctionNode *parse_function(Parser *parser) {
     consume(parser, TOKEN_RBRACE);
     
     return function;
+}
+
+// 解析函数调用
+static ASTNode *parse_function_call(Parser *parser, char *function_name) {
+    // 创建函数调用节点
+    FunctionCallNode *function_call = create_function_call(function_name);
+    
+    // 解析参数列表
+    consume(parser, TOKEN_LPAREN);
+    
+    // 解析参数
+    if (parser->current_token->type != TOKEN_RPAREN) {
+        // 解析第一个参数
+        ASTNode *arg_expression = parse_expression(parser);
+        add_argument(function_call, arg_expression);
+        
+        // 解析更多参数
+        while (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            arg_expression = parse_expression(parser);
+            add_argument(function_call, arg_expression);
+        }
+    }
+    
+    consume(parser, TOKEN_RPAREN);
+    
+    return (ASTNode *)function_call;
 }
 
 // 解析因子（标识符或整数）
@@ -195,11 +231,20 @@ static ASTNode *parse_factor(Parser *parser) {
         consume(parser, TOKEN_STRING);
         return (ASTNode *)string_literal;
     } else if (token->type == TOKEN_IDENTIFIER) {
-        // 标识符（变量）
-        char *var_name = strdup(token->lexeme);
+        // 标识符（变量或函数调用）
+        char *name = strdup(token->lexeme);
         consume(parser, TOKEN_IDENTIFIER);
-        IdentifierNode *identifier = create_identifier(var_name);
-        free(var_name);
+        
+        // 检查是否是函数调用
+        if (parser->current_token->type == TOKEN_LPAREN) {
+            ASTNode *function_call = parse_function_call(parser, name);
+            free(name);
+            return function_call;
+        }
+        
+        // 否则是变量
+        IdentifierNode *identifier = create_identifier(name);
+        free(name);
         return (ASTNode *)identifier;
     } else if (token->type == TOKEN_LPAREN) {
         // 括号表达式

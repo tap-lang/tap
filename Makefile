@@ -3,9 +3,9 @@
 # 编译器和编译选项
 CC = clang
 # CXX = clang++
-CFLAGS = -Wall -Wextra -g -I/opt/homebrew/opt/llvm/include
+CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer -I/opt/homebrew/opt/llvm/include
 CXXFLAGS = $(CFLAGS)
-LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib
+LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib -fsanitize=address
 LIBS = -lLLVM-21
 
 # 源文件目录

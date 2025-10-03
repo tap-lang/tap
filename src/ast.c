@@ -152,6 +152,20 @@ VarDeclNode *create_var_decl(char *name, ASTNode *expression) {
     return var_decl;
 }
 
+// 创建函数调用节点
+FunctionCallNode *create_function_call(char *name) {
+    FunctionCallNode *function_call = (FunctionCallNode *)malloc(sizeof(FunctionCallNode));
+    if (!function_call) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    function_call->base.type = NODE_FUNCTION_CALL;
+    function_call->base.next = NULL;
+    function_call->name = strdup(name);
+    function_call->arguments = NULL;
+    return function_call;
+}
+
 // 添加函数到程序
 void add_function(ProgramNode *program, FunctionNode *function) {
     if (!program->functions) {                  // 如果程序中没有函数，直接添加
@@ -188,6 +202,19 @@ void add_statement(FunctionNode *function, ASTNode *statement) {
             current = current->next;
         }
         current->next = statement;
+    }
+}
+
+// 添加参数到函数调用
+void add_argument(FunctionCallNode *function_call, ASTNode *argument) {
+    if (!function_call->arguments) {
+        function_call->arguments = argument;
+    } else {
+        ASTNode *current = function_call->arguments;
+        while (current->next) {
+            current = current->next;
+        }
+        current->next = argument;
     }
 }
 
@@ -244,6 +271,12 @@ void free_ast(ASTNode *node) {
             VarDeclNode *var_decl = (VarDeclNode *)node;
             free(var_decl->name);
             free_ast(var_decl->expression);
+            break;
+        }
+        case NODE_FUNCTION_CALL: {
+            FunctionCallNode *function_call = (FunctionCallNode *)node;
+            free(function_call->name);
+            free_ast(function_call->arguments);
             break;
         }
         default:

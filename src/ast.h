@@ -16,7 +16,8 @@ enum NodeType {
     NODE_RETURN,                    // 返回语句节点
     NODE_PRINT,                     // 打印语句节点
     NODE_BINARY_OP,                 // 二元操作符节点
-    NODE_VAR_DECL                   // 变量声明节点
+    NODE_VAR_DECL,                  // 变量声明节点
+    NODE_FUNCTION_CALL              // 函数调用节点
 };
 
 // 字面量类型
@@ -108,6 +109,13 @@ typedef struct {
     ASTNode *expression;   // 初始化表达式
 } VarDeclNode;
 
+// 函数调用节点
+typedef struct {
+    ASTNode base;
+    char *name;            // 函数名
+    ASTNode *arguments;    // 参数列表
+} FunctionCallNode;
+
 // 创建节点的函数声明
 ProgramNode *create_program();
 FunctionNode *create_function(char *name);
@@ -120,11 +128,13 @@ ReturnNode *create_return(ASTNode *expression);
 PrintNode *create_print(ASTNode *expression);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 VarDeclNode *create_var_decl(char *name, ASTNode *expression);
+FunctionCallNode *create_function_call(char *name);
 
 // 添加子节点的函数
 void add_function(ProgramNode *program, FunctionNode *function);
 void add_param(FunctionNode *function, IdentifierNode *param);
 void add_statement(FunctionNode *function, ASTNode *statement);
+void add_argument(FunctionCallNode *function_call, ASTNode *argument);
 
 // 释放AST的函数
 void free_ast(ASTNode *node);

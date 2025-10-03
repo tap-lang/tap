@@ -2,7 +2,7 @@
 
 build/
 4yue
-output.ll
+*.ll
 output
 hello
 a.out

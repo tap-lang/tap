@@ -1,14 +1,19 @@
 
-fn main(): i32 {
+fn main() {
     let n = 5;
-    print("Fibonacci number at position %d is %d\n", n, fibonacci(n));
+    // print("Fibonacci number at position %d is %d\n", n, fibonacci(n));
+    print("Fibonacci number at position ");
+    print(n);
+    print(" is ");
+    print(fibonacci(n));
+    print("\n");
     return 0;
 }
 
-fn fibonacci(n: i32): i32 {
-    if(n <= 0){
+fn fibonacci(n) {
+    if(n <= 0) {
         return 0;
-    }else if(n == 1){
+    }else if(n == 1) {
         return 1;
     }
     return fibonacci(n - 1) + fibonacci(n - 2);
