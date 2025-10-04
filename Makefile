@@ -71,12 +71,13 @@ $(TARGET): $(OBJECTS)
 # 清理生成的文件
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
-	rm -rf output output.ll
+	rm -rf output *.ll
 
 # 运行测试
 test: $(TARGET)
 	./$(TARGET) tests/1.ta -run
 	./$(TARGET) tests/hello.ta -run
+	./$(TARGET) tests/fibonacci.ta -run
 
 test_hello: $(TARGET)
 	./$(TARGET) tests/hello.ta -o hello

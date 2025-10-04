@@ -218,6 +218,21 @@ void add_argument(FunctionCallNode *function_call, ASTNode *argument) {
     }
 }
 
+// 创建条件语句节点
+IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, ASTNode *alternative) {
+    IfStatementNode *if_node = (IfStatementNode *)malloc(sizeof(IfStatementNode));
+    if (!if_node) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    if_node->base.type = NODE_IF_STATEMENT;
+    if_node->base.next = NULL;
+    if_node->condition = condition;
+    if_node->consequence = consequence;
+    if_node->alternative = alternative;
+    return if_node;
+}
+
 // 释放AST节点
 void free_ast(ASTNode *node) {
     if (!node) return;
@@ -277,6 +292,13 @@ void free_ast(ASTNode *node) {
             FunctionCallNode *function_call = (FunctionCallNode *)node;
             free(function_call->name);
             free_ast(function_call->arguments);
+            break;
+        }
+        case NODE_IF_STATEMENT: {
+            IfStatementNode *if_node = (IfStatementNode *)node;
+            free_ast(if_node->condition);
+            free_ast(if_node->consequence);
+            free_ast(if_node->alternative);
             break;
         }
         default:

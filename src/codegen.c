@@ -65,6 +65,243 @@ static void free_symbols(Symbol *symbols) {
     }
 }
 
+// 声明generate_expression函数
+static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
+
+// 生成条件语句代码
+static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_node, LLVMBasicBlockRef *insert_block) {
+    // 获取当前函数
+    LLVMValueRef current_function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    
+    // 创建条件基本块
+    char then_name[64];
+    char else_name[64];
+    
+    // 为基本块生成唯一名称，避免冲突
+    static int if_counter = 0;
+    sprintf(then_name, "then.%d", if_counter);
+    sprintf(else_name, "else.%d", if_counter);
+    if_counter++;
+    
+    LLVMBasicBlockRef then_block = LLVMAppendBasicBlock(current_function, then_name);
+    LLVMBasicBlockRef else_block = NULL;
+    
+    // 如果有else部分，创建else基本块
+    if (if_node->alternative) {
+        else_block = LLVMAppendBasicBlock(current_function, else_name);
+    }
+    
+    // 生成条件表达式
+    LLVMValueRef condition = generate_expression(context, if_node->condition);
+    if (!condition) return;
+    
+    // 直接使用条件表达式作为条件结果
+    LLVMValueRef cond_result = condition;
+    
+    // 保存当前基本块（将作为默认的merge块）
+    LLVMBasicBlockRef current_block = LLVMGetInsertBlock(context->builder);
+    LLVMBasicBlockRef next_block = NULL;
+    
+    // 检查是否需要创建下一个基本块（用于非终结指令的情况）
+    // 我们只在then和else分支都不包含终结指令时创建
+    int needs_next_block = 1; // 使用int代替bool以避免头文件依赖
+    
+    // 生成条件分支
+    if (else_block) {
+        LLVMBuildCondBr(context->builder, cond_result, then_block, else_block);
+    } else {
+        LLVMBuildCondBr(context->builder, cond_result, then_block, current_block);
+        needs_next_block = 0;
+    }
+    
+    // 生成then分支代码
+    LLVMPositionBuilderAtEnd(context->builder, then_block);
+    
+    // 生成then分支的语句序列
+    ASTNode *statement = if_node->consequence;
+    while (statement) {
+        switch (statement->type) {
+            case NODE_PRINT: {
+                PrintNode *print_node = (PrintNode *)statement;
+                if (print_node->expression) {
+                    if (print_node->expression->type == NODE_LITERAL) {
+                        LiteralNode *literal = (LiteralNode *)print_node->expression;
+                        if (literal->literal_type == LITERAL_STRING) {
+                            if (context->puts_func) {
+                                LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
+                                LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                            }
+                        } else if (literal->literal_type == LITERAL_INT) {
+                            char buffer[32];
+                            snprintf(buffer, sizeof(buffer), "%d", literal->value.int_value);
+                            if (context->puts_func) {
+                                LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
+                                LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                            }
+                        }
+                    } else {
+                        LLVMValueRef expr_value = generate_expression(context, print_node->expression);
+                        if (expr_value && context->printf_func) {
+                            LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
+                            LLVMValueRef printf_args[] = {format_str, expr_value};
+                            LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
+                        }
+                    }
+                }
+                break;
+            }
+            case NODE_VAR_DECL: {
+                VarDeclNode *var_decl = (VarDeclNode *)statement;
+                LLVMTypeRef int_type = LLVMInt32TypeInContext(context->context);
+                LLVMValueRef alloca = LLVMBuildAlloca(context->builder, int_type, var_decl->name);
+                insert_symbol(context, var_decl->name, alloca);
+                if (var_decl->expression) {
+                    LLVMValueRef expr_value = generate_expression(context, var_decl->expression);
+                    LLVMBuildStore(context->builder, expr_value, alloca);
+                }
+                break;
+            }
+            case NODE_RETURN: {
+                ReturnNode *return_node = (ReturnNode *)statement;
+                if (return_node->expression) {
+                    LLVMValueRef expr_value = generate_expression(context, return_node->expression);
+                    if (expr_value) {
+                        LLVMBuildRet(context->builder, expr_value);
+                        needs_next_block = 0;
+                    }
+                }
+                break;
+            }
+            case NODE_IF_STATEMENT: {
+                IfStatementNode *nested_if_node = (IfStatementNode *)statement;
+                LLVMBasicBlockRef nested_insert_block = LLVMGetInsertBlock(context->builder);
+                generate_if_statement(context, nested_if_node, &nested_insert_block);
+                // 如果嵌套的if语句已经设置了终结指令，我们不需要下一个块
+                if (LLVMGetBasicBlockTerminator(nested_insert_block)) {
+                    needs_next_block = 0;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        statement = statement->next;
+    }
+    
+    // 如果then块没有终结指令，并且需要下一个块，我们需要创建它
+    if (needs_next_block && else_block && !LLVMGetBasicBlockTerminator(then_block)) {
+        // 创建一个新的基本块用于后续代码
+        next_block = LLVMAppendBasicBlock(current_function, "next_block");
+        LLVMBuildBr(context->builder, next_block);
+    }
+    
+    // 生成else分支代码
+    if (else_block) {
+        LLVMPositionBuilderAtEnd(context->builder, else_block);
+        
+        // 检查else分支是否是另一个if语句（else if）
+        if (if_node->alternative->type == NODE_IF_STATEMENT) {
+            IfStatementNode *nested_if_node = (IfStatementNode *)if_node->alternative;
+            LLVMBasicBlockRef nested_insert_block = LLVMGetInsertBlock(context->builder);
+            generate_if_statement(context, nested_if_node, &nested_insert_block);
+            // 如果嵌套的if语句已经设置了终结指令，我们不需要下一个块
+            if (LLVMGetBasicBlockTerminator(nested_insert_block)) {
+                needs_next_block = 0;
+            }
+        } else {
+            // 生成else分支的语句序列
+            statement = if_node->alternative;
+            while (statement) {
+                switch (statement->type) {
+                    case NODE_PRINT: {
+                        PrintNode *print_node = (PrintNode *)statement;
+                        if (print_node->expression) {
+                            if (print_node->expression->type == NODE_LITERAL) {
+                                LiteralNode *literal = (LiteralNode *)print_node->expression;
+                                if (literal->literal_type == LITERAL_STRING) {
+                                    if (context->puts_func) {
+                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
+                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                                    }
+                                } else if (literal->literal_type == LITERAL_INT) {
+                                    char buffer[32];
+                                    snprintf(buffer, sizeof(buffer), "%d", literal->value.int_value);
+                                    if (context->puts_func) {
+                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
+                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                                    }
+                                }
+                            } else {
+                                LLVMValueRef expr_value = generate_expression(context, print_node->expression);
+                                if (expr_value && context->printf_func) {
+                                    LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
+                                    LLVMValueRef printf_args[] = {format_str, expr_value};
+                                    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    case NODE_VAR_DECL: {
+                        VarDeclNode *var_decl = (VarDeclNode *)statement;
+                        LLVMTypeRef int_type = LLVMInt32TypeInContext(context->context);
+                        LLVMValueRef alloca = LLVMBuildAlloca(context->builder, int_type, var_decl->name);
+                        insert_symbol(context, var_decl->name, alloca);
+                        if (var_decl->expression) {
+                            LLVMValueRef expr_value = generate_expression(context, var_decl->expression);
+                            LLVMBuildStore(context->builder, expr_value, alloca);
+                        }
+                        break;
+                    }
+                    case NODE_RETURN: {
+                        ReturnNode *return_node = (ReturnNode *)statement;
+                        if (return_node->expression) {
+                            LLVMValueRef expr_value = generate_expression(context, return_node->expression);
+                            if (expr_value) {
+                                LLVMBuildRet(context->builder, expr_value);
+                                needs_next_block = 0;
+                            }
+                        }
+                        break;
+                    }
+                    case NODE_IF_STATEMENT: {
+                        IfStatementNode *nested_if_node = (IfStatementNode *)statement;
+                        LLVMBasicBlockRef nested_insert_block = LLVMGetInsertBlock(context->builder);
+                        generate_if_statement(context, nested_if_node, &nested_insert_block);
+                        // 如果嵌套的if语句已经设置了终结指令，我们不需要下一个块
+                        if (LLVMGetBasicBlockTerminator(nested_insert_block)) {
+                            needs_next_block = 0;
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                statement = statement->next;
+            }
+        }
+        
+        // 如果else块没有终结指令，并且需要下一个块，跳转到next_block
+        if (needs_next_block && !next_block) {
+            // 创建一个新的基本块用于后续代码
+            next_block = LLVMAppendBasicBlock(current_function, "next_block");
+        }
+        if (needs_next_block && !LLVMGetBasicBlockTerminator(else_block)) {
+            LLVMBuildBr(context->builder, next_block);
+        }
+    }
+    
+    // 设置插入点
+    if (next_block) {
+        LLVMPositionBuilderAtEnd(context->builder, next_block);
+        *insert_block = next_block;
+    } else {
+        // 如果没有next_block，插入点应该回到原始的current_block之后的位置
+        // 但在我们的简单实现中，我们只需要确保insert_block被设置为一个有效的块
+        *insert_block = current_block;
+    }
+}
+
 // 生成表达式代码
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression) {
     if (!expression) return NULL;
@@ -104,6 +341,18 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                     return LLVMBuildMul(context->builder, left, right, "mul_result");
                 case OP_DIVIDE:
                     return LLVMBuildSDiv(context->builder, left, right, "div_result");
+                case OP_EQUAL:
+                    return LLVMBuildICmp(context->builder, LLVMIntEQ, left, right, "eq_result");
+                case OP_NOT_EQUAL:
+                    return LLVMBuildICmp(context->builder, LLVMIntNE, left, right, "ne_result");
+                case OP_LESS_THAN:
+                    return LLVMBuildICmp(context->builder, LLVMIntSLT, left, right, "lt_result");
+                case OP_GREATER_THAN:
+                    return LLVMBuildICmp(context->builder, LLVMIntSGT, left, right, "gt_result");
+                case OP_LESS_THAN_OR_EQUAL:
+                    return LLVMBuildICmp(context->builder, LLVMIntSLE, left, right, "le_result");
+                case OP_GREATER_THAN_OR_EQUAL:
+                    return LLVMBuildICmp(context->builder, LLVMIntSGE, left, right, "ge_result");
                 default:
                     fprintf(stderr, "错误：不支持的二元操作符\n");
                     exit(1);
@@ -543,6 +792,14 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                             if (expr_value) {
                                 LLVMBuildRet(context->builder, expr_value);
                             }
+                        }
+                        break;
+                    }
+                    case NODE_IF_STATEMENT: {
+                        LLVMBasicBlockRef insert_block = NULL;
+                        generate_if_statement(context, (IfStatementNode *)statement, &insert_block);
+                        if (insert_block) {
+                            LLVMPositionBuilderAtEnd(context->builder, insert_block);
                         }
                         break;
                     }

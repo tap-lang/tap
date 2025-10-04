@@ -77,6 +77,123 @@ static ASTNode *parse_expression(Parser *parser);
 static ASTNode *parse_term(Parser *parser);
 static ASTNode *parse_factor(Parser *parser);
 static ASTNode *parse_function_call(Parser *parser, char *function_name);
+static ASTNode *parse_if_statement(Parser *parser);
+static ASTNode *parse_block(Parser *parser);
+
+// 解析代码块（由花括号包围的语句序列）
+static ASTNode *parse_block(Parser *parser) {
+    // 创建一个临时的函数节点来存储代码块中的语句
+    FunctionNode *block = create_function("block");
+    
+    // 解析代码块中的语句
+    while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
+        // 解析语句
+        if (parser->current_token->type == TOKEN_PRINT) {
+            // 解析打印语句
+            consume(parser, TOKEN_PRINT);
+            consume(parser, TOKEN_LPAREN);
+            
+            // 解析打印参数（支持表达式）
+            ASTNode *expression = parse_expression(parser);
+            
+            consume(parser, TOKEN_RPAREN);
+            consume(parser, TOKEN_SEMICOLON);
+            
+            // 创建打印节点并添加到代码块
+            PrintNode *print_node = create_print(expression);
+            add_statement(block, (ASTNode *)print_node);
+        } else if (parser->current_token->type == TOKEN_LET) {
+            // 解析let语句
+            consume(parser, TOKEN_LET);
+            
+            // 解析变量名
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "期望变量名");
+            }
+            char *var_name = strdup(parser->current_token->lexeme);
+            consume(parser, TOKEN_IDENTIFIER);
+            
+            // 解析等号
+            consume(parser, TOKEN_ASSIGN);
+            
+            // 解析表达式作为变量的初始值
+            ASTNode *expression = parse_expression(parser);
+            
+            consume(parser, TOKEN_SEMICOLON);
+            
+            // 创建变量声明节点并添加到代码块
+            VarDeclNode *var_decl = create_var_decl(var_name, expression);
+            free(var_name);
+            add_statement(block, (ASTNode *)var_decl);
+        } else if (parser->current_token->type == TOKEN_RETURN) {
+            // 解析返回语句
+            consume(parser, TOKEN_RETURN);
+            
+            // 解析返回表达式（支持整数、变量和表达式）
+            ASTNode *expression = parse_expression(parser);
+            
+            consume(parser, TOKEN_SEMICOLON);
+            
+            // 创建返回节点并添加到代码块
+            ReturnNode *return_node = create_return(expression);
+            add_statement(block, (ASTNode *)return_node);
+        } else if (parser->current_token->type == TOKEN_IF) {
+            // 解析条件语句
+            ASTNode *if_statement = parse_if_statement(parser);
+            add_statement(block, if_statement);
+        } else {
+            parser_error(parser, "期望语句");
+        }
+    }
+    
+    // 保存语句列表并释放临时函数节点
+    ASTNode *statements = block->body;
+    free(block->name);
+    free(block);
+    
+    return statements;
+}
+
+// 解析条件语句（if、elseif、else）
+static ASTNode *parse_if_statement(Parser *parser) {
+    // 检查当前token是否是if或elseif
+    if (parser->current_token->type == TOKEN_IF) {
+        consume(parser, TOKEN_IF);
+    } else if (parser->current_token->type == TOKEN_ELSEIF) {
+        consume(parser, TOKEN_ELSEIF);
+    } else {
+        parser_error(parser, "期望 if 或 elseif 关键字");
+        return NULL;
+    }
+    
+    // 解析条件表达式
+    consume(parser, TOKEN_LPAREN);
+    ASTNode *condition = parse_expression(parser);
+    consume(parser, TOKEN_RPAREN);
+    
+    // 解析条件为真时执行的代码块
+    consume(parser, TOKEN_LBRACE);
+    ASTNode *consequence = parse_block(parser);
+    consume(parser, TOKEN_RBRACE);
+    
+    // 解析可选的 else 或 elseif 部分
+    ASTNode *alternative = NULL;
+    if (parser->current_token->type == TOKEN_ELSE) {
+        consume(parser, TOKEN_ELSE);
+        
+        // 解析 else 代码块
+        consume(parser, TOKEN_LBRACE);
+        alternative = parse_block(parser);
+        consume(parser, TOKEN_RBRACE);
+    } else if (parser->current_token->type == TOKEN_ELSEIF) {
+        // 递归解析下一个条件分支（elseif）
+        alternative = parse_if_statement(parser);
+    }
+    
+    // 创建条件语句节点
+    IfStatementNode *if_node = create_if_statement(condition, consequence, alternative);
+    return (ASTNode *)if_node;
+}
 
 // 解析函数定义
 static FunctionNode *parse_function(Parser *parser) {
@@ -179,6 +296,10 @@ static FunctionNode *parse_function(Parser *parser) {
             // 创建返回节点并添加到函数体
             ReturnNode *return_node = create_return(expression);
             add_statement(function, (ASTNode *)return_node);
+        } else if (parser->current_token->type == TOKEN_IF) {
+            // 解析条件语句
+            ASTNode *if_statement = parse_if_statement(parser);
+            add_statement(function, if_statement);
         } else {
             parser_error(parser, "期望语句");
         }
@@ -284,18 +405,62 @@ static ASTNode *parse_term(Parser *parser) {
     return left;
 }
 
+// 解析比较表达式（==, !=, <, >, <=, >=）
+static ASTNode *parse_comparison(Parser *parser) {
+    ASTNode *left = parse_term(parser);
+    
+    while (parser->current_token->type == TOKEN_EQUAL || 
+           parser->current_token->type == TOKEN_NOT_EQUAL || 
+           parser->current_token->type == TOKEN_LESS_THAN || 
+           parser->current_token->type == TOKEN_GREATER_THAN || 
+           parser->current_token->type == TOKEN_LESS_THAN_OR_EQUAL || 
+           parser->current_token->type == TOKEN_GREATER_THAN_OR_EQUAL) {
+        Token *token = parser->current_token;
+        enum BinaryOpType op_type;
+        
+        switch (token->type) {
+            case TOKEN_EQUAL:
+                op_type = OP_EQUAL;
+                break;
+            case TOKEN_NOT_EQUAL:
+                op_type = OP_NOT_EQUAL;
+                break;
+            case TOKEN_LESS_THAN:
+                op_type = OP_LESS_THAN;
+                break;
+            case TOKEN_GREATER_THAN:
+                op_type = OP_GREATER_THAN;
+                break;
+            case TOKEN_LESS_THAN_OR_EQUAL:
+                op_type = OP_LESS_THAN_OR_EQUAL;
+                break;
+            case TOKEN_GREATER_THAN_OR_EQUAL:
+                op_type = OP_GREATER_THAN_OR_EQUAL;
+                break;
+            default:
+                parser_error(parser, "期望比较操作符");
+                return NULL;
+        }
+        
+        consume(parser, token->type);
+        left = (ASTNode *)create_binary_op(op_type, left, parse_term(parser));
+    }
+    
+    return left;
+}
+
 // 解析表达式（加减）
 static ASTNode *parse_expression(Parser *parser) {
-    ASTNode *left = parse_term(parser);
+    ASTNode *left = parse_comparison(parser);
     
     while (parser->current_token->type == TOKEN_PLUS || parser->current_token->type == TOKEN_MINUS) {
         Token *token = parser->current_token;
         if (token->type == TOKEN_PLUS) {
             consume(parser, TOKEN_PLUS);
-            left = (ASTNode *)create_binary_op(OP_ADD, left, parse_term(parser));
+            left = (ASTNode *)create_binary_op(OP_ADD, left, parse_comparison(parser));
         } else if (token->type == TOKEN_MINUS) {
             consume(parser, TOKEN_MINUS);
-            left = (ASTNode *)create_binary_op(OP_SUBTRACT, left, parse_term(parser));
+            left = (ASTNode *)create_binary_op(OP_SUBTRACT, left, parse_comparison(parser));
         }
     }
     

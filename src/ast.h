@@ -17,7 +17,8 @@ enum NodeType {
     NODE_PRINT,                     // 打印语句节点
     NODE_BINARY_OP,                 // 二元操作符节点
     NODE_VAR_DECL,                  // 变量声明节点
-    NODE_FUNCTION_CALL              // 函数调用节点
+    NODE_FUNCTION_CALL,             // 函数调用节点
+    NODE_IF_STATEMENT               // 条件语句节点
 };
 
 // 字面量类型
@@ -135,6 +136,17 @@ void add_function(ProgramNode *program, FunctionNode *function);
 void add_param(FunctionNode *function, IdentifierNode *param);
 void add_statement(FunctionNode *function, ASTNode *statement);
 void add_argument(FunctionCallNode *function_call, ASTNode *argument);
+
+// 条件语句节点
+typedef struct {
+    ASTNode base;
+    ASTNode *condition;    // 条件表达式
+    ASTNode *consequence;  // 条件为真时执行的语句
+    ASTNode *alternative;  // 条件为假时执行的语句
+} IfStatementNode;
+
+// 创建条件语句节点
+IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, ASTNode *alternative);
 
 // 释放AST的函数
 void free_ast(ASTNode *node);

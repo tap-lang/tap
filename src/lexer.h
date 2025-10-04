@@ -15,6 +15,7 @@ enum TokenType {
     TOKEN_LET,       // let 语句
     TOKEN_IF,        // if 条件语句
     TOKEN_ELSE,      // else 语句
+    TOKEN_ELSEIF,    // elseif 语句
     
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符
