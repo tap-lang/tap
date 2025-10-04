@@ -75,8 +75,8 @@ clean:
 
 # 运行测试
 test: $(TARGET)
-	./$(TARGET) tests/1.ta
-	./output
+	./$(TARGET) tests/1.ta -run
+	./$(TARGET) tests/hello.ta -run
 
 test_hello: $(TARGET)
 	./$(TARGET) tests/hello.ta -o hello

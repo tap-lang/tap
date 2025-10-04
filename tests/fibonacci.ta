@@ -5,7 +5,8 @@ fn main() {
     print("Fibonacci number at position ");
     print(n);
     print(" is ");
-    print(fibonacci(n));
+    let res = fibonacci(n);
+    print(res);
     print("\n");
     return 0;
 }
@@ -13,7 +14,7 @@ fn main() {
 fn fibonacci(n) {
     if(n <= 0) {
         return 0;
-    }else if(n == 1) {
+    } elseif (n == 1) {
         return 1;
     }
     return fibonacci(n - 1) + fibonacci(n - 2);

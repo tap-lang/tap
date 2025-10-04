@@ -350,6 +350,27 @@ static void generate_function(CodeGenContext *context, FunctionNode *function) {
 
 // 生成程序代码
 void generate_code(CodeGenContext *context, ProgramNode *program) {
+    // 预定义标准库函数声明（一次性添加）
+    // 初始化函数引用和类型
+    context->printf_func = NULL;
+    context->puts_func = NULL;
+    context->printf_type = NULL;
+    context->puts_type = NULL;
+    
+    // 声明printf函数
+    LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
+    LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
+    LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
+    
+    // printf函数类型: int printf(const char *format, ...)
+    context->printf_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 1);
+    context->printf_func = LLVMAddFunction(context->module, "printf", context->printf_type);
+    
+    // 声明puts函数
+    context->puts_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 0);
+    context->puts_func = LLVMAddFunction(context->module, "puts", context->puts_type);
+    
+    
     // 第一步：先为所有函数添加声明（函数原型）
     // 这样当一个函数调用另一个函数时，被调用的函数已经在模块中注册
     // 但我们不生成函数体，只是创建函数声明
@@ -443,33 +464,33 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                             if (print_node->expression->type == NODE_LITERAL) {
                                 LiteralNode *literal = (LiteralNode *)print_node->expression;
                                 if (literal->literal_type == LITERAL_STRING) {
-                                     // 为print函数创建puts调用 - 使用上下文
-                                     LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
-                                     LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
-                                     LLVMTypeRef puts_type = LLVMFunctionType(LLVMInt32TypeInContext(context->context), &char_ptr_type, 1, 0);
-                                     LLVMValueRef puts_func = LLVMAddFunction(context->module, "puts", puts_type);
-                                    
-                                    // 创建字符串常量，确保正确处理
-                                    LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
-                                    
-                                    // 正确调用puts函数
-                                    LLVMBuildCall2(context->builder, puts_type, puts_func, &str, 1, "puts_result");
+                                    // 直接使用context中存储的puts函数引用
+                                    if (context->puts_func) {
+                                        // 创建字符串常量，确保正确处理
+                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
+                                        
+                                        // 调用puts函数
+                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                                    } else {
+                                        // 如果puts_func为NULL，打印一个错误信息
+                                        // 这里简单处理，实际应该有更好的错误处理机制
+                                    }
                                 } else if (literal->literal_type == LITERAL_INT) {
                                     // 打印整数字面量
                                     char buffer[32];
                                     snprintf(buffer, sizeof(buffer), "%d", literal->value.int_value);
                                     
-                                    // 为print函数创建puts调用 - 使用上下文
-                                    LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
-                                    LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
-                                    LLVMTypeRef puts_type = LLVMFunctionType(LLVMInt32TypeInContext(context->context), &char_ptr_type, 1, 0);
-                                    LLVMValueRef puts_func = LLVMAddFunction(context->module, "puts", puts_type);
-                                    
-                                    // 创建字符串常量
-                                    LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
-                                    
-                                    // 正确调用puts函数
-                                    LLVMBuildCall2(context->builder, puts_type, puts_func, &str, 1, "puts_result");
+                                    // 直接使用context中存储的puts函数引用
+                                    if (context->puts_func) {
+                                        // 创建字符串常量
+                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
+                                        
+                                        // 调用puts函数
+                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                                    } else {
+                                        // 如果puts_func为NULL，打印一个错误信息
+                                        // 这里简单处理，实际应该有更好的错误处理机制
+                                    }
                                 }
                             } else {
                                 // 处理表达式（包括变量和计算表达式）
@@ -477,22 +498,24 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                                 LLVMValueRef expr_value = generate_expression(context, print_node->expression);
                                 
                                 if (expr_value) {
-                                    // 为printf函数创建声明 - 使用上下文
-                                    LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
-                                    LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
-                                    LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
-                                    
-                                    // printf函数类型: int printf(const char *format, ...)
-                                    // 对于可变参数函数，只需要指定第一个参数类型
-                                    LLVMTypeRef printf_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 1);
-                                    LLVMValueRef printf_func = LLVMAddFunction(context->module, "printf", printf_type);
-                                    
-                                    // 创建格式字符串
-                                    LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
-                                    
-                                    // 调用printf函数直接打印整数表达式的值
-                                    LLVMValueRef printf_args[] = {format_str, expr_value};
-                                    LLVMBuildCall2(context->builder, printf_type, printf_func, printf_args, 2, "printf_result");
+                                    // 直接使用context中存储的printf函数引用
+                                    if (context->printf_func) {
+                                        // 创建格式字符串
+                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
+                                        
+                                        // 调用printf函数直接打印整数表达式的值
+                                        LLVMValueRef printf_args[] = {format_str, expr_value};
+                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
+                                    } else {
+                                        // 如果printf_func为NULL，打印一个错误信息
+                                        // 这里简单处理，实际应该有更好的错误处理机制
+                                    }
+                                } else {
+                                    // 如果expr_value为NULL，处理错误情况
+                                    if (context->printf_func) {
+                                        LLVMValueRef error_str = LLVMBuildGlobalStringPtr(context->builder, "Error: Null expression value in print statement\n", "error_str");
+                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, &error_str, 1, "printf_error");
+                                    }
                                 }
                             }
                         }
