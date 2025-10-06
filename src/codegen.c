@@ -713,31 +713,36 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                             if (print_node->expression->type == NODE_LITERAL) {
                                 LiteralNode *literal = (LiteralNode *)print_node->expression;
                                 if (literal->literal_type == LITERAL_STRING) {
-                                    // 直接使用context中存储的puts函数引用
-                                    if (context->puts_func) {
-                                        // 创建字符串常量，确保正确处理
+                                    // 使用printf替代puts，避免自动添加换行符
+                                    if (context->printf_func) {
+                                        // 创建格式字符串
+                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%s", "format_str");
+                                         
+                                        // 创建字符串常量
                                         LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
-                                        
-                                        // 调用puts函数
-                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                                         
+                                        // 调用printf函数
+                                        LLVMValueRef printf_args[] = {format_str, str};
+                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
                                     } else {
-                                        // 如果puts_func为NULL，打印一个错误信息
+                                        // 如果printf_func为NULL，打印一个错误信息
                                         // 这里简单处理，实际应该有更好的错误处理机制
                                     }
                                 } else if (literal->literal_type == LITERAL_INT) {
                                     // 打印整数字面量
-                                    char buffer[32];
-                                    snprintf(buffer, sizeof(buffer), "%d", literal->value.int_value);
+                                    // 对于整数字面量，先创建一个整数常量
+                                    LLVMValueRef int_const = LLVMConstInt(LLVMInt32TypeInContext(context->context), literal->value.int_value, 0);
                                     
-                                    // 直接使用context中存储的puts函数引用
-                                    if (context->puts_func) {
-                                        // 创建字符串常量
-                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
+                                    // 使用printf替代puts，避免自动添加换行符
+                                    if (context->printf_func) {
+                                        // 创建格式字符串
+                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
                                         
-                                        // 调用puts函数
-                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
+                                        // 调用printf函数
+                                        LLVMValueRef printf_args[] = {format_str, int_const};
+                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
                                     } else {
-                                        // 如果puts_func为NULL，打印一个错误信息
+                                        // 如果printf_func为NULL，打印一个错误信息
                                         // 这里简单处理，实际应该有更好的错误处理机制
                                     }
                                 }
@@ -749,9 +754,9 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                                 if (expr_value) {
                                     // 直接使用context中存储的printf函数引用
                                     if (context->printf_func) {
-                                        // 创建格式字符串
-                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
-                                        
+                                        // 创建格式字符串，不添加换行符
+                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
+                                         
                                         // 调用printf函数直接打印整数表达式的值
                                         LLVMValueRef printf_args[] = {format_str, expr_value};
                                         LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
