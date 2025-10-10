@@ -75,12 +75,12 @@ clean:
 
 # 运行测试
 test: $(TARGET)
-	./$(TARGET) tests/1.ta -run
-	./$(TARGET) tests/hello.ta -run
-	./$(TARGET) tests/fibonacci.ta -run
+	./$(TARGET) tests/1.tp -run
+	./$(TARGET) tests/hello.tp -run
+	./$(TARGET) tests/fibonacci.tp -run
 
 test_hello: $(TARGET)
-	./$(TARGET) tests/hello.ta -o hello
+	./$(TARGET) tests/hello.tp -o hello
 	./hello
 
 .PHONY: all clean run
