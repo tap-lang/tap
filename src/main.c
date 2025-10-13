@@ -39,12 +39,12 @@ static char *read_file(const char *filename) {
 static void print_usage() {
     printf("用法: 4yue <源文件>\n");
     printf("选项:\n");
-    printf("  -h, --help    显示此帮助信息\n");
-    printf("  -o <文件>     指定输出文件\n");
-    printf("  -emit-ir      生成LLVM IR代码\n");
-    printf("  -emit-obj     生成目标文件\n");
-    printf("  -run          编译并运行程序\n");
-    printf("  -V, --version\t显示版本号\n");
+    printf("  -h, --help        显示此帮助信息\n");
+    printf("  -o <文件>         指定输出文件\n");
+    printf("  -ll, -emit-ir     生成LLVM IR代码\n");
+    printf("  -emit-obj         生成目标文件\n");
+    printf("  -run              编译并运行程序\n");
+    printf("  -V, --version     显示版本号\n");
 }
 
 static void print_version() {
@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
                 print_usage();
                 return 1;
             }
-        } else if (strcmp(argv[i], "-emit-ir") == 0) {
+        } else if (strcmp(argv[i], "-ll") == 0 || strcmp(argv[i], "-emit-ir") == 0) {
             emit_ir = 1;
         } else if (strcmp(argv[i], "-emit-obj") == 0) {
             emit_obj = 1;

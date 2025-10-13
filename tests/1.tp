@@ -3,7 +3,7 @@ fn main() {
     let b = -2;
     let c = a + b;
     let c = test_add(a, b);
-    print(c);
+    print("  a = %d\n  b = %d\n  c = a+b = %d\n"); // todo
     return 0;
 }
 

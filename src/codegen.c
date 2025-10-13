@@ -11,7 +11,7 @@ typedef struct Symbol {
 CodeGenContext *create_codegen_context(const char *module_name) {
     CodeGenContext *context = (CodeGenContext *)malloc(sizeof(CodeGenContext));
     if (!context) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Memory allocation failed\n");
         exit(1);
     }
 

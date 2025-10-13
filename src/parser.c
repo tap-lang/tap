@@ -69,7 +69,8 @@ static void consume(Parser *parser, enum TokenType expected_type) {
         free_token(old_token);
     } else {
         char message[256];
-        snprintf(message, sizeof(message), "期望 %d 类型的标记，但得到 %d 类型", expected_type, parser->current_token->type);
+        // snprintf(message, sizeof(message), "期望 %s 类型的标记，但得到 %s 类型", TokenNames[expected_type], TokenNames[parser->current_token->type]);
+        snprintf(message, sizeof(message), "期望 标记 `%s`，但得到 `%s`", TokenNames[expected_type], TokenNames[parser->current_token->type]);
         parser_error(parser, message);
     }
 }
@@ -91,6 +92,7 @@ static ASTNode *parse_block(Parser *parser) {
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
         // 解析语句
         if (parser->current_token->type == TOKEN_PRINT) {
+            printf("解析打印语句\n");
             // 解析打印语句
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);
@@ -250,6 +252,7 @@ static FunctionNode *parse_function(Parser *parser) {
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
         // 解析语句
         if (parser->current_token->type == TOKEN_PRINT) {
+            printf("解析打印语句\n");
             // 解析打印语句
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);
