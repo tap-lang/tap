@@ -71,7 +71,7 @@ $(TARGET): $(OBJECTS)
 # 清理生成的文件
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
-	rm -rf output *.ll
+	rm -rf output *.ll hello *.exe
 
 # 运行测试
 test: $(TARGET)
