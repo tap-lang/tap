@@ -10,7 +10,6 @@ typedef struct {
     Token *current_token;
 } Parser;
 
-// 函数声明
 Parser *create_parser(Lexer *lexer);
 ProgramNode *parse_program(Parser *parser);
 void free_parser(Parser *parser);

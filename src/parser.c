@@ -28,13 +28,14 @@ void free_parser(Parser *parser) {
 void print_code_line(const char *source_code, int line, int context_lines) {
     int start_line = line - context_lines;
     int end_line = line + context_lines;
-    int max_line_len = (int)log10(end_line) + 1;
+    int max_line_len = (int)log10(end_line) + 4;
+    int max_line_len2 = (int)log10(end_line);
     char *lines = strtok((char *)source_code, "\n");
     int current_line = 1;
     while (lines != NULL) {
         if (current_line >= start_line && current_line <= end_line) {
             if (current_line == line) {
-                printf("%*d  %s    <-- \n", max_line_len, current_line, lines);
+                printf("-> %*d  %s\n", max_line_len2, current_line, lines);
             } else {
                 printf("%*d  %s\n", max_line_len, current_line, lines);
             }
@@ -46,11 +47,12 @@ void print_code_line(const char *source_code, int line, int context_lines) {
 
 // 解析错误处理
 void parser_error(Parser *parser, const char *message) {
-    fprintf(stderr, "Parse error: (file %s, line %d, column %d): %s\n", 
+    fprintf(stderr, "Parse error: %s (file %s, line %d, column %d)\n", 
+            message,
             parser->lexer->filename,
             parser->current_token->line, 
-            parser->current_token->column, 
-            message);
+            parser->current_token->column
+    );
     printf("Current token: %s\n", parser->current_token->lexeme);
     // 打印当前代码行的上下3行
     print_code_line(parser->lexer->source, parser->current_token->line, 3);
