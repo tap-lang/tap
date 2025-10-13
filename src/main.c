@@ -10,7 +10,7 @@
 static char *read_file(const char *filename) {
     FILE *file = fopen(filename, "r");
     if (!file) {
-        fprintf(stderr, "无法打开文件: %s\n", filename);
+        fprintf(stderr, "Unable to open file: %s\n", filename);
         return NULL;
     }
 
@@ -22,7 +22,7 @@ static char *read_file(const char *filename) {
     // 分配内存
     char *buffer = (char *)malloc(file_size + 1);
     if (!buffer) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Memory allocation failed\n");
         fclose(file);
         return NULL;
     }
@@ -44,6 +44,11 @@ static void print_usage() {
     printf("  -emit-ir      生成LLVM IR代码\n");
     printf("  -emit-obj     生成目标文件\n");
     printf("  -run          编译并运行程序\n");
+    printf("  -V, --version\t显示版本号\n");
+}
+
+static void print_version() {
+    printf("4yue version 0.1.0\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -58,6 +63,9 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage();
+            return 0;
+        } else if (strcmp(argv[i], "-V") == 0 || strcmp(argv[i], "--version") == 0) {
+            print_version();
             return 0;
         } else if (strcmp(argv[i], "-o") == 0) {
             if (i + 1 < argc) {

@@ -59,7 +59,7 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# 编译C++源文件（因为LLVM主要是C++接口）
+# 编译C++源文件
 # $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
 #	$(CXX) $(CXXFLAGS) -c $< -o $@
 
