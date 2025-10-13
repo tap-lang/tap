@@ -6,6 +6,7 @@ build/
 output
 hello
 a.out
+*.exe
 
 *.dSYM/
 
