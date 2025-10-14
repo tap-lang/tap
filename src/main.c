@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
                 print_usage();
                 return 1;
             }
-        } else if (strcmp(argv[i], "-ll") == 0 || strcmp(argv[i], "-emit-ir") == 0) {
+        } else if (strcmp(argv[i], "-R") == 0 || strcmp(argv[i], "-emit-ir") == 0) {
             emit_ir = 1;
         } else if (strcmp(argv[i], "-emit-obj") == 0) {
             emit_obj = 1;
