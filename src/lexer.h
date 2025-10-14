@@ -52,14 +52,8 @@ enum TokenType {
     TOKEN_EOF          // 文件结束
 };
 
-// 标记名称
-const char *TokenNames[] = {
-    "fn", "return", "print", "let", "if", "else", "elseif",
-    "identifier", "integer", "string", "float", "bool",
-    "+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&&", "||",
-    "(", ")", "{", "}", ";", ",", ":",
-    "EOF"
-};
+// 标记名称 - 声明
+extern const char *TokenNames[];
 
 // 标记结构体
 typedef struct {

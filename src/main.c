@@ -41,7 +41,7 @@ static void print_usage() {
     printf("选项:\n");
     printf("  -h, --help        显示此帮助信息\n");
     printf("  -o <文件>         指定输出文件\n");
-    printf("  -ll, -emit-ir     生成LLVM IR代码\n");
+    printf("  -R, -emit-ir      生成LLVM IR代码\n");
     printf("  -emit-obj         生成目标文件\n");
     printf("  -run              编译并运行程序\n");
     printf("  -V, --version     显示版本号\n");
