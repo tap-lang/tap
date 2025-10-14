@@ -23,7 +23,7 @@ void free_parser(Parser *parser) {
         free(parser);
     }
 }
-
+ 
 // 打印代码当前行以及上下各context_lines行
 void print_code_line(const char *source_code, int line, int context_lines) {
     int start_line = line - context_lines;
@@ -92,7 +92,7 @@ static ASTNode *parse_block(Parser *parser) {
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
         // 解析语句
         if (parser->current_token->type == TOKEN_PRINT) {
-            printf("解析打印语句\n");
+            printf("解析打印语句 in {代码块} \n");
             // 解析打印语句
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);

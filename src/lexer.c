@@ -1,14 +1,5 @@
 #include "lexer.h"
 
-// 标记名称 - 定义
-const char *TokenNames[] = {
-    "fn", "return", "print", "let", "if", "else", "elseif",
-    "identifier", "integer", "string", "float", "bool",
-    "+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&&", "||",
-    "(", ")", "{", "}", ";", ",", ":",
-    "EOF"
-};
-
 // 创建词法分析器
 Lexer *create_lexer(const char *filename, const char *source) {
     Lexer *lexer = (Lexer *)malloc(sizeof(Lexer));
