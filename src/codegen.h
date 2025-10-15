@@ -12,7 +12,12 @@ typedef struct Symbol Symbol;
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
 
-
+// 符号表条目
+typedef struct Symbol {
+    char *name;
+    LLVMValueRef value;
+    struct Symbol *next;
+} Symbol;
 
 // 代码生成器上下文
 typedef struct {

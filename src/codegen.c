@@ -1,12 +1,5 @@
 #include "codegen.h"
 
-// 符号表条目
-typedef struct Symbol {
-    char *name;
-    LLVMValueRef value;
-    struct Symbol *next;
-} Symbol;
-
 // 创建代码生成器上下文
 CodeGenContext *create_codegen_context(const char *module_name) {
     CodeGenContext *context = (CodeGenContext *)malloc(sizeof(CodeGenContext));
@@ -861,7 +854,7 @@ int write_ir_to_file(CodeGenContext *context, const char *filename) {
     return 0;
 }
 
-// 写入目标代码到文件
+// TODO 写入目标代码到文件
 int write_object_to_file(CodeGenContext *context, const char *filename) {
     // 简化的实现
     fprintf(stderr, "写入目标文件功能尚未完全实现\n");
