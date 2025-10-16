@@ -6,13 +6,11 @@ fn main() {
     print("a = ");
     print(a);
     print("\n");
+
     print("b = ");
     print(b);
     print("\n");
-    print("a + b = ");
-    
-    let c = a + b;
-    print(c);
 
-    print("\n");
+    let c = a + b;
+    print("a + b = %d\n", c);
 }

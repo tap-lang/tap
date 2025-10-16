@@ -92,7 +92,7 @@ typedef struct {
 // 打印语句节点
 typedef struct {
     ASTNode base;
-    ASTNode *expression;   // 打印表达式
+    ASTNode *arguments;    // 参数列表
 } PrintNode;
 
 // 二元操作节点
@@ -126,7 +126,8 @@ LiteralNode *create_string_literal(char *value);
 LiteralNode *create_float_literal(double value);
 LiteralNode *create_bool_literal(int value);
 ReturnNode *create_return(ASTNode *expression);
-PrintNode *create_print(ASTNode *expression);
+PrintNode *create_print();
+void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 VarDeclNode *create_var_decl(char *name, ASTNode *expression);
 FunctionCallNode *create_function_call(char *name);

@@ -116,30 +116,54 @@ static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_n
         switch (statement->type) {
             case NODE_PRINT: {
                 PrintNode *print_node = (PrintNode *)statement;
-                if (print_node->expression) {
-                    if (print_node->expression->type == NODE_LITERAL) {
-                        LiteralNode *literal = (LiteralNode *)print_node->expression;
-                        if (literal->literal_type == LITERAL_STRING) {
-                            if (context->puts_func) {
-                                LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
-                                LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
-                            }
-                        } else if (literal->literal_type == LITERAL_INT) {
-                            char buffer[32];
-                            snprintf(buffer, sizeof(buffer), "%d", literal->value.int_value);
-                            if (context->puts_func) {
-                                LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
-                                LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
-                            }
+                if (print_node->arguments) {
+                    // 获取参数数量
+                    int arg_count = 0;
+                    ASTNode *arg_node = print_node->arguments;
+                    while (arg_node) {
+                        arg_count++;
+                        arg_node = arg_node->next;
+                    }
+                    
+                    // 准备参数数组
+                    LLVMValueRef *args = malloc(sizeof(LLVMValueRef) * arg_count);
+                    int actual_arg_count = 0;
+                    
+                    // 处理第一个参数（格式字符串）
+                    arg_node = print_node->arguments;
+                    if (arg_node->type == NODE_LITERAL && ((LiteralNode *)arg_node)->literal_type == LITERAL_STRING) {
+                        // 第一个参数是字符串，用作格式字符串
+                        LiteralNode *literal = (LiteralNode *)arg_node;
+                        args[0] = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "format_str");
+                        actual_arg_count = 1;
+                        
+                        // 处理剩余参数
+                        arg_node = arg_node->next;
+                        while (arg_node) {
+                            args[actual_arg_count++] = generate_expression(context, arg_node);
+                            arg_node = arg_node->next;
                         }
                     } else {
-                        LLVMValueRef expr_value = generate_expression(context, print_node->expression);
-                        if (expr_value && context->printf_func) {
-                            LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
-                            LLVMValueRef printf_args[] = {format_str, expr_value};
-                            LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
+                        // 如果第一个参数不是字符串，使用默认格式
+                        args[0] = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
+                        args[1] = generate_expression(context, arg_node);
+                        actual_arg_count = 2;
+                        
+                        // 处理剩余参数（如果有多个表达式）
+                        arg_node = arg_node->next;
+                        while (arg_node) {
+                            // 这里简化处理，实际应该动态构建格式字符串
+                            args[actual_arg_count++] = generate_expression(context, arg_node);
+                            arg_node = arg_node->next;
                         }
                     }
+                    
+                    // 调用printf函数
+                    if (context->printf_func) {
+                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, args, actual_arg_count, "printf_result");
+                    }
+                    
+                    free(args);
                 }
                 break;
             }
@@ -207,33 +231,57 @@ static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_n
             while (statement) {
                 switch (statement->type) {
                     case NODE_PRINT: {
-                        PrintNode *print_node = (PrintNode *)statement;
-                        if (print_node->expression) {
-                            if (print_node->expression->type == NODE_LITERAL) {
-                                LiteralNode *literal = (LiteralNode *)print_node->expression;
-                                if (literal->literal_type == LITERAL_STRING) {
-                                    if (context->puts_func) {
-                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
-                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
-                                    }
-                                } else if (literal->literal_type == LITERAL_INT) {
-                                    char buffer[32];
-                                    snprintf(buffer, sizeof(buffer), "%d", literal->value.int_value);
-                                    if (context->puts_func) {
-                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
-                                        LLVMBuildCall2(context->builder, context->puts_type, context->puts_func, &str, 1, "puts_result");
-                                    }
-                                }
-                            } else {
-                                LLVMValueRef expr_value = generate_expression(context, print_node->expression);
-                                if (expr_value && context->printf_func) {
-                                    LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
-                                    LLVMValueRef printf_args[] = {format_str, expr_value};
-                                    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
-                                }
-                            }
+                PrintNode *print_node = (PrintNode *)statement;
+                if (print_node->arguments) {
+                    // 获取参数数量
+                    int arg_count = 0;
+                    ASTNode *arg_node = print_node->arguments;
+                    while (arg_node) {
+                        arg_count++;
+                        arg_node = arg_node->next;
+                    }
+                    
+                    // 准备参数数组
+                    LLVMValueRef *args = malloc(sizeof(LLVMValueRef) * arg_count);
+                    int actual_arg_count = 0;
+                    
+                    // 处理第一个参数（格式字符串）
+                    arg_node = print_node->arguments;
+                    if (arg_node->type == NODE_LITERAL && ((LiteralNode *)arg_node)->literal_type == LITERAL_STRING) {
+                        // 第一个参数是字符串，用作格式字符串
+                        LiteralNode *literal = (LiteralNode *)arg_node;
+                        args[0] = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "format_str");
+                        actual_arg_count = 1;
+                        
+                        // 处理剩余参数
+                        arg_node = arg_node->next;
+                        while (arg_node) {
+                            args[actual_arg_count++] = generate_expression(context, arg_node);
+                            arg_node = arg_node->next;
                         }
-                        break;
+                    } else {
+                        // 如果第一个参数不是字符串，使用默认格式
+                        args[0] = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
+                        args[1] = generate_expression(context, arg_node);
+                        actual_arg_count = 2;
+                        
+                        // 处理剩余参数（如果有多个表达式）
+                        arg_node = arg_node->next;
+                        while (arg_node) {
+                            // 这里简化处理，实际应该动态构建格式字符串
+                            args[actual_arg_count++] = generate_expression(context, arg_node);
+                            arg_node = arg_node->next;
+                        }
+                    }
+                    
+                    // 调用printf函数
+                    if (context->printf_func) {
+                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, args, actual_arg_count, "printf_result");
+                    }
+                    
+                    free(args);
+                }
+                break;
                     }
                     case NODE_VAR_DECL: {
                         VarDeclNode *var_decl = (VarDeclNode *)statement;
@@ -494,62 +542,65 @@ static void generate_function(CodeGenContext *context, FunctionNode *function) {
         switch (statement->type) {
             case NODE_PRINT: {
                 PrintNode *print_node = (PrintNode *)statement;
-                if (print_node->expression) {
-                    if (print_node->expression->type == NODE_LITERAL) {
-                        LiteralNode *literal = (LiteralNode *)print_node->expression;
-                        if (literal->literal_type == LITERAL_STRING) {
-                             // 为print函数创建puts调用 - 使用上下文
-                             LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
-                             LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
-                             LLVMTypeRef puts_type = LLVMFunctionType(LLVMInt32TypeInContext(context->context), &char_ptr_type, 1, 0);
-                             LLVMValueRef puts_func = LLVMAddFunction(context->module, "puts", puts_type);
-                            
-                            // 创建字符串常量，确保正确处理
-                            LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
-                            
-                            // 正确调用puts函数
-                            LLVMBuildCall2(context->builder, puts_type, puts_func, &str, 1, "puts_result");
-                        } else if (literal->literal_type == LITERAL_INT) {
-                            // 打印整数字面量
-                            char buffer[32];
-                            snprintf(buffer, sizeof(buffer), "%d", literal->value.int_value);
-                            
-                            // 为print函数创建puts调用 - 使用上下文
-                            LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
-                            LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
-                            LLVMTypeRef puts_type = LLVMFunctionType(LLVMInt32TypeInContext(context->context), &char_ptr_type, 1, 0);
-                            LLVMValueRef puts_func = LLVMAddFunction(context->module, "puts", puts_type);
-                            
-                            // 创建字符串常量
-                            LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, buffer, "int_str_const");
-                            
-                            // 正确调用puts函数
-                            LLVMBuildCall2(context->builder, puts_type, puts_func, &str, 1, "puts_result");
+                if (print_node->arguments) {
+                    // 获取参数数量
+                    int arg_count = 0;
+                    ASTNode *arg_node = print_node->arguments;
+                    while (arg_node) {
+                        arg_count++;
+                        arg_node = arg_node->next;
+                    }
+                    
+                    // 准备参数数组
+                    LLVMValueRef *args = malloc(sizeof(LLVMValueRef) * (arg_count + 1)); // +1 用于格式字符串
+                    int actual_arg_count = 0;
+                    
+                    // 处理第一个参数（格式字符串）
+                    arg_node = print_node->arguments;
+                    if (arg_node->type == NODE_LITERAL && ((LiteralNode *)arg_node)->literal_type == LITERAL_STRING) {
+                        // 第一个参数是字符串，用作格式字符串
+                        LiteralNode *literal = (LiteralNode *)arg_node;
+                        args[0] = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "format_str");
+                        actual_arg_count = 1;
+                        
+                        // 处理剩余参数
+                        arg_node = arg_node->next;
+                        while (arg_node) {
+                            args[actual_arg_count++] = generate_expression(context, arg_node);
+                            arg_node = arg_node->next;
                         }
                     } else {
-                        // 处理表达式（包括变量和计算表达式）
-                        // 首先获取表达式的值
-                        LLVMValueRef expr_value = generate_expression(context, print_node->expression);
+                        // 如果第一个参数不是字符串，使用默认格式
+                        args[0] = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
+                        args[1] = generate_expression(context, arg_node);
+                        actual_arg_count = 2;
                         
-                        if (expr_value) {
-                            // 为printf函数创建声明 - 使用上下文
-                            LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
-                            LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
-                            LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
-                            
-                            // printf函数类型: int printf(const char *format, ...)
-                            // 对于可变参数函数，只需要指定第一个参数类型
-                            LLVMTypeRef printf_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 1);
-                            LLVMValueRef printf_func = LLVMAddFunction(context->module, "printf", printf_type);
-                            
-                            // 创建格式字符串
-                            LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d\n", "format_str");
-                            
-                            // 调用printf函数直接打印整数表达式的值
-                            LLVMValueRef printf_args[] = {format_str, expr_value};
-                            LLVMBuildCall2(context->builder, printf_type, printf_func, printf_args, 2, "printf_result");
+                        // 处理剩余参数（如果有多个表达式）
+                        arg_node = arg_node->next;
+                        while (arg_node) {
+                            // 这里简化处理，实际应该动态构建格式字符串
+                            args[actual_arg_count++] = generate_expression(context, arg_node);
+                            arg_node = arg_node->next;
                         }
                     }
+                    
+                    // 调用printf函数
+                    if (context->printf_func) {
+                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, args, actual_arg_count, "printf_result");
+                    } else {
+                        // 如果上下文没有printf_func，创建它
+                        LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
+                        LLVMTypeRef char_ptr_type = LLVMPointerType(int8_type, 0);
+                        LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
+                        
+                        // printf函数类型: int printf(const char *format, ...)
+                        LLVMTypeRef printf_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 1);
+                        LLVMValueRef printf_func = LLVMAddFunction(context->module, "printf", printf_type);
+                        
+                        LLVMBuildCall2(context->builder, printf_type, printf_func, args, actual_arg_count, "printf_result");
+                    }
+                    
+                    free(args);
                 }
                 break;
             }
@@ -702,69 +753,66 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                 switch (statement->type) {
                     case NODE_PRINT: {
                         PrintNode *print_node = (PrintNode *)statement;
-                        if (print_node->expression) {
-                            if (print_node->expression->type == NODE_LITERAL) {
-                                LiteralNode *literal = (LiteralNode *)print_node->expression;
-                                if (literal->literal_type == LITERAL_STRING) {
-                                    // 使用printf替代puts，避免自动添加换行符
-                                    if (context->printf_func) {
-                                        // 创建格式字符串
-                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%s", "format_str");
-                                         
-                                        // 创建字符串常量
-                                        LLVMValueRef str = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "str_const");
-                                         
-                                        // 调用printf函数
-                                        LLVMValueRef printf_args[] = {format_str, str};
-                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
-                                    } else {
-                                        // 如果printf_func为NULL，打印一个错误信息
-                                        // 这里简单处理，实际应该有更好的错误处理机制
-                                    }
-                                } else if (literal->literal_type == LITERAL_INT) {
-                                    // 打印整数字面量
-                                    // 对于整数字面量，先创建一个整数常量
-                                    LLVMValueRef int_const = LLVMConstInt(LLVMInt32TypeInContext(context->context), literal->value.int_value, 0);
-                                    
-                                    // 使用printf替代puts，避免自动添加换行符
-                                    if (context->printf_func) {
-                                        // 创建格式字符串
-                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
-                                        
-                                        // 调用printf函数
-                                        LLVMValueRef printf_args[] = {format_str, int_const};
-                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
-                                    } else {
-                                        // 如果printf_func为NULL，打印一个错误信息
-                                        // 这里简单处理，实际应该有更好的错误处理机制
-                                    }
-                                }
-                            } else {
-                                // 处理表达式（包括变量和计算表达式）
-                                // 首先获取表达式的值
-                                LLVMValueRef expr_value = generate_expression(context, print_node->expression);
-                                
-                                if (expr_value) {
-                                    // 直接使用context中存储的printf函数引用
-                                    if (context->printf_func) {
-                                        // 创建格式字符串，不添加换行符
-                                        LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
-                                         
-                                        // 调用printf函数直接打印整数表达式的值
-                                        LLVMValueRef printf_args[] = {format_str, expr_value};
-                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, printf_args, 2, "printf_result");
-                                    } else {
-                                        // 如果printf_func为NULL，打印一个错误信息
-                                        // 这里简单处理，实际应该有更好的错误处理机制
-                                    }
-                                } else {
-                                    // 如果expr_value为NULL，处理错误情况
-                                    if (context->printf_func) {
-                                        LLVMValueRef error_str = LLVMBuildGlobalStringPtr(context->builder, "Error: Null expression value in print statement\n", "error_str");
-                                        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, &error_str, 1, "printf_error");
-                                    }
-                                }
+                        if (print_node->arguments && context->printf_func) {
+                            // 计数参数数量
+                            int actual_arg_count = 0;
+                            ASTNode *current_arg = print_node->arguments;
+                            while (current_arg) {
+                                actual_arg_count++;
+                                current_arg = current_arg->next;
                             }
+                            
+                            // 检查是否只有一个非字符串参数
+                            if (actual_arg_count == 1 && 
+                                print_node->arguments->type != NODE_LITERAL) {
+                                // 只有一个非字符串参数，自动添加%d格式字符串
+                                LLVMValueRef expr_value = generate_expression(context, print_node->arguments);
+                                if (expr_value) {
+                                    LLVMValueRef format_str = LLVMBuildGlobalStringPtr(context->builder, "%d", "format_str");
+                                    LLVMValueRef args[] = {format_str, expr_value};
+                                    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, args, 2, "printf_result");
+                                }
+                                break;
+                            }
+                            
+                            // 对于单个字符串参数或多个参数的情况
+                            int total_args = actual_arg_count;
+                            LLVMValueRef *args = (LLVMValueRef *)malloc(sizeof(LLVMValueRef) * total_args);
+                            
+                            // 处理第一个参数
+                            ASTNode *first_arg = print_node->arguments;
+                            if (first_arg->type == NODE_LITERAL && ((LiteralNode *)first_arg)->literal_type == LITERAL_STRING) {
+                                // 第一个参数是字符串，直接作为格式字符串
+                                LiteralNode *literal = (LiteralNode *)first_arg;
+                                args[0] = LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value, "format_str");
+                            } else {
+                                // 第一个参数不是字符串，但不是唯一参数，需要添加格式字符串
+                                // 这种情况比较特殊，这里简单处理为错误情况
+                                LLVMValueRef error_str = LLVMBuildGlobalStringPtr(context->builder, "Error: First argument must be string in multi-argument print\n", "error_str");
+                                LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, &error_str, 1, "printf_error");
+                                free(args);
+                                break;
+                            }
+                            
+                            // 处理剩余参数
+                            int arg_index = 1;
+                            ASTNode *next_arg = print_node->arguments->next;
+                            while (next_arg && arg_index < total_args) {
+                                LLVMValueRef arg_value = generate_expression(context, next_arg);
+                                if (!arg_value) {
+                                    // 错误处理
+                                    LLVMValueRef error_str = LLVMBuildGlobalStringPtr(context->builder, "Error: Failed to generate expression in print statement\n", "error_str");
+                                    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, &error_str, 1, "printf_error");
+                                    free(args);
+                                    break;
+                                }
+                                args[arg_index++] = arg_value;
+                                next_arg = next_arg->next;
+                            }
+                            
+                            // 调用printf函数
+                            LLVMBuildCall2(context->builder, context->printf_type, context->printf_func, args, total_args, "printf_result");
+                            free(args);
                         }
                         break;
                     }

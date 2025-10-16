@@ -111,7 +111,7 @@ ReturnNode *create_return(ASTNode *expression) {
 }
 
 // 创建打印语句节点
-PrintNode *create_print(ASTNode *expression) {
+PrintNode *create_print() {
     PrintNode *print_node = (PrintNode *)malloc(sizeof(PrintNode));
     if (!print_node) {
         fprintf(stderr, "内存分配失败\n");
@@ -119,8 +119,25 @@ PrintNode *create_print(ASTNode *expression) {
     }
     print_node->base.type = NODE_PRINT;
     print_node->base.next = NULL;
-    print_node->expression = expression;
+    print_node->arguments = NULL;
     return print_node;
+}
+
+// 添加打印参数
+void add_print_argument(PrintNode *print_node, ASTNode *argument) {
+    if (!argument) return;
+    
+    // 将参数添加到参数列表的末尾
+    if (!print_node->arguments) {
+        print_node->arguments = argument;
+    } else {
+        ASTNode *current = print_node->arguments;
+        while (current->next) {
+            current = current->next;
+        }
+        current->next = argument;
+    }
+    argument->next = NULL;
 }
 
 // 创建二元操作节点
@@ -273,7 +290,8 @@ void free_ast(ASTNode *node) {
         }
         case NODE_PRINT: {
             PrintNode *print_node = (PrintNode *)node;
-            free_ast(print_node->expression);
+            // 释放参数链表 - 直接递归释放整个参数链表
+            free_ast(print_node->arguments);
             break;
         }
         case NODE_BINARY_OP: {

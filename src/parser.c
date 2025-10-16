@@ -76,12 +76,12 @@ static void consume(Parser *parser, enum TokenType expected_type) {
 }
 
 // 前置声明
-static ASTNode *parse_expression(Parser *parser);
-static ASTNode *parse_term(Parser *parser);
-static ASTNode *parse_factor(Parser *parser);
-static ASTNode *parse_function_call(Parser *parser, char *function_name);
-static ASTNode *parse_if_statement(Parser *parser);
-static ASTNode *parse_block(Parser *parser);
+static ASTNode *parse_expression(Parser *parser); // 解析表达式（支持加法和减法）
+static ASTNode *parse_term(Parser *parser); // 解析项（乘法和除法）
+static ASTNode *parse_factor(Parser *parser); // 解析因子（基本表达式）
+static ASTNode *parse_function_call(Parser *parser, char *function_name); // 解析函数调用
+static ASTNode *parse_if_statement(Parser *parser); // 解析条件语句
+static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
 // 解析代码块（由花括号包围的语句序列）
 static ASTNode *parse_block(Parser *parser) {
@@ -97,14 +97,27 @@ static ASTNode *parse_block(Parser *parser) {
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);
             
-            // 解析打印参数（支持表达式）
-            ASTNode *expression = parse_expression(parser);
+            // 创建打印节点
+            PrintNode *print_node = create_print();
+            
+            // 解析打印参数列表（支持多个表达式，逗号分隔）
+            if (parser->current_token->type != TOKEN_RPAREN) {
+                // 解析第一个参数
+                ASTNode *expression = parse_expression(parser);
+                add_print_argument(print_node, expression);
+                
+                // 解析更多参数
+                while (parser->current_token->type == TOKEN_COMMA) {
+                    consume(parser, TOKEN_COMMA);
+                    expression = parse_expression(parser);
+                    add_print_argument(print_node, expression);
+                }
+            }
             
             consume(parser, TOKEN_RPAREN);
             consume(parser, TOKEN_SEMICOLON);
             
-            // 创建打印节点并添加到代码块
-            PrintNode *print_node = create_print(expression);
+            // 添加到代码块
             add_statement(block, (ASTNode *)print_node);
         } else if (parser->current_token->type == TOKEN_LET) {
             // 解析let语句
@@ -257,14 +270,27 @@ static FunctionNode *parse_function(Parser *parser) {
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);
             
-            // 解析打印参数（支持表达式）
-            ASTNode *expression = parse_expression(parser);
+            // 创建打印节点
+            PrintNode *print_node = create_print();
+            
+            // 解析打印参数列表（支持多个表达式，逗号分隔）
+            if (parser->current_token->type != TOKEN_RPAREN) {
+                // 解析第一个参数
+                ASTNode *expression = parse_expression(parser);
+                add_print_argument(print_node, expression);
+                
+                // 解析更多参数
+                while (parser->current_token->type == TOKEN_COMMA) {
+                    consume(parser, TOKEN_COMMA);
+                    expression = parse_expression(parser);
+                    add_print_argument(print_node, expression);
+                }
+            }
             
             consume(parser, TOKEN_RPAREN);
             consume(parser, TOKEN_SEMICOLON);
             
-            // 创建打印节点并添加到函数体
-            PrintNode *print_node = create_print(expression);
+            // 添加到函数体
             add_statement(function, (ASTNode *)print_node);
         } else if (parser->current_token->type == TOKEN_LET) {
             // 解析let语句
