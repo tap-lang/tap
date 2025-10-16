@@ -51,13 +51,16 @@ static void print_version() {
     printf("4yue version 0.1.0\n");
 }
 
+// 全局debug变量，供其他模块使用
+int debug = 0;
+
 int main(int argc, char *argv[]) {
     // 默认选项
+    char *input_file = NULL;
     char *output_file = NULL;
     int emit_ir = 0;
     int emit_obj = 0;
     int run = 0;
-    char *input_file = NULL;
 
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
@@ -81,6 +84,8 @@ int main(int argc, char *argv[]) {
             emit_obj = 1;
         } else if (strcmp(argv[i], "-run") == 0) {
             run = 1;
+        } else if (strcmp(argv[i], "-debug") == 0) {
+            debug = 1;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "错误: 未知选项 %s\n", argv[i]);
             print_usage();
@@ -101,6 +106,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (debug) {
+        printf("调试信息:\n");
+    }
 
     // 读取源文件
     char *source_code = read_file(input_file);
@@ -154,7 +162,7 @@ int main(int argc, char *argv[]) {
         }
     } else if (run) {
         // 使用LLVM解释器(lli)执行生成的代码，而不是自己实现执行逻辑
-        printf("执行程序...\n");
+        if (debug) printf("执行程序...\n");
         
         // 生成临时IR文件
         char *temp_ir_file = "temp_output.ll";
@@ -165,7 +173,7 @@ int main(int argc, char *argv[]) {
             // 我们的修改确保了函数名不会被修改，所以main函数应该是可用的
             int result = system("lli temp_output.ll");
             
-            printf("程序执行完毕，返回值: %d\n", WEXITSTATUS(result));
+            if (debug) printf("程序执行完毕，返回值: %d\n", WEXITSTATUS(result));
             
             // 删除临时文件
             remove(temp_ir_file);

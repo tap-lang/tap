@@ -13,4 +13,6 @@ fn main() {
 
     let c = a + b;
     print("a + b = %d\n", c);
+
+    print(4 * 101);
 }

@@ -2,6 +2,8 @@
 
 #include "parser.h"
 
+extern int debug;
+
 // 创建解析器
 Parser *create_parser(Lexer *lexer) {
     Parser *parser = (Parser *)malloc(sizeof(Parser));
@@ -214,6 +216,9 @@ static ASTNode *parse_if_statement(Parser *parser) {
 
 // 解析函数定义
 static FunctionNode *parse_function(Parser *parser) {
+    
+    if (debug) printf("  - 解析函数定义\n");
+
     // 解析 fn 关键字
     consume(parser, TOKEN_FN);
     
@@ -261,11 +266,15 @@ static FunctionNode *parse_function(Parser *parser) {
     // 解析函数体
     consume(parser, TOKEN_LBRACE);
     
+    if (debug) printf("  - 解析函数体\n");
+
     // 解析函数体中的语句
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
         // 解析语句
         if (parser->current_token->type == TOKEN_PRINT) {
-            printf("解析打印语句\n");
+            
+            if (debug) printf("  - 解析函数体中 print 语句\n");
+
             // 解析打印语句
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);

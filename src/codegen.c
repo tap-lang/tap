@@ -1,5 +1,7 @@
 #include "codegen.h"
 
+extern int debug;
+
 // 创建代码生成器上下文
 CodeGenContext *create_codegen_context(const char *module_name) {
     CodeGenContext *context = (CodeGenContext *)malloc(sizeof(CodeGenContext));
@@ -643,6 +645,7 @@ static void generate_function(CodeGenContext *context, FunctionNode *function) {
 
 // 生成程序代码
 void generate_code(CodeGenContext *context, ProgramNode *program) {
+    if (debug) printf("- 生成代码\n");
     // 预定义标准库函数声明（一次性添加）
     // 初始化函数引用和类型
     context->printf_func = NULL;
@@ -707,7 +710,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
             FunctionNode *func = (FunctionNode *)function_node;
             
             // 打印每个函数的名称
-            printf("生成函数: %s\n", func->name);
+            if (debug) printf("  - 生成函数: %s\n", func->name);
             
             // 获取之前创建的函数声明
             LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, func->name);

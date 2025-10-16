@@ -1,7 +1,10 @@
 #include "ast.h"
 
+extern int debug;
+
 // 创建程序节点
 ProgramNode *create_program() {
+    if (debug) printf("- 创建程序节点\n");
     ProgramNode *program = (ProgramNode *)malloc(sizeof(ProgramNode));
     if (!program) {
         fprintf(stderr, "内存分配失败\n");
@@ -15,6 +18,7 @@ ProgramNode *create_program() {
 
 // 创建函数节点
 FunctionNode *create_function(char *name) {
+    if (debug) printf("  - 创建函数节点: %s\n", name);
     FunctionNode *function = (FunctionNode *)malloc(sizeof(FunctionNode));
     if (!function) {
         fprintf(stderr, "内存分配失败\n");
@@ -198,6 +202,9 @@ void add_function(ProgramNode *program, FunctionNode *function) {
 
 // 添加参数到函数
 void add_param(FunctionNode *function, IdentifierNode *param) {
+    
+    if (debug) printf("  - 添加函数参数: %s\n", param->name);
+
     if (!function->params) {
         function->params = (ASTNode *)param;
     } else {
