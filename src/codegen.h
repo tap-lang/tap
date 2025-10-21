@@ -27,9 +27,9 @@ typedef struct {
     LLVMContextRef context;         // LLVM上下文，用于存储LLVM值
     Symbol *symbols;                // 符号表，用于存储变量和它们对应的LLVM值
     LLVMValueRef printf_func;       // printf函数引用
-    LLVMValueRef puts_func;         // puts函数引用
+    // LLVMValueRef puts_func;         // puts函数引用
     LLVMTypeRef printf_type;        // printf函数类型
-    LLVMTypeRef puts_type;          // puts函数类型
+    // LLVMTypeRef puts_type;          // puts函数类型
 } CodeGenContext;
 
 // 函数声明

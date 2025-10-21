@@ -649,9 +649,10 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     // 预定义标准库函数声明（一次性添加）
     // 初始化函数引用和类型
     context->printf_func = NULL;
-    context->puts_func = NULL;
     context->printf_type = NULL;
-    context->puts_type = NULL;
+    
+    // context->puts_func = NULL;
+    // context->puts_type = NULL;
     
     // 声明printf函数
     LLVMTypeRef int8_type = LLVMInt8TypeInContext(context->context);
@@ -663,8 +664,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     context->printf_func = LLVMAddFunction(context->module, "printf", context->printf_type);
     
     // 声明puts函数
-    context->puts_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 0);
-    context->puts_func = LLVMAddFunction(context->module, "puts", context->puts_type);
+    // context->puts_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 0);
+    // context->puts_func = LLVMAddFunction(context->module, "puts", context->puts_type);
     
     
     // 第一步：先为所有函数添加声明（函数原型）
@@ -686,6 +687,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
             // 创建参数类型数组
             LLVMTypeRef *param_types = malloc(sizeof(LLVMTypeRef) * param_count);
             for (int i = 0; i < param_count; i++) {
+                // todo 支持其他类型参数
+                // if(debug) printf("  - 参数 %d %s 类型: %d\n", i, func->params[i]->name, LLVMInt32TypeInContext(context->context));
                 param_types[i] = LLVMInt32TypeInContext(context->context);
             }
             
