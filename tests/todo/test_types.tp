@@ -1,4 +1,4 @@
-fn main() {
+fn main(): i32 {
     let a = 5;
     let b = -2;
     let c = a + b;
@@ -7,6 +7,6 @@ fn main() {
     return 0;
 }
 
-fn test_add(a, b) {
+fn test_add(a: i32, b: i32): i32 {
     return a + b;
 }
