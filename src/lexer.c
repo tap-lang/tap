@@ -1,5 +1,7 @@
 #include "lexer.h"
 
+extern int debug;
+
 // 创建词法分析器
 Lexer *create_lexer(const char *filename, const char *source) {
     Lexer *lexer = (Lexer *)malloc(sizeof(Lexer));
@@ -124,13 +126,20 @@ static enum TokenType check_keyword(const char *text, int length) {
     if (length == 5 && strncmp(text, "print", 5) == 0) return TOKEN_PRINT;
     if (length == 4 && strncmp(text, "true", 4) == 0) return TOKEN_BOOL;
     if (length == 5 && strncmp(text, "false", 5) == 0) return TOKEN_BOOL;
+    if (length == 3 && strncmp(text, "i32", 3) == 0) return TOKEN_I32;
+    if (length == 3 && strncmp(text, "i64", 3) == 0) return TOKEN_I64;
+    if (length == 3 && strncmp(text, "f32", 3) == 0) return TOKEN_F32;
+    if (length == 3 && strncmp(text, "f64", 3) == 0) return TOKEN_F64;
+    if (length == 6 && strncmp(text, "string", 6) == 0) return TOKEN_STRING;
+    if (length == 5 && strncmp(text, "array", 5) == 0) return TOKEN_ARRAY;
+    
     return TOKEN_IDENTIFIER;
 }
 
 // 解析标识符或关键字
 static Token *identifier(Lexer *lexer) {
     const char *start = lexer->current;
-    while (isalpha(peek(lexer)) || peek(lexer) == '_') {
+    while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_') {
         advance(lexer);
     }
     
@@ -139,6 +148,7 @@ static Token *identifier(Lexer *lexer) {
     // 检查是否是关键字
     enum TokenType keyword_type = check_keyword(token->lexeme, strlen(token->lexeme));
     if (keyword_type != TOKEN_IDENTIFIER) {
+        if(debug) printf("Identified keyword: '%s' as type %d\n", token->lexeme, keyword_type);
         token->type = keyword_type;
         
         // 为布尔值设置值
@@ -170,10 +180,10 @@ static Token *number(Lexer *lexer) {
     
     Token *token;
     if (has_dot) {
-        token = create_token(lexer, TOKEN_FLOAT, start, lexer->current);
+        token = create_token(lexer, TOKEN_F32, start, lexer->current);
         token->value.float_value = atof(token->lexeme);
     } else {
-        token = create_token(lexer, TOKEN_INTEGER, start, lexer->current);
+        token = create_token(lexer, TOKEN_I32, start, lexer->current);
         token->value.int_value = atoi(token->lexeme);
     }
     

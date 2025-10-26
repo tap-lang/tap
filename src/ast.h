@@ -18,7 +18,8 @@ enum NodeType {
     NODE_BINARY_OP,                 // 二元操作符节点
     NODE_VAR_DECL,                  // 变量声明节点
     NODE_FUNCTION_CALL,             // 函数调用节点
-    NODE_IF_STATEMENT               // 条件语句节点
+    NODE_IF_STATEMENT,              // 条件语句节点
+    NODE_VAR_TYPE                   // 数据类型节点
 };
 
 // 字面量类型
@@ -62,6 +63,7 @@ typedef struct {
     ASTNode base;
     char *name;            // 函数名
     ASTNode *params;       // 参数列表
+    ASTNode *param_types;  // 参数类型列表
     ASTNode *body;         // 函数体语句列表
 } FunctionNode;
 
@@ -103,10 +105,17 @@ typedef struct {
     ASTNode *right;        // 右操作数
 } BinaryOpNode;
 
+// 变量类型节点
+typedef struct {
+    ASTNode base;
+    enum LiteralType type;  // 使用现有的LiteralType枚举表示类型
+} VarTypeNode;
+
 // 变量声明节点
 typedef struct {
     ASTNode base;
     char *name;            // 变量名
+    VarTypeNode *type;     // 变量类型
     ASTNode *expression;   // 初始化表达式
 } VarDeclNode;
 
@@ -121,6 +130,7 @@ typedef struct {
 ProgramNode *create_program();
 FunctionNode *create_function(char *name);
 IdentifierNode *create_identifier(char *name);
+VarTypeNode *create_var_type(enum LiteralType type);
 LiteralNode *create_int_literal(int value);
 LiteralNode *create_string_literal(char *value);
 LiteralNode *create_float_literal(double value);
@@ -129,12 +139,13 @@ ReturnNode *create_return(ASTNode *expression);
 PrintNode *create_print();
 void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
-VarDeclNode *create_var_decl(char *name, ASTNode *expression);
+VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression);
 FunctionCallNode *create_function_call(char *name);
 
 // 添加子节点的函数
 void add_function(ProgramNode *program, FunctionNode *function);
 void add_param(FunctionNode *function, IdentifierNode *param);
+void add_param_type(FunctionNode *function, VarTypeNode *type);
 void add_statement(FunctionNode *function, ASTNode *statement);
 void add_argument(FunctionCallNode *function_call, ASTNode *argument);
 

@@ -4,6 +4,11 @@
 
 extern int debug;
 
+// 辅助函数：打印token信息
+void print_token(Token *token) {
+    printf("Token: type=%s, lexeme='%s'\n", TokenNames[token->type], token->lexeme);
+}
+
 // 创建解析器
 Parser *create_parser(Lexer *lexer) {
     Parser *parser = (Parser *)malloc(sizeof(Parser));
@@ -132,6 +137,23 @@ static ASTNode *parse_block(Parser *parser) {
             char *var_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
             
+            // 解析可选的类型注解
+            VarTypeNode *type = NULL;
+            if (parser->current_token->type == TOKEN_COLON) {
+                consume(parser, TOKEN_COLON);
+                
+                // 解析类型
+                if (parser->current_token->type == TOKEN_I32) {
+                    type = create_var_type(TOKEN_I32);
+                    consume(parser, TOKEN_I32);
+                } else if (parser->current_token->type == TOKEN_F32) {
+                    type = create_var_type(TOKEN_F32);
+                    consume(parser, TOKEN_F32);
+                } else {
+                    parser_error(parser, "未知的类型");
+                }
+            }
+            
             // 解析等号
             consume(parser, TOKEN_ASSIGN);
             
@@ -141,7 +163,7 @@ static ASTNode *parse_block(Parser *parser) {
             consume(parser, TOKEN_SEMICOLON);
             
             // 创建变量声明节点并添加到代码块
-            VarDeclNode *var_decl = create_var_decl(var_name, expression);
+            VarDeclNode *var_decl = create_var_decl(var_name, type, expression);
             free(var_name);
             add_statement(block, (ASTNode *)var_decl);
         } else if (parser->current_token->type == TOKEN_RETURN) {
@@ -236,14 +258,49 @@ static FunctionNode *parse_function(Parser *parser) {
     // 解析参数列表
     consume(parser, TOKEN_LPAREN);
     
+    if(debug) printf("  - 解析参数列表\n");
+
     // 解析参数
     if (parser->current_token->type == TOKEN_IDENTIFIER) {
+         if(debug) printf("  - 解析第一个参数\n");
         // 解析第一个参数
         char *param_name = strdup(parser->current_token->lexeme);
         consume(parser, TOKEN_IDENTIFIER);
         IdentifierNode *param = create_identifier(param_name);
         free(param_name);
         add_param(function, param);
+
+        // 解析参数类型
+        if (parser->current_token->type == TOKEN_COLON) {
+            consume(parser, TOKEN_COLON);
+            
+            VarTypeNode *param_type = NULL;
+            
+            if (parser->current_token->type == TOKEN_I32) {
+                consume(parser, TOKEN_I32);
+                param_type = create_var_type(LITERAL_INT);
+            } else if (parser->current_token->type == TOKEN_F32) {
+                consume(parser, TOKEN_F32);
+                param_type = create_var_type(LITERAL_FLOAT);
+            } else if (parser->current_token->type == TOKEN_BOOL) {
+                consume(parser, TOKEN_BOOL);
+                param_type = create_var_type(LITERAL_BOOL);
+            } else if (parser->current_token->type == TOKEN_STRING) {
+                consume(parser, TOKEN_STRING);
+                param_type = create_var_type(LITERAL_STRING);
+            } else if (parser->current_token->type == TOKEN_ARRAY) {
+                consume(parser, TOKEN_ARRAY);
+                // 数组类型暂时使用LITERAL_STRING作为占位符
+                param_type = create_var_type(LITERAL_STRING);
+            } else {
+                parser_error(parser, "期望参数类型");
+            }
+            
+            // 将参数类型添加到函数节点
+            if (param_type) {
+                add_param_type(function, param_type);
+            }
+        }
         
         // 解析更多参数
         while (parser->current_token->type == TOKEN_COMMA) {
@@ -258,10 +315,68 @@ static FunctionNode *parse_function(Parser *parser) {
             param = create_identifier(param_name);
             free(param_name);
             add_param(function, param);
+            
+            // 解析参数类型
+            if (parser->current_token->type == TOKEN_COLON) {
+                consume(parser, TOKEN_COLON);
+                
+                VarTypeNode *param_type = NULL;
+                
+                if (parser->current_token->type == TOKEN_I32) {
+                    consume(parser, TOKEN_I32);
+                    param_type = create_var_type(LITERAL_INT);
+                } else if (parser->current_token->type == TOKEN_F32) {
+                    consume(parser, TOKEN_F32);
+                    param_type = create_var_type(LITERAL_FLOAT);
+                } else if (parser->current_token->type == TOKEN_BOOL) {
+                    consume(parser, TOKEN_BOOL);
+                    param_type = create_var_type(LITERAL_BOOL);
+                } else if (parser->current_token->type == TOKEN_STRING) {
+                    consume(parser, TOKEN_STRING);
+                    param_type = create_var_type(LITERAL_STRING);
+                } else if (parser->current_token->type == TOKEN_ARRAY) {
+                    consume(parser, TOKEN_ARRAY);
+                    param_type = create_var_type(LITERAL_STRING);
+                } else {
+                    parser_error(parser, "期望参数类型");
+                }
+                
+                // 将参数类型添加到函数节点
+                if (param_type) {
+                    add_param_type(function, param_type);
+                }
+            }
         }
     }
     
     consume(parser, TOKEN_RPAREN);
+    
+    // 解析函数返回类型（如果有）
+    if (parser->current_token->type == TOKEN_COLON) {
+        consume(parser, TOKEN_COLON);
+        
+        // 打印当前token信息用于调试
+        printf("After colon, ");
+        print_token(parser->current_token);
+        
+        // 这里可以添加返回类型的处理逻辑
+        // 分别处理不同的类型标记
+        if (parser->current_token->type == TOKEN_I32) {
+            printf("Consuming TOKEN_I32\n");
+            consume(parser, TOKEN_I32);
+        } else if (parser->current_token->type == TOKEN_F32) {
+            printf("Consuming TOKEN_F32\n");
+            consume(parser, TOKEN_F32);
+        } else if (parser->current_token->type == TOKEN_BOOL) {
+            printf("Consuming TOKEN_BOOL\n");
+            consume(parser, TOKEN_BOOL);
+        } else if (parser->current_token->type == TOKEN_STRING) {
+            printf("Consuming TOKEN_STRING\n");
+            consume(parser, TOKEN_STRING);
+        } else {
+            parser_error(parser, "期望返回类型");
+        }
+    }
     
     // 解析函数体
     consume(parser, TOKEN_LBRACE);
@@ -312,6 +427,23 @@ static FunctionNode *parse_function(Parser *parser) {
             char *var_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
             
+            // 解析可选的类型注解
+            VarTypeNode *type = NULL;
+            if (parser->current_token->type == TOKEN_COLON) {
+                consume(parser, TOKEN_COLON);
+                
+                // 解析类型
+                if (parser->current_token->type == TOKEN_I32) {
+                    type = create_var_type(TOKEN_I32);
+                    consume(parser, TOKEN_I32);
+                } else if (parser->current_token->type == TOKEN_F32) {
+                    type = create_var_type(TOKEN_F32);
+                    consume(parser, TOKEN_F32);
+                } else {
+                    parser_error(parser, "未知的类型");
+                }
+            }
+            
             // 解析等号
             consume(parser, TOKEN_ASSIGN);
             
@@ -321,7 +453,7 @@ static FunctionNode *parse_function(Parser *parser) {
             consume(parser, TOKEN_SEMICOLON);
             
             // 创建变量声明节点并添加到函数体
-            VarDeclNode *var_decl = create_var_decl(var_name, expression);
+            VarDeclNode *var_decl = create_var_decl(var_name, type, expression);
             free(var_name);
             add_statement(function, (ASTNode *)var_decl);
         } else if (parser->current_token->type == TOKEN_RETURN) {
@@ -381,10 +513,10 @@ static ASTNode *parse_function_call(Parser *parser, char *function_name) {
 static ASTNode *parse_factor(Parser *parser) {
     Token *token = parser->current_token;
     
-    if (token->type == TOKEN_INTEGER) {
+    if (token->type == TOKEN_I32) {
         // 整数字面量
         LiteralNode *int_literal = create_int_literal(token->value.int_value);
-        consume(parser, TOKEN_INTEGER);
+        consume(parser, TOKEN_I32);
         return (ASTNode *)int_literal;
     } else if (token->type == TOKEN_STRING) {
         // 字符串字面量

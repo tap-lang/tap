@@ -701,6 +701,9 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                 // todo 支持其他类型参数
                 // if(debug) printf("  - 参数 %d %s 类型: %d\n", i, func->params[i]->name, LLVMInt32TypeInContext(context->context));
                 param_types[i] = LLVMInt32TypeInContext(context->context);
+                // if (func->param_types[i]->type == NODE_INT) {
+                //     param_types[i] = LLVMInt32TypeInContext(context->context);
+                // }
             }
             
             // 创建函数类型

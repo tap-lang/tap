@@ -19,10 +19,13 @@ enum TokenType {
     
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符
-    TOKEN_INTEGER,     // 整数
-    TOKEN_STRING,      // 字符串
-    TOKEN_FLOAT,       // 浮点数
+    TOKEN_I32,         // 32位整数
+    TOKEN_I64,         // 64位整数
+    TOKEN_F64,         // 64位浮点数
+    TOKEN_F32,         // 32位浮点数
     TOKEN_BOOL,        // 布尔值
+    TOKEN_STRING,      // 字符串
+    TOKEN_ARRAY,       // 数组
     
     // 运算符
     TOKEN_PLUS,        // +
@@ -47,6 +50,8 @@ enum TokenType {
     TOKEN_SEMICOLON,   // ;
     TOKEN_COMMA,       // ,
     TOKEN_COLON,       // :
+    TOKEN_LBRACKET,    // [
+    TOKEN_RBRACKET,    // ]
     
     // 特殊标记
     TOKEN_EOF          // 文件结束
@@ -55,9 +60,9 @@ enum TokenType {
 // 标记名称
 static const char *TokenNames[] = {
     "fn", "return", "print", "let", "if", "else", "elseif",
-    "identifier", "integer", "string", "float", "bool",
+    "identifier", "i32", "i64", "f32", "f64", "bool", "string", "array",
     "+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&&", "||",
-    "(", ")", "{", "}", ";", ",", ":",
+    "(", ")", "{", "}", ";", ",", ":", "[", "]",
     "EOF"
 };
 

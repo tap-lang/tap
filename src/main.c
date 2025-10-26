@@ -183,7 +183,7 @@ int main(int argc, char *argv[]) {
         // 默认行为：生成可执行文件
         char *exe_file = output_file ? output_file : "output";
         
-        printf("生成可执行文件...\n");
+        if (debug) printf("生成可执行文件...\n");
         
         // 生成临时IR文件
         char *temp_ir_file = "temp_output.ll";
@@ -198,7 +198,7 @@ int main(int argc, char *argv[]) {
             if (system(clang_command) != 0) {
                 fprintf(stderr, "生成可执行文件失败\n");
             } else {
-                printf("可执行文件已生成: %s\n", exe_file);
+                if (debug) printf("可执行文件已生成: %s\n", exe_file);
                 
                 // 设置可执行权限
                 chmod(exe_file, 0755);

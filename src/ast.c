@@ -28,6 +28,7 @@ FunctionNode *create_function(char *name) {
     function->base.next = NULL;
     function->name = strdup(name);
     function->params = NULL;
+    function->param_types = NULL;
     function->body = NULL;
     return function;
 }
@@ -159,8 +160,21 @@ BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode
     return binary_op;
 }
 
+// 创建变量类型节点
+VarTypeNode *create_var_type(enum LiteralType type) {
+    VarTypeNode *var_type = (VarTypeNode *)malloc(sizeof(VarTypeNode));
+    if (!var_type) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    var_type->base.type = NODE_VAR_TYPE;
+    var_type->base.next = NULL;
+    var_type->type = type;
+    return var_type;
+}
+
 // 创建变量声明节点
-VarDeclNode *create_var_decl(char *name, ASTNode *expression) {
+VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression) {
     VarDeclNode *var_decl = (VarDeclNode *)malloc(sizeof(VarDeclNode));
     if (!var_decl) {
         fprintf(stderr, "内存分配失败\n");
@@ -169,6 +183,7 @@ VarDeclNode *create_var_decl(char *name, ASTNode *expression) {
     var_decl->base.type = NODE_VAR_DECL;
     var_decl->base.next = NULL;
     var_decl->name = strdup(name);
+    var_decl->type = type;
     var_decl->expression = expression;
     return var_decl;
 }
@@ -213,6 +228,21 @@ void add_param(FunctionNode *function, IdentifierNode *param) {
             current = current->next;
         }
         current->next = (ASTNode *)param;
+    }
+}
+
+// 添加参数类型到函数
+void add_param_type(FunctionNode *function, VarTypeNode *type) {
+    if (debug) printf("  - 添加参数类型\n");
+
+    if (!function->param_types) {
+        function->param_types = (ASTNode *)type;
+    } else {
+        ASTNode *current = function->param_types;
+        while (current->next) {
+            current = current->next;
+        }
+        current->next = (ASTNode *)type;
     }
 }
 
@@ -307,9 +337,14 @@ void free_ast(ASTNode *node) {
             free_ast(binary_op->right);
             break;
         }
+        case NODE_VAR_TYPE: {
+            // VarTypeNode不需要释放额外内存
+            break;
+        }
         case NODE_VAR_DECL: {
             VarDeclNode *var_decl = (VarDeclNode *)node;
             free(var_decl->name);
+            free_ast((ASTNode *)var_decl->type);
             free_ast(var_decl->expression);
             break;
         }
