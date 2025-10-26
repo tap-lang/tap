@@ -56,12 +56,16 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # 编译C源文件
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # 编译C++源文件
 # $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
 #	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# 复制src/version.h.ini到src/version.h 并获取git提交ID替换@GIT_COMMIT_ID
+$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini
+	./src/version.sh
 
 # 链接目标文件
 $(TARGET): $(OBJECTS)

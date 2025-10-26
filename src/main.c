@@ -5,6 +5,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
+#include "version.h"
 
 // 读取文件内容
 static char *read_file(const char *filename) {
@@ -48,7 +49,7 @@ static void print_usage() {
 }
 
 static void print_version() {
-    printf("4yue version 0.1.0\n");
+    printf("4yue version %s (%s)\n", VERSION, GIT_COMMIT_ID);
 }
 
 // 全局debug变量，供其他模块使用

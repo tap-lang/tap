@@ -1,5 +1,7 @@
 .vscode/
 
+src/version.h
+
 build/
 4yue
 *.ll
