@@ -18,6 +18,17 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     // 创建上下文、模块和构建器 - 使用新的上下文而不是全局上下文
     context->context = LLVMContextCreate();
     context->module = LLVMModuleCreateWithNameInContext(module_name, context->context);
+    
+    // 设置目标三元组
+    #if defined(_WIN32) || defined(_WIN64) || defined(__CYGWIN__) // 暂时只测试了windows的 __CYGWIN__
+    //printf("_WIN32: %d; _WIN64: %d; __CYGWIN__: %d\n", _WIN32, _WIN64, __CYGWIN__);
+    // Windows 系统 Cygwin 下设置目标三元组
+    LLVMSetTarget(context->module, "x86_64-pc-windows-cygnus");
+    #else
+    // 其他系统保持默认 TODO
+    printf("not windows\");
+    #endif
+    
     context->builder = LLVMCreateBuilderInContext(context->context);
     context->engine = NULL;
     context->symbols = NULL; // 初始化符号表为空
