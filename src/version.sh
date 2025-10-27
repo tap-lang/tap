@@ -11,4 +11,4 @@ fi
 
 # 复制src/version.h.ini到src/version.h 并替换@GIT_COMMIT_ID为最新的commit id
 cp src/version.h.ini src/version.h
-sed -i "s/@GIT_COMMIT_ID/$GIT_COMMIT_ID/g" src/version.h
+sed -i '' "s/@GIT_COMMIT_ID/$GIT_COMMIT_ID/g" src/version.h

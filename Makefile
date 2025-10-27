@@ -64,7 +64,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 #	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini
-	./src/version.sh
+	bash ./src/version.sh
 
 # 链接目标文件
 $(TARGET): $(OBJECTS)

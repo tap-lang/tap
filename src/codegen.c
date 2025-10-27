@@ -26,7 +26,7 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     LLVMSetTarget(context->module, "x86_64-pc-windows-cygnus");
     #else
     // 其他系统保持默认 TODO
-    printf("not windows\");
+    // printf("not windows\");
     #endif
     
     context->builder = LLVMCreateBuilderInContext(context->context);
