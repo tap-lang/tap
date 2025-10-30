@@ -28,6 +28,7 @@ enum LiteralType {
     LITERAL_STRING,                 // 字符串
     LITERAL_FLOAT,                  // 浮点数
     LITERAL_BOOL                    // 布尔值
+    
 };
 
 // 二元操作符类型  + - * / == != < > <= >= && ||

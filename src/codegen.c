@@ -24,6 +24,9 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     //printf("_WIN32: %d; _WIN64: %d; __CYGWIN__: %d\n", _WIN32, _WIN64, __CYGWIN__);
     // Windows 系统 Cygwin 下设置目标三元组
     LLVMSetTarget(context->module, "x86_64-pc-windows-cygnus");
+    // 判断是否为macos
+    #elif defined(__APPLE__) && defined(__MACH__)
+    LLVMSetTarget(context->module, "arm64-apple-macosx15.0.0");
     #else
     // 其他系统保持默认 TODO
     // printf("not windows\");
