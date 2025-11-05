@@ -22,8 +22,9 @@ enum TokenType {
     TOKEN_INT,         // 32/64位整数
     TOKEN_I32,         // 32位整数
     TOKEN_I64,         // 64位整数
-    TOKEN_F64,         // 64位浮点数
+    TOKEN_FLOAT,       // 浮点数
     TOKEN_F32,         // 32位浮点数
+    TOKEN_F64,         // 64位浮点数
     TOKEN_BOOL,        // 布尔值
     TOKEN_STRING,      // 字符串
     TOKEN_ARRAY,       // 数组
@@ -61,7 +62,8 @@ enum TokenType {
 // 标记名称
 static const char *TokenNames[] = {
     "fn", "return", "print", "let", "if", "else", "elseif",
-    "identifier", "int", "i32", "i64", "f32", "f64", "bool", "string", "array",
+    "identifier", "int", "i32", "i64", "float", "f32", "f64", 
+    "bool", "string", "array",
     "+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&&", "||",
     "(", ")", "{", "}", ";", ",", ":", "[", "]",
     "EOF"

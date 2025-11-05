@@ -1,6 +1,6 @@
 
-fn main(): i32 {
-    let n: i64 = 3;
+fn main(): int {
+    let n: int = 3;
     print("Fibonacci number at position %d is %d\n", n, fibonacci(n));
     // print("Fibonacci number at position ");
     // print(n);
@@ -11,7 +11,7 @@ fn main(): i32 {
     return 0;
 }
 
-fn fibonacci(n: i64): i64 {
+fn fibonacci(n: int): int {
     if(n <= 0) {
         return 0;
     } elseif (n == 1) {

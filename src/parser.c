@@ -1,6 +1,8 @@
 #include <math.h>
 
 #include "parser.h"
+#include "ast.h"
+#include "lexer.h"
 
 extern int debug;
 
@@ -143,12 +145,30 @@ static ASTNode *parse_block(Parser *parser) {
                 consume(parser, TOKEN_COLON);
                 
                 // 解析类型
-                if (parser->current_token->type == TOKEN_I32) {
-                    type = create_var_type(TOKEN_I32);
+                if (parser->current_token->type == TOKEN_INT) {
+                    type = create_var_type(LITERAL_INT);
+                    consume(parser, TOKEN_INT);
+                } else if (parser->current_token->type == TOKEN_I32) {
+                    type = create_var_type(LITERAL_I32);
                     consume(parser, TOKEN_I32);
+                } else if (parser->current_token->type == TOKEN_I64) {
+                    type = create_var_type(LITERAL_I64);
+                    consume(parser, TOKEN_I64);
+                } else if (parser->current_token->type == TOKEN_FLOAT) {
+                    type = create_var_type(LITERAL_FLOAT);
+                    consume(parser, TOKEN_FLOAT);
                 } else if (parser->current_token->type == TOKEN_F32) {
-                    type = create_var_type(TOKEN_F32);
+                    type = create_var_type(LITERAL_F32);
                     consume(parser, TOKEN_F32);
+                } else if (parser->current_token->type == TOKEN_F64) {
+                    type = create_var_type(LITERAL_F64);
+                    consume(parser, TOKEN_F64);
+                } else if (parser->current_token->type == TOKEN_STRING) {
+                    type = create_var_type(LITERAL_STRING);
+                    consume(parser, TOKEN_STRING);
+                } else if (parser->current_token->type == TOKEN_BOOL) {
+                    type = create_var_type(LITERAL_BOOL);
+                    consume(parser, TOKEN_BOOL);
                 } else {
                     parser_error(parser, "未知的类型");
                 }
@@ -275,13 +295,21 @@ static FunctionNode *parse_function(Parser *parser) {
             consume(parser, TOKEN_COLON);
             
             VarTypeNode *param_type = NULL;
-            
-            if (parser->current_token->type == TOKEN_I32) {
-                consume(parser, TOKEN_I32);
+            if (parser->current_token->type == TOKEN_INT) {
+                consume(parser, TOKEN_INT);
                 param_type = create_var_type(LITERAL_INT);
-            } else if (parser->current_token->type == TOKEN_F32) {
+            } else if (parser->current_token->type == TOKEN_I32) {
+                consume(parser, TOKEN_I32);
+                param_type = create_var_type(LITERAL_I32);
+            } else if (parser->current_token->type == TOKEN_I64) {
+                consume(parser, TOKEN_I64);
+                param_type = create_var_type(LITERAL_I64);
+            }  else if (parser->current_token->type == TOKEN_F32) {
                 consume(parser, TOKEN_F32);
-                param_type = create_var_type(LITERAL_FLOAT);
+                param_type = create_var_type(LITERAL_F32);
+            } else if (parser->current_token->type == TOKEN_F64) {
+                consume(parser, TOKEN_F64);
+                param_type = create_var_type(LITERAL_F64);
             } else if (parser->current_token->type == TOKEN_BOOL) {
                 consume(parser, TOKEN_BOOL);
                 param_type = create_var_type(LITERAL_BOOL);
@@ -322,10 +350,16 @@ static FunctionNode *parse_function(Parser *parser) {
                 
                 VarTypeNode *param_type = NULL;
                 
-                if (parser->current_token->type == TOKEN_I32) {
-                    consume(parser, TOKEN_I32);
+                if (parser->current_token->type == TOKEN_INT) {
+                    consume(parser, TOKEN_INT);
                     param_type = create_var_type(LITERAL_INT);
-                } else if (parser->current_token->type == TOKEN_F32) {
+                } else if (parser->current_token->type == TOKEN_I32) {
+                    consume(parser, TOKEN_I32);
+                    param_type = create_var_type(LITERAL_I32);
+                } else if (parser->current_token->type == TOKEN_I64) {
+                    consume(parser, TOKEN_I64);
+                    param_type = create_var_type(LITERAL_I64);
+                }  else if (parser->current_token->type == TOKEN_F32) {
                     consume(parser, TOKEN_F32);
                     param_type = create_var_type(LITERAL_FLOAT);
                 } else if (parser->current_token->type == TOKEN_BOOL) {
@@ -355,25 +389,44 @@ static FunctionNode *parse_function(Parser *parser) {
     if (parser->current_token->type == TOKEN_COLON) {
         consume(parser, TOKEN_COLON);
         
-        // 打印当前token信息用于调试
-        printf("After colon, ");
-        print_token(parser->current_token);
+        if(debug){
+            // 打印当前token信息用于调试
+            printf("After colon, ");
+            print_token(parser->current_token);
+        }
         
         // 这里可以添加返回类型的处理逻辑
         // 分别处理不同的类型标记
-        if (parser->current_token->type == TOKEN_I32) {
-            printf("Consuming TOKEN_I32\n");
+        if (parser->current_token->type == TOKEN_INT) {
+            if(debug) printf("Consuming TOKEN_INT\n");
+            consume(parser, TOKEN_INT);
+            function->return_type = create_var_type(LITERAL_INT);
+        } else if (parser->current_token->type == TOKEN_I32) {
+            if(debug) printf("Consuming TOKEN_I32\n");
             consume(parser, TOKEN_I32);
+            function->return_type = create_var_type(LITERAL_I32);
+        } else if (parser->current_token->type == TOKEN_I64) {
+            if(debug) printf("Consuming TOKEN_I64\n");
+            consume(parser, TOKEN_I64);
+            function->return_type = create_var_type(LITERAL_I64);
         } else if (parser->current_token->type == TOKEN_F32) {
-            printf("Consuming TOKEN_F32\n");
+            if(debug) printf("Consuming TOKEN_F32\n");
             consume(parser, TOKEN_F32);
+            function->return_type = create_var_type(LITERAL_FLOAT);
+        } else if (parser->current_token->type == TOKEN_F64) {
+            if(debug) printf("Consuming TOKEN_F64\n");
+            consume(parser, TOKEN_F64);
+            function->return_type = create_var_type(LITERAL_F64);
         } else if (parser->current_token->type == TOKEN_BOOL) {
-            printf("Consuming TOKEN_BOOL\n");
+            if(debug) printf("Consuming TOKEN_BOOL\n");
             consume(parser, TOKEN_BOOL);
+            function->return_type = create_var_type(LITERAL_BOOL);
         } else if (parser->current_token->type == TOKEN_STRING) {
-            printf("Consuming TOKEN_STRING\n");
+            if(debug) printf("Consuming TOKEN_STRING\n");
             consume(parser, TOKEN_STRING);
+            function->return_type = create_var_type(LITERAL_STRING);
         } else {
+            printf("Consuming unknown type %d\n", parser->current_token->type);
             parser_error(parser, "期望返回类型");
         }
     }
@@ -432,12 +485,15 @@ static FunctionNode *parse_function(Parser *parser) {
             if (parser->current_token->type == TOKEN_COLON) {
                 consume(parser, TOKEN_COLON);
                 
-                // 解析类型
-                if (parser->current_token->type == TOKEN_I32) {
-                    type = create_var_type(TOKEN_I32);
+                // 解析类型注解
+                if (parser->current_token->type == TOKEN_INT) {
+                    type = create_var_type(LITERAL_INT);
+                    consume(parser, TOKEN_INT);
+                } else if (parser->current_token->type == TOKEN_I32) {
+                    type = create_var_type(LITERAL_I32);
                     consume(parser, TOKEN_I32);
                 } else if (parser->current_token->type == TOKEN_F32) {
-                    type = create_var_type(TOKEN_F32);
+                    type = create_var_type(LITERAL_F32);
                     consume(parser, TOKEN_F32);
                 } else {
                     parser_error(parser, "未知的类型");

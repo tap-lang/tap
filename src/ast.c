@@ -30,6 +30,7 @@ FunctionNode *create_function(char *name) {
     function->params = NULL;
     function->param_types = NULL;
     function->body = NULL;
+    function->return_type = NULL;
     return function;
 }
 

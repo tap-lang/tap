@@ -74,6 +74,34 @@ static void free_symbols(Symbol *symbols) {
     }
 }
 
+// 获取LLVM类型
+static LLVMTypeRef get_llvm_type(CodeGenContext *context, VarTypeNode *type) {
+    if (!context || !type) {
+        fprintf(stderr, "get_llvm_type: Invalid context or type\n");
+        return NULL;
+    }
+
+    switch (type->type) {
+        case LITERAL_INT:
+        case LITERAL_I32:
+            return LLVMInt32TypeInContext(context->context);
+        case LITERAL_I64:
+            return LLVMInt64TypeInContext(context->context);
+        case LITERAL_FLOAT:
+        case LITERAL_F32:
+            return LLVMFloatTypeInContext(context->context);
+        case LITERAL_F64:
+            return LLVMDoubleTypeInContext(context->context);
+        case LITERAL_STRING:
+            return LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
+        case LITERAL_BOOL:
+            return LLVMInt1TypeInContext(context->context);
+        default:
+            fprintf(stderr, "get_llvm_type: Unsupported type: %d\n", type->type);
+            return NULL;
+    }
+}
+
 // 声明generate_expression函数
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
 
@@ -185,8 +213,8 @@ static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_n
             }
             case NODE_VAR_DECL: {
                 VarDeclNode *var_decl = (VarDeclNode *)statement;
-                LLVMTypeRef int_type = LLVMInt32TypeInContext(context->context);
-                LLVMValueRef alloca = LLVMBuildAlloca(context->builder, int_type, var_decl->name);
+                LLVMTypeRef var_type = get_llvm_type(context, var_decl->type);
+                LLVMValueRef alloca = LLVMBuildAlloca(context->builder, var_type, var_decl->name);
                 insert_symbol(context, var_decl->name, alloca);
                 if (var_decl->expression) {
                     LLVMValueRef expr_value = generate_expression(context, var_decl->expression);
@@ -368,6 +396,10 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             LiteralNode *literal = (LiteralNode *)expression;
             if (literal->literal_type == LITERAL_INT) {
                 return LLVMConstInt(LLVMInt32TypeInContext(context->context), literal->value.int_value, 0);
+            } else if (literal->literal_type == LITERAL_I32) {
+                return LLVMConstInt(LLVMInt32TypeInContext(context->context), literal->value.int_value, 0);
+            } else if (literal->literal_type == LITERAL_I64) {
+                return LLVMConstInt(LLVMInt64TypeInContext(context->context), literal->value.int_value, 0);
             }
             break;
         }
@@ -700,17 +732,48 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
             
             // 创建参数类型数组
             LLVMTypeRef *param_types = malloc(sizeof(LLVMTypeRef) * param_count);
-            for (int i = 0; i < param_count; i++) {
-                // todo 支持其他类型参数
-                // if(debug) printf("  - 参数 %d %s 类型: %d\n", i, func->params[i]->name, LLVMInt32TypeInContext(context->context));
-                param_types[i] = LLVMInt32TypeInContext(context->context);
-                // if (func->param_types[i]->type == NODE_INT) {
-                //     param_types[i] = LLVMInt32TypeInContext(context->context);
-                // }
+            if (!param_types) {
+                fprintf(stderr, "内存分配失败\n");
+                exit(1);
             }
             
-            // 创建函数类型
-            LLVMTypeRef return_type = LLVMInt32TypeInContext(context->context);
+            // 遍历参数和参数类型列表
+            ASTNode *current_param_node = func->params;
+            ASTNode *type_node = func->param_types;
+            int i = 0;
+            
+            while (current_param_node && i < param_count) {
+                if (type_node && type_node->type == NODE_VAR_TYPE) {
+                    VarTypeNode *var_type = (VarTypeNode *)type_node;
+                    param_types[i] = get_llvm_type(context, var_type);
+                    if (!param_types[i]) {
+                        fprintf(stderr, "错误：无法获取参数类型\n");
+                        free(param_types);
+                        exit(1);
+                    }
+                } else {
+                    // 默认使用i32类型
+                    param_types[i] = LLVMInt32TypeInContext(context->context);
+                }
+                
+                current_param_node = current_param_node->next;
+                type_node = type_node ? type_node->next : NULL;
+                i++;
+            }
+            
+            // 创建函数返回值类型
+            LLVMTypeRef return_type;
+            if (func->return_type) {
+                return_type = get_llvm_type(context, func->return_type);
+                if (!return_type) {
+                    fprintf(stderr, "错误：无法获取函数返回值类型\n");
+                    free(param_types);
+                    exit(1);
+                }
+            } else {
+                // 如果没有指定返回类型，默认为i32类型
+                return_type = LLVMInt32TypeInContext(context->context);
+            }
             LLVMTypeRef function_type = LLVMFunctionType(return_type, param_types, param_count, 0);
             
             // 添加函数声明到模块
@@ -752,11 +815,27 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
             }
             
             param_node = func->params;
+            ASTNode *type_node = func->param_types;
             int param_index = 0;
             while (param_node) {
                 IdentifierNode *param = (IdentifierNode *)param_node;
+                
+                // 获取参数类型
+                LLVMTypeRef param_type;
+                if (type_node && type_node->type == NODE_VAR_TYPE) {
+                    VarTypeNode *var_type = (VarTypeNode *)type_node;
+                    param_type = get_llvm_type(context, var_type);
+                    if (!param_type) {
+                        fprintf(stderr, "错误：无法获取参数类型\n");
+                        exit(1);
+                    }
+                } else {
+                    // 默认使用i32类型
+                    param_type = LLVMInt32TypeInContext(context->context);
+                }
+                
                 // 为参数创建alloca并存储
-                LLVMValueRef alloca = LLVMBuildAlloca(context->builder, LLVMInt32TypeInContext(context->context), param->name);
+                LLVMValueRef alloca = LLVMBuildAlloca(context->builder, param_type, param->name);
                 // 获取函数参数
                 LLVMValueRef arg_value = LLVMGetParam(llvm_function, param_index);
                 // 设置参数名
@@ -767,6 +846,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
                 insert_symbol(context, param->name, alloca);
                 
                 param_node = param_node->next;
+                type_node = type_node ? type_node->next : NULL;
                 param_index++;
             }
             

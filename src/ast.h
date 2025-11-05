@@ -24,27 +24,30 @@ enum NodeType {
 
 // 字面量类型
 enum LiteralType {
-    LITERAL_INT,                    // 整数
-    LITERAL_STRING,                 // 字符串
-    LITERAL_FLOAT,                  // 浮点数
-    LITERAL_BOOL                    // 布尔值
-    
+    LITERAL_INT,                    // 整数 int
+    LITERAL_I32,                    // 32位整数 i32
+    LITERAL_I64,                    // 64位整数 i64
+    LITERAL_FLOAT,                  // 浮点数 float
+    LITERAL_F32,                    // 32位浮点数 f32
+    LITERAL_F64,                    // 64位浮点数 f64
+    LITERAL_STRING,                 // 字符串 string
+    LITERAL_BOOL                    // 布尔值 bool
 };
 
 // 二元操作符类型  + - * / == != < > <= >= && ||
 enum BinaryOpType {
-    OP_ADD,                         // 加号
-    OP_SUBTRACT,                    // 减号
-    OP_MULTIPLY,                    // 乘号
-    OP_DIVIDE,                      // 除号
-    OP_EQUAL,                       // 等于号
-    OP_NOT_EQUAL,                   // 不等于号
-    OP_LESS_THAN,                   // 小于号
-    OP_GREATER_THAN,                // 大于号
-    OP_LESS_THAN_OR_EQUAL,          // 小于等于号
-    OP_GREATER_THAN_OR_EQUAL,       // 大于等于号
-    OP_AND,                         // 与运算符
-    OP_OR                           // 或运算符
+    OP_ADD,                         // 加号 +
+    OP_SUBTRACT,                    // 减号 -
+    OP_MULTIPLY,                    // 乘号 *
+    OP_DIVIDE,                      // 除号 /
+    OP_EQUAL,                       // 等于号 ==
+    OP_NOT_EQUAL,                   // 不等于号 !=
+    OP_LESS_THAN,                   // 小于号 <
+    OP_GREATER_THAN,                // 大于号 >
+    OP_LESS_THAN_OR_EQUAL,          // 小于等于号 <=
+    OP_GREATER_THAN_OR_EQUAL,       // 大于等于号 >=
+    OP_AND,                         // 与运算符 &&
+    OP_OR                           // 或运算符 ||
 };
 
 // 基础AST节点结构
@@ -59,6 +62,12 @@ typedef struct {
     ASTNode *functions;    // 函数列表
 } ProgramNode;
 
+// 变量类型节点
+typedef struct {
+    ASTNode base;
+    enum LiteralType type;  // 使用现有的LiteralType枚举表示类型
+} VarTypeNode;
+
 // 函数节点
 typedef struct {
     ASTNode base;
@@ -66,6 +75,7 @@ typedef struct {
     ASTNode *params;       // 参数列表
     ASTNode *param_types;  // 参数类型列表
     ASTNode *body;         // 函数体语句列表
+    VarTypeNode *return_type; // 返回值类型
 } FunctionNode;
 
 // 标识符节点
@@ -106,11 +116,6 @@ typedef struct {
     ASTNode *right;        // 右操作数
 } BinaryOpNode;
 
-// 变量类型节点
-typedef struct {
-    ASTNode base;
-    enum LiteralType type;  // 使用现有的LiteralType枚举表示类型
-} VarTypeNode;
 
 // 变量声明节点
 typedef struct {
