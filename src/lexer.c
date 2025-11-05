@@ -126,6 +126,7 @@ static enum TokenType check_keyword(const char *text, int length) {
     if (length == 5 && strncmp(text, "print", 5) == 0) return TOKEN_PRINT;
     if (length == 4 && strncmp(text, "true", 4) == 0) return TOKEN_BOOL;
     if (length == 5 && strncmp(text, "false", 5) == 0) return TOKEN_BOOL;
+    if (length == 3 && strncmp(text, "int", 3) == 0) return TOKEN_INT;
     if (length == 3 && strncmp(text, "i32", 3) == 0) return TOKEN_I32;
     if (length == 3 && strncmp(text, "i64", 3) == 0) return TOKEN_I64;
     if (length == 3 && strncmp(text, "f32", 3) == 0) return TOKEN_F32;

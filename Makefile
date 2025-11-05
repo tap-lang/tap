@@ -74,7 +74,7 @@ $(TARGET): $(OBJECTS)
 # 清理生成的文件
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET) $(SRC_DIR)/version.h
-	rm -rf output *.ll hello *.exe tests/*.exe
+	rm -rf output *.ll hello *.exe tests/*.exe *.dSYM
 
 # 运行测试
 test: $(TARGET)

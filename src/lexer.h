@@ -19,6 +19,7 @@ enum TokenType {
     
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符
+    TOKEN_INT,         // 32/64位整数
     TOKEN_I32,         // 32位整数
     TOKEN_I64,         // 64位整数
     TOKEN_F64,         // 64位浮点数
@@ -28,19 +29,19 @@ enum TokenType {
     TOKEN_ARRAY,       // 数组
     
     // 运算符
-    TOKEN_PLUS,        // +
-    TOKEN_MINUS,       // -
-    TOKEN_MULTIPLY,    // *
-    TOKEN_DIVIDE,      // /
-    TOKEN_ASSIGN,      // =
-    TOKEN_EQUAL,       // ==
-    TOKEN_NOT_EQUAL,   // !=
-    TOKEN_LESS_THAN,   // <
-    TOKEN_GREATER_THAN, // >
-    TOKEN_LESS_THAN_OR_EQUAL, // <=
-    TOKEN_GREATER_THAN_OR_EQUAL, // >=
-    TOKEN_AND,         // &&
-    TOKEN_OR,          // ||
+    TOKEN_PLUS,                     // +
+    TOKEN_MINUS,                    // -
+    TOKEN_MULTIPLY,                 // *
+    TOKEN_DIVIDE,                   // /
+    TOKEN_ASSIGN,                   // =
+    TOKEN_EQUAL,                    // ==
+    TOKEN_NOT_EQUAL,                // !=
+    TOKEN_LESS_THAN,                // <
+    TOKEN_GREATER_THAN,             // >
+    TOKEN_LESS_THAN_OR_EQUAL,       // <=
+    TOKEN_GREATER_THAN_OR_EQUAL,    // >=
+    TOKEN_AND,                      // &&
+    TOKEN_OR,                       // ||
     
     // 分隔符
     TOKEN_LPAREN,      // (
@@ -60,7 +61,7 @@ enum TokenType {
 // 标记名称
 static const char *TokenNames[] = {
     "fn", "return", "print", "let", "if", "else", "elseif",
-    "identifier", "i32", "i64", "f32", "f64", "bool", "string", "array",
+    "identifier", "int", "i32", "i64", "f32", "f64", "bool", "string", "array",
     "+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&&", "||",
     "(", ")", "{", "}", ";", ",", ":", "[", "]",
     "EOF"

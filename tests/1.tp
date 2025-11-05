@@ -1,11 +1,11 @@
-fn main(): i32 {
-    let a: i32 = 5;
-    let b: i32 = -2;
-    let c: i32 = test_add(a, b);
+fn main(): int {
+    let a: int = 5;
+    let b: int = -2;
+    let c: int = test_add(a, b);
     print("  a = %d\n  b = %d\n  c = a + b = %d\n", a, b, c);
     return 0;
 }
 
-fn test_add(a: i32, b: i32): i32 {
+fn test_add(a: int, b: int): int {
     return a + b;
 }
