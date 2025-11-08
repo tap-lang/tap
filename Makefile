@@ -72,11 +72,11 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 
 # 判断是否为Windows系统
 ifeq ($(OS),Windows_NT)
-$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/version.bat
-	src/version.bat
+$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/scripts/version.bat
+	$(SRC_DIR)/scripts/version.bat
 else
-$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/version.sh
-	sh $(SRC_DIR)/version.sh
+$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/scripts/version.sh
+	sh $(SRC_DIR)/scripts/version.sh
 endif
 
 # 链接目标文件
