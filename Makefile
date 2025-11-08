@@ -33,6 +33,13 @@ else
     endif
 endif
 
+# 可执行文件扩展名（Windows 下为 .exe）
+ifeq ($(OS),Windows_NT)
+    EXE = .exe
+else
+    EXE =
+endif
+
 # 源文件目录
 SRC_DIR = src
 BUILD_DIR = build
@@ -63,8 +70,11 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 # $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
 #	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini
-	bash ./src/version.sh
+$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/scripts/get_version
+	$(SRC_DIR)/scripts/get_version
+
+$(SRC_DIR)/scripts/get_version: $(SRC_DIR)/scripts/get_version.c
+	$(CC) -o $@ $<
 
 # 链接目标文件
 $(TARGET): $(OBJECTS)
@@ -73,7 +83,7 @@ $(TARGET): $(OBJECTS)
 
 # 清理生成的文件
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) $(SRC_DIR)/version.h
+	rm -rf $(BUILD_DIR) $(TARGET) $(SRC_DIR)/version.h $(SRC_DIR)/scripts/get_version
 	rm -rf output *.ll hello *.exe tests/*.exe *.dSYM
 
 # 运行测试
