@@ -70,11 +70,14 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 # $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
 #	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/scripts/get_version
-	$(SRC_DIR)/scripts/get_version
-
-$(SRC_DIR)/scripts/get_version: $(SRC_DIR)/scripts/get_version.c
-	$(CC) -o $@ $<
+# 判断是否为Windows系统
+ifeq ($(OS),Windows_NT)
+$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/version.bat
+	src/version.bat
+else
+$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/version.sh
+	sh $(SRC_DIR)/version.sh
+endif
 
 # 链接目标文件
 $(TARGET): $(OBJECTS)
@@ -83,7 +86,7 @@ $(TARGET): $(OBJECTS)
 
 # 清理生成的文件
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) $(SRC_DIR)/version.h $(SRC_DIR)/scripts/get_version
+	rm -rf $(BUILD_DIR) $(TARGET) $(SRC_DIR)/version.h
 	rm -rf output *.ll hello *.exe tests/*.exe *.dSYM
 
 # 运行测试
