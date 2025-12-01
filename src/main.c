@@ -171,7 +171,6 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "写入临时IR文件失败\n");
         } else {
             // 直接运行lli执行生成的IR代码
-            // 我们的修改确保了函数名不会被修改，所以main函数应该是可用的
             int result = system("lli temp_output.ll");
             
             if (debug) printf("程序执行完毕，返回值: %d\n", WEXITSTATUS(result));
@@ -191,6 +190,7 @@ int main(int argc, char *argv[]) {
         if (write_ir_to_file(codegen_context, temp_ir_file) != 0) {
             fprintf(stderr, "写入临时IR文件失败\n");
         } else {
+            /**
             // 直接使用clang编译IR文件生成可执行文件，让clang处理整个编译过程
             char clang_command[256];
             snprintf(clang_command, sizeof(clang_command), "clang %s -o %s", temp_ir_file, exe_file);
@@ -203,7 +203,18 @@ int main(int argc, char *argv[]) {
                 // 设置可执行权限
                 chmod(exe_file, 0755);
             }
+             */
             
+            // 调用llvm库编译IR文件生成可执行文件
+            if (compile_ir_to_exe(temp_ir_file, exe_file) != 0) {
+                fprintf(stderr, "生成可执行文件失败\n");
+            } else {
+                if (debug) printf("可执行文件已生成: %s\n", exe_file);
+                
+                // 设置可执行权限
+                chmod(exe_file, 0755);
+            }
+             
             // 删除临时IR文件
             remove(temp_ir_file);
         }

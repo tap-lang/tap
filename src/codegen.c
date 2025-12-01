@@ -1,4 +1,6 @@
 #include "codegen.h"
+#include <limits.h>  // 用于 PATH_MAX 宏
+#include <unistd.h>  // 用于 unlink 函数
 
 extern int debug;
 
@@ -1010,4 +1012,101 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
     // 简化的实现
     fprintf(stderr, "写入目标文件功能尚未完全实现\n");
     return -1;
+}
+
+// 调用llvm库编译IR文件生成可执行文件
+int compile_ir_to_exe(const char *ir_file, const char *exe_file){
+    // 初始化LLVM目标相关组件
+    LLVMInitializeNativeTarget();
+    LLVMInitializeNativeAsmPrinter();
+    LLVMInitializeNativeAsmParser();
+    LLVMInitializeAllTargetMCs();
+    
+    // 创建LLVM上下文
+    LLVMContextRef context = LLVMContextCreate();
+    
+    // 加载IR文件
+    char *error = NULL;
+    LLVMMemoryBufferRef buffer = NULL;
+    if (LLVMCreateMemoryBufferWithContentsOfFile(ir_file, &buffer, &error)) {
+        fprintf(stderr, "加载IR文件失败: %s\n", error);
+        LLVMDisposeMessage(error);
+        LLVMContextDispose(context);
+        return -1;
+    }
+    
+    // 解析IR文件
+    LLVMModuleRef module = NULL;
+    if (LLVMParseIRInContext(context, buffer, &module, &error)) {
+        fprintf(stderr, "解析IR文件失败: %s\n", error);
+        LLVMDisposeMessage(error);
+        LLVMDisposeMemoryBuffer(buffer);
+        LLVMContextDispose(context);
+        return -1;
+    }    
+    // 注意：buffer在成功路径上不需要在这里释放，因为它在LLVMParseIRInContext后已经被内部处理
+    
+    // 获取目标机器
+    LLVMTargetRef target = NULL;
+    char *target_triple = LLVMGetDefaultTargetTriple();
+    if (LLVMGetTargetFromTriple(target_triple, &target, &error) != 0) {
+        fprintf(stderr, "获取目标机器失败: %s\n", error);
+        LLVMDisposeMessage(error);
+        LLVMDisposeMessage(target_triple);
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        return -1;
+    }
+    
+    // 创建目标机器
+    LLVMTargetMachineRef target_machine = LLVMCreateTargetMachine(
+        target,
+        target_triple,
+        "",
+        "",
+        LLVMCodeGenLevelDefault,
+        LLVMRelocDefault,
+        LLVMCodeModelDefault
+    );
+    
+    // 先创建一个临时目标文件路径
+    char obj_file[PATH_MAX];
+    snprintf(obj_file, PATH_MAX, "%s.o", exe_file);
+    
+    // 编译IR到目标文件(.o)
+    if (LLVMTargetMachineEmitToFile(target_machine, module, obj_file, LLVMObjectFile, &error) != 0) {
+        fprintf(stderr, "编译IR失败: %s\n", error);
+        LLVMDisposeMessage(error);
+        LLVMDisposeTargetMachine(target_machine);
+        LLVMDisposeMessage(target_triple);
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        return -1;
+    }
+    
+    // 使用系统链接器将目标文件链接成可执行文件
+    // 使用cc作为链接器更可靠，它会自动处理标准库链接
+    char link_command[PATH_MAX * 2];
+    snprintf(link_command, sizeof(link_command), "cc -o %s %s", exe_file, obj_file);
+    if (system(link_command) != 0) {
+        fprintf(stderr, "链接失败: %s\n", link_command);
+        unlink(obj_file); // 清理临时目标文件
+        LLVMDisposeTargetMachine(target_machine);
+        LLVMDisposeMessage(target_triple);
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        return -1;
+    }
+    
+    // 清理临时目标文件
+    unlink(obj_file);
+    
+    // 清理资源
+    LLVMDisposeTargetMachine(target_machine);
+    LLVMDisposeMessage(target_triple);
+    LLVMDisposeModule(module);
+    LLVMContextDispose(context);
+    
+    printf("成功编译IR文件 '%s' 到目标文件 '%s'\n", ir_file, exe_file);
+    return 0;
 }

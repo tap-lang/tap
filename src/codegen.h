@@ -6,11 +6,14 @@
 // Forward declaration of Symbol struct
 typedef struct Symbol Symbol;
 
+// 在现有头文件包含部分添加以下内容
 #include <llvm-c/Core.h>
 #include <llvm-c/ExecutionEngine.h>
 #include <llvm-c/Target.h>
+#include <llvm-c/TargetMachine.h> 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
+#include <llvm-c/IRReader.h>      
 
 // 符号表条目
 typedef struct Symbol {
@@ -45,5 +48,8 @@ int write_ir_to_file(CodeGenContext *context, const char *filename);
 
 // 写入目标代码到文件
 int write_object_to_file(CodeGenContext *context, const char *filename);
+
+// 调用llvm库编译IR文件生成可执行文件
+int compile_ir_to_exe(const char *ir_file, const char *exe_file);
 
 #endif // CODEGEN_H
