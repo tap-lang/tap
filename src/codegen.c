@@ -1073,6 +1073,8 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file){
     char obj_file[PATH_MAX];
     snprintf(obj_file, PATH_MAX, "%s.o", exe_file);
     
+    printf("生成目标文件: %s\n", obj_file);
+
     // 编译IR到目标文件(.o)
     if (LLVMTargetMachineEmitToFile(target_machine, module, obj_file, LLVMObjectFile, &error) != 0) {
         fprintf(stderr, "编译IR失败: %s\n", error);
@@ -1084,10 +1086,19 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file){
         return -1;
     }
     
-    // 使用系统链接器将目标文件链接成可执行文件
-    // 使用cc作为链接器更可靠，它会自动处理标准库链接
+    // 使用ld链接器将目标文件链接成可执行文件
+    // 需要显式指定标准库和入口点
     char link_command[PATH_MAX * 2];
-    snprintf(link_command, sizeof(link_command), "cc -o %s %s", exe_file, obj_file);
+    #ifdef __APPLE__
+    // macOS上使用xcrun ld，添加完整的系统库链接参数
+    snprintf(link_command, sizeof(link_command), "xcrun ld -o %s %s -syslibroot $(xcrun --show-sdk-path) -L$(xcrun --show-sdk-path)/usr/lib -lSystem -e _main", exe_file, obj_file);
+    #else
+    // Linux上使用ld需要链接C标准库
+    snprintf(link_command, sizeof(link_command), "ld -o %s %s -lc -e main", exe_file, obj_file);
+    #endif
+    
+    printf("链接目标文件: %s\n", link_command);
+    
     if (system(link_command) != 0) {
         fprintf(stderr, "链接失败: %s\n", link_command);
         unlink(obj_file); // 清理临时目标文件
