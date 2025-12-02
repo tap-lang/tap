@@ -1020,7 +1020,18 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file){
     LLVMInitializeNativeTarget();
     LLVMInitializeNativeAsmPrinter();
     LLVMInitializeNativeAsmParser();
-    LLVMInitializeAllTargetMCs();
+    
+    // 根据平台选择性初始化MC组件，避免初始化所有目标平台
+    #if defined(__APPLE__) && defined(__MACH__) && defined(__aarch64__)
+    // macOS arm64平台只初始化AArch64的MC组件
+    LLVMInitializeAArch64TargetMC();
+    #elif defined(__APPLE__) && defined(__MACH__) && defined(__x86_64__)
+    // macOS x86_64平台只初始化X86的MC组件
+    LLVMInitializeX86TargetMC();
+    #else
+    // 其他平台仍然使用通用初始化，但实际应用中应该根据平台添加相应的初始化
+    LLVMInitializeNativeTargetMC();
+    #endif
     
     // 创建LLVM上下文
     LLVMContextRef context = LLVMContextCreate();
