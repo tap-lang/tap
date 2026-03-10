@@ -1,9 +1,10 @@
 # Makefile for 4yue Lang compiler
 
 # 编译器和编译选项
-CC = clang
+# CC = clang
+CC = gcc
 # CXX = clang++
-LIBS = -lLLVM-21
+LIBS = -lLLVM-21 -lm
 
 # 根据操作系统类型设置不同的CFLAGS和LDFLAGS
 ifeq ($(OS),Windows_NT)

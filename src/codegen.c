@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include <limits.h>  // 用于 PATH_MAX 宏
+#include <llvm-c/Target.h>
 #include <unistd.h>  // 用于 unlink 函数
 
 extern int debug;
@@ -1030,7 +1031,8 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file){
     LLVMInitializeX86TargetMC();
     #else
     // 其他平台仍然使用通用初始化，但实际应用中应该根据平台添加相应的初始化
-    LLVMInitializeNativeTargetMC();
+    //LLVMInitializeNativeTargetMC();
+    LLVMInitializeX86TargetMC();
     #endif
     
     // 创建LLVM上下文
