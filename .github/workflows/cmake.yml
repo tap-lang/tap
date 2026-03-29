@@ -56,24 +56,25 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # - name: Install LLVM 21
-      # uses: ZhongRuoyu/setup-llvm@v0.1.1
-      # with:
-        # llvm-version: "21"
-    - name: Install gcc & LLVM 21 & clang on macOS
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install llvm gcc
-        /opt/homebrew/bin/gcc-15 /usr/bin/gcc
-        /opt/homebrew/bin/g++-15 /usr/bin/g++
-        echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
-        echo "LDFLAGS=-L/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
-        echo "CPPFLAGS=-I/opt/homebrew/opt/llvm/include" >> $GITHUB_ENV
-        echo "CMAKE_PREFIX_PATH=/opt/homebrew/opt/llvm" >> $GITHUB_ENV
-    - name: Install gcc & LLVM 21 & clang on Ubuntu
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo bash .github/workflows/install-llvm21.sh
+    - name: Install LLVM
+      uses: tap-lang/install-llvm-action@v1
+      with:
+        version: '21.1.8'
+
+    # - name: Install gcc & LLVM 21 & clang on macOS
+    #   if: matrix.os == 'macos-latest'
+    #   run: |
+    #     brew install llvm gcc
+    #     /opt/homebrew/bin/gcc-15 /usr/bin/gcc
+    #     /opt/homebrew/bin/g++-15 /usr/bin/g++
+    #     echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+    #     echo "LDFLAGS=-L/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
+    #     echo "CPPFLAGS=-I/opt/homebrew/opt/llvm/include" >> $GITHUB_ENV
+    #     echo "CMAKE_PREFIX_PATH=/opt/homebrew/opt/llvm" >> $GITHUB_ENV
+    # - name: Install gcc & LLVM 21 & clang on Ubuntu
+    #   if: matrix.os == 'ubuntu-latest'
+    #   run: |
+    #     sudo bash .github/workflows/install-llvm21.sh
 
     - name: Set reusable strings
       # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
