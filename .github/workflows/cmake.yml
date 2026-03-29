@@ -57,7 +57,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install LLVM
-      uses: tap-lang/install-llvm-action@v1
+      uses: tap-lang/install-llvm-action
       with:
         version: '21.1.8'
 
