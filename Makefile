@@ -100,4 +100,4 @@ test_hello: $(TARGET)
 	./$(TARGET) tests/hello.tp -o hello
 	./hello
 
-.PHONY: all clean run
+.PHONY: all clean run src/version.h

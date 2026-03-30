@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
 project(4yue)
 
+# 设置编译器
+# if(NOT WIN32)
+#     set(CMAKE_C_COMPILER /opt/homebrew/opt/llvm/bin/clang)
+#     set(CMAKE_CXX_COMPILER /opt/homebrew/opt/llvm/bin/clang++)
+# endif()
+
 # 设置C++标准
 # set(CMAKE_CXX_STANDARD 17)
 # set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,6 +52,26 @@ llvm_map_components_to_libnames(llvm_libs
     AArch64Info
     AArch64Utils
 )
+
+# 生成版本文件
+if(WIN32)
+    add_custom_target(generate_version
+        COMMAND ${CMAKE_SOURCE_DIR}/src/scripts/version.bat
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/version.h.ini
+        COMMENT "Generating version.h file using version.bat"
+    )
+else()
+    add_custom_target(generate_version
+        COMMAND ${CMAKE_SOURCE_DIR}/src/scripts/version.sh
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/version.h.ini
+        COMMENT "Generating version.h file using version.sh"
+    )
+endif()
+
+# 确保版本文件在构建前生成
+add_dependencies(4yue generate_version)
 
 # 链接LLVM库
 target_link_libraries(4yue ${llvm_libs})
