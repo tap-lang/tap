@@ -34,24 +34,14 @@ include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 # 获取LLVM库列表
-llvm_map_components_to_libnames(llvm_libs
-    Core
-    ExecutionEngine
-    MC
-    MCJIT
-    Object
-    Support
-    Target
-    TargetParser
-    Analysis
-    BitWriter
-    IRReader
-    AArch64AsmParser
-    AArch64CodeGen
-    AArch64Desc
-    AArch64Info
-    AArch64Utils
-)
+set(llvm_libs LLVM)
+
+# 获取LLVM库列表
+# llvm_map_components_to_libnames(llvm_libs
+#     Core
+#     Support
+#     Target
+# )
 
 # 生成版本文件
 if(WIN32)
@@ -74,7 +64,8 @@ endif()
 add_dependencies(4yue generate_version)
 
 # 链接LLVM库
-target_link_libraries(4yue ${llvm_libs})
+#target_link_libraries(4yue ${llvm_libs})
+target_link_libraries(4yue ${llvm_libs} m)
 
 # 安装目标
 install(TARGETS 4yue DESTINATION bin)
