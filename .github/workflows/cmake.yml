@@ -62,7 +62,7 @@ jobs:
       with:
         path: |
           /usr/lib/llvm-21
-          /opt/homebrew/opt/llvm
+          /opt/homebrew/opt/llvm@21
           C:/Program Files/LLVM
         key: ${{ runner.os }}-llvm-21.1.8
 
