@@ -43,7 +43,24 @@ if(EXISTS "/etc/arch-release")
     # on Archlinux
     set(llvm_libs LLVM)
 else()
-    llvm_map_components_to_libnames(llvm_libs Core Support)
+    llvm_map_components_to_libnames(llvm_libs
+        Core
+        ExecutionEngine
+        MC
+        MCJIT
+        Object
+        Support
+        Target
+        TargetParser
+        Analysis
+        BitWriter
+        IRReader
+        AArch64AsmParser
+        AArch64CodeGen
+        AArch64Desc
+        AArch64Info
+        AArch64Utils
+    )
 endif()
 
 # 设置 LLVM 相关变量
