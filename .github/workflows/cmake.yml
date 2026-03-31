@@ -56,7 +56,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Cache LLVM
+      id: cache-llvm
+      uses: actions/cache@v4
+      with:
+        path: |
+          /usr/lib/llvm-21
+          /opt/homebrew/opt/llvm
+          C:/Program Files/LLVM
+        key: ${{ runner.os }}-llvm-21.1.8
+
     - name: Install LLVM
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
       uses: tap-lang/install-llvm-action@v1
       with:
         version: '21.1.8'
