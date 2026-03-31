@@ -2,10 +2,14 @@ cmake_minimum_required(VERSION 3.10)
 project(4yue)
 
 # 设置编译器
-# if(NOT WIN32)
-#     set(CMAKE_C_COMPILER /opt/homebrew/opt/llvm/bin/clang)
-#     set(CMAKE_CXX_COMPILER /opt/homebrew/opt/llvm/bin/clang++)
-# endif()
+# set(CMAKE_CXX_COMPILER "clang++")
+message(STATUS "C_COMPILER: ${CMAKE_C_COMPILER}")
+message(STATUS "CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
+
+# 设置项目选项
+option(BUILD_TESTS "Build tests" ON)
+option(BUILD_EXAMPLES "Build examples" ON)
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 # 设置C++标准
 # set(CMAKE_CXX_STANDARD 17)
@@ -28,20 +32,27 @@ endif()
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
+# 获取 LLVM 相关信息
+message(STATUS "LLVM Include Dir: ${LLVM_INCLUDE_DIRS}")
+message(STATUS "LLVM Library Dir: ${LLVM_LIBRARY_DIRS}")
+message(STATUS "LLVM Definitions: ${LLVM_DEFINITIONS}")
 
-# 添加LLVM相关设置
-include_directories(${LLVM_INCLUDE_DIRS})
-add_definitions(${LLVM_DEFINITIONS})
-
-# 获取LLVM库列表
-set(llvm_libs LLVM)
 
 # 获取LLVM库列表
-# llvm_map_components_to_libnames(llvm_libs
-#     Core
-#     Support
-#     Target
+if(EXISTS "/etc/arch-release") 
+    # on Archlinux
+    set(llvm_libs LLVM)
+else()
+    llvm_map_components_to_libnames(llvm_libs Core Support)
+endif()
+
+# 设置 LLVM 相关变量
+# set(LLVM_LINK_COMPONENTS
+    # Core
 # )
+
+# 获取 LLVM 库名
+# llvm_map_components_to_libnames(llvm_libs ${LLVM_LINK_COMPONENTS})
 
 # 生成版本文件
 if(WIN32)
