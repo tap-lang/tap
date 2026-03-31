@@ -62,8 +62,9 @@ jobs:
       with:
         path: |
           /usr/lib/llvm-21
+          /usr/lib/llvm-21.1
           /opt/homebrew/opt/llvm@21
-          C:/Program Files/LLVM
+          C:/Program Files/LLVM/21
         key: ${{ runner.os }}-llvm-21.1.8
 
     - name: Install LLVM
@@ -71,6 +72,16 @@ jobs:
       uses: tap-lang/install-llvm-action@v1
       with:
         version: '21.1.8'
+
+    - name: Set LLVM environment
+      if: steps.cache-llvm.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        if [ -d "/usr/lib/llvm-21" ]; then
+          echo "LLVM_DIR=/usr/lib/llvm-21/cmake" >> $GITHUB_ENV
+        elif [ -d "/opt/homebrew/opt/llvm@21" ]; then
+          echo "LLVM_DIR=/opt/homebrew/opt/llvm@21/lib/cmake/llvm" >> $GITHUB_ENV
+        fi
 
     # - name: Install gcc & LLVM 21 & clang on macOS
     #   if: matrix.os == 'macos-latest'
