@@ -54,6 +54,9 @@ endif()
 # 获取 LLVM 库名
 # llvm_map_components_to_libnames(llvm_libs ${LLVM_LINK_COMPONENTS})
 
+include_directories(${LLVM_INCLUDE_DIRS})
+add_definitions(${LLVM_DEFINITIONS})
+
 # 生成版本文件
 if(WIN32)
     add_custom_target(generate_version
