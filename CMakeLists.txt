@@ -4,7 +4,7 @@ project(4yue)
 # 设置编译器
 # set(CMAKE_CXX_COMPILER "clang++")
 message(STATUS "C_COMPILER: ${CMAKE_C_COMPILER}")
-message(STATUS "CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
+# message(STATUS "CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
 
 # 设置项目选项
 option(BUILD_TESTS "Build tests" ON)
