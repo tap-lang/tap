@@ -133,25 +133,38 @@ static Token *create_token(Lexer *lexer, enum TokenType type, const char *start,
     return token;
 }
 
-// 检查是否是关键字
+// 检查是否是关键字（先按长度分支，memcmp 定长比较）
 static enum TokenType check_keyword(const char *text, int length) {
-    if (length == 2 && strncmp(text, "fn", 2) == 0) return TOKEN_FN;
-    if (length == 3 && strncmp(text, "let", 3) == 0) return TOKEN_LET;
-    if (length == 2 && strncmp(text, "if", 2) == 0) return TOKEN_IF;
-    if (length == 4 && strncmp(text, "else", 4) == 0) return TOKEN_ELSE;
-    if (length == 6 && strncmp(text, "elseif", 6) == 0) return TOKEN_ELSEIF;
-    if (length == 6 && strncmp(text, "return", 6) == 0) return TOKEN_RETURN;
-    if (length == 5 && strncmp(text, "print", 5) == 0) return TOKEN_PRINT;
-    if (length == 4 && strncmp(text, "true", 4) == 0) return TOKEN_BOOL;
-    if (length == 5 && strncmp(text, "false", 5) == 0) return TOKEN_BOOL;
-    if (length == 3 && strncmp(text, "int", 3) == 0) return TOKEN_INT;
-    if (length == 3 && strncmp(text, "i32", 3) == 0) return TOKEN_I32;
-    if (length == 3 && strncmp(text, "i64", 3) == 0) return TOKEN_I64;
-    if (length == 3 && strncmp(text, "f32", 3) == 0) return TOKEN_F32;
-    if (length == 3 && strncmp(text, "f64", 3) == 0) return TOKEN_F64;
-    if (length == 6 && strncmp(text, "string", 6) == 0) return TOKEN_STRING;
-    if (length == 5 && strncmp(text, "array", 5) == 0) return TOKEN_ARRAY;
-    
+    switch (length) {
+    case 2:
+        if (memcmp(text, "fn", 2) == 0) return TOKEN_FN;
+        if (memcmp(text, "if", 2) == 0) return TOKEN_IF;
+        break;
+    case 3:
+        if (memcmp(text, "let", 3) == 0) return TOKEN_LET;
+        if (memcmp(text, "int", 3) == 0) return TOKEN_INT;
+        if (memcmp(text, "i32", 3) == 0) return TOKEN_I32;
+        if (memcmp(text, "i64", 3) == 0) return TOKEN_I64;
+        if (memcmp(text, "f32", 3) == 0) return TOKEN_F32;
+        if (memcmp(text, "f64", 3) == 0) return TOKEN_F64;
+        break;
+    case 4:
+        if (memcmp(text, "else", 4) == 0) return TOKEN_ELSE;
+        if (memcmp(text, "true", 4) == 0) return TOKEN_BOOL;
+        break;
+    case 5:
+        if (memcmp(text, "false", 5) == 0) return TOKEN_BOOL;
+        if (memcmp(text, "print", 5) == 0) return TOKEN_PRINT;
+        if (memcmp(text, "array", 5) == 0) return TOKEN_ARRAY;
+        break;
+    case 6:
+        if (memcmp(text, "elseif", 6) == 0) return TOKEN_ELSEIF;
+        if (memcmp(text, "return", 6) == 0) return TOKEN_RETURN;
+        if (memcmp(text, "string", 6) == 0) return TOKEN_STRING;
+        break;
+    default:
+        break;
+    }
     return TOKEN_IDENTIFIER;
 }
 
@@ -163,7 +176,7 @@ static Token *identifier(Lexer *lexer) {
     }
     
     Token *token = create_token(lexer, TOKEN_IDENTIFIER, start, lexer->current);
-    
+
     // 检查是否是关键字
     enum TokenType keyword_type = check_keyword(token->lexeme, strlen(token->lexeme));
     if (keyword_type != TOKEN_IDENTIFIER) {
