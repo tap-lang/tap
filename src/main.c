@@ -15,6 +15,7 @@ static void print_usage() {
     printf("  -o <文件>         指定输出文件\n");
     printf("  -ir               生成LLVM IR代码\n");
     printf("  -emit-obj         生成目标文件\n");
+    printf("  -lex              只输出词法分析结果\n");
     printf("  -run              编译并运行程序\n");
     printf("  -V, --version     显示版本号\n");
 }
@@ -26,13 +27,28 @@ static void print_version() {
 // 全局debug变量，供其他模块使用
 int debug = 0;
 
+// 只输出词法分析结果
+static void run_lex_only(Lexer *lexer) {
+    for (;;) {
+        Token *tok = get_next_token(lexer);
+        const char *lex = tok->lexeme ? tok->lexeme : "";
+        printf("%s:%d:%d\t%s\t'%s'\n", lexer->filename, tok->line, tok->column, TokenNames[tok->type], lex);
+        enum TokenType ty = tok->type;
+        free_token(tok);
+        if (ty == TOKEN_EOF) {
+            break;
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
-    // 默认选项
-    char *input_file = NULL;
-    char *output_file = NULL;
-    int emit_ir = 0;
+    
+    char *input_file = NULL;       
+    char *output_file = NULL;   
+    int emit_ir = 0;        
     int emit_obj = 0;
     int run = 0;
+    int lex_only = 0;
 
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
@@ -56,6 +72,8 @@ int main(int argc, char *argv[]) {
             emit_obj = 1;
         } else if (strcmp(argv[i], "-run") == 0) {
             run = 1;
+        } else if (strcmp(argv[i], "-lex") == 0) {
+            lex_only = 1;
         } else if (strcmp(argv[i], "-debug") == 0) {
             debug = 1;
         } else if (argv[i][0] == '-') {
@@ -86,6 +104,12 @@ int main(int argc, char *argv[]) {
     Lexer *lexer = create_lexer(input_file);
     if (!lexer) {
         return 1;
+    }
+
+    if (lex_only) {
+        run_lex_only(lexer);
+        free_lexer(lexer);
+        return 0;
     }
 
     // 2. 语法分析
