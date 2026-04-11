@@ -47,19 +47,6 @@ Lexer *create_lexer(const char *filename) {
     return lexer;
 }
 
-// 释放标记
-void free_token(Token *token) {
-    if (token) {
-        if (token->lexeme) {
-            free(token->lexeme);
-        }
-        if (token->type == TOKEN_STRING && token->value.string_value) {
-            free(token->value.string_value);
-        }
-        free(token);
-    }
-}
-
 // 释放词法分析器
 void free_lexer(Lexer *lexer) {
     if (lexer) {

@@ -17,10 +17,11 @@ option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 # 添加可执行文件
 add_executable(4yue
-    src/main.c   
-    src/ast.c   
-    src/parser.c   
-    src/lexer.c   
+    src/main.c
+    src/ast.c
+    src/parser.c
+    src/lexer.c
+    src/token.c
     src/codegen.c
 )
 
