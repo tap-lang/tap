@@ -7,35 +7,6 @@
 #include "codegen.h"
 #include "version.h"
 
-// 读取文件内容
-static char *read_file(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        fprintf(stderr, "Unable to open file: %s\n", filename);
-        return NULL;
-    }
-
-    // 获取文件大小
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    // 分配内存
-    char *buffer = (char *)malloc(file_size + 1);
-    if (!buffer) {
-        fprintf(stderr, "Memory allocation failed\n");
-        fclose(file);
-        return NULL;
-    }
-
-    // 读取文件内容
-    size_t bytes_read = fread(buffer, 1, file_size, file);
-    buffer[bytes_read] = '\0';
-
-    fclose(file);
-    return buffer;
-}
-
 // 打印用法
 static void print_usage() {
     printf("用法: 4yue <源文件>\n");
@@ -111,16 +82,9 @@ int main(int argc, char *argv[]) {
         printf("调试信息:\n");
     }
 
-    // 读取源文件
-    char *source_code = read_file(input_file);
-    if (!source_code) {
-        return 1;
-    }
-
-    // 1. 词法分析
-    Lexer *lexer = create_lexer(input_file, source_code);
+    // 1. 词法分析（在 create_lexer 内读入源文件）
+    Lexer *lexer = create_lexer(input_file);
     if (!lexer) {
-        free(source_code);
         return 1;
     }
 
@@ -128,7 +92,6 @@ int main(int argc, char *argv[]) {
     Parser *parser = create_parser(lexer);
     if (!parser) {
         free_lexer(lexer);
-        free(source_code);
         return 1;
     }
 
@@ -140,7 +103,6 @@ int main(int argc, char *argv[]) {
         free_ast((ASTNode *)program);
         free_parser(parser);
         free_lexer(lexer);
-        free(source_code);
         return 1;
     }
 
@@ -225,7 +187,6 @@ int main(int argc, char *argv[]) {
     free_ast((ASTNode *)program);
     free_parser(parser);
     free_lexer(lexer);
-    free(source_code);
 
     return 0;
 }

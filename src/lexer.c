@@ -2,10 +2,40 @@
 
 extern int debug;
 
-// 创建词法分析器
-Lexer *create_lexer(const char *filename, const char *source) {
+static char *read_source_file(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        fprintf(stderr, "无法打开文件: %s\n", filename);
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char *buffer = (char *)malloc((size_t)file_size + 1);
+    if (!buffer) {
+        fprintf(stderr, "内存分配失败\n");
+        fclose(file);
+        return NULL;
+    }
+
+    size_t bytes_read = fread(buffer, 1, (size_t)file_size, file);
+    buffer[bytes_read] = '\0';
+    fclose(file);
+    return buffer;
+}
+
+// 创建词法分析器（读入 filename 指向的源文件）
+Lexer *create_lexer(const char *filename) {
+    char *source = read_source_file(filename);
+    if (!source) {
+        return NULL;
+    }
+
     Lexer *lexer = (Lexer *)malloc(sizeof(Lexer));
     if (!lexer) {
+        free(source);
         fprintf(stderr, "内存分配失败\n");
         exit(1);
     }
@@ -33,6 +63,7 @@ void free_token(Token *token) {
 // 释放词法分析器
 void free_lexer(Lexer *lexer) {
     if (lexer) {
+        free(lexer->source);
         free(lexer);
     }
 }
