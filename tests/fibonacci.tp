@@ -1,0 +1,22 @@
+
+fn main(): i32 {
+    let n: i32 = 3;
+    print("Fibonacci number at position %d is %d\n", n, fibonacci(n));
+    // print("Fibonacci number at position ");
+    // print(n);
+    // print(" is ");
+    // let res = fibonacci(n);
+    // print(res);
+    // print("\n");
+    return 0;
+}
+
+fn fibonacci(n: 32): i32 {
+    if(n <= 0) {
+        return 0;
+    } elseif (n == 1) {
+        return 1;
+    } else {
+        return fibonacci(n - 1) + fibonacci(n - 2);
+    }
+}

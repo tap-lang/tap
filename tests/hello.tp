@@ -1,0 +1,4 @@
+// 主函数
+fn main() {
+    print("Hello world ~ 😀\n"); // 输出
+}
