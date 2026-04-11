@@ -2,6 +2,211 @@
 
 extern int debug;
 
+static void print_indent(int depth) {
+    for (int i = 0; i < depth; i++) {
+        putchar(' ');
+    }
+}
+
+static const char *literal_type_str(enum LiteralType t) {
+    switch (t) {
+    case LITERAL_INT: return "int";
+    case LITERAL_I32: return "i32";
+    case LITERAL_I64: return "i64";
+    case LITERAL_FLOAT: return "float";
+    case LITERAL_F32: return "f32";
+    case LITERAL_F64: return "f64";
+    case LITERAL_STRING: return "string";
+    case LITERAL_BOOL: return "bool";
+    default: return "?";
+    }
+}
+
+static const char *binary_op_str(enum BinaryOpType op) {
+    switch (op) {
+    case OP_ADD: return "+";
+    case OP_SUBTRACT: return "-";
+    case OP_MULTIPLY: return "*";
+    case OP_DIVIDE: return "/";
+    case OP_EQUAL: return "==";
+    case OP_NOT_EQUAL: return "!=";
+    case OP_LESS_THAN: return "<";
+    case OP_GREATER_THAN: return ">";
+    case OP_LESS_THAN_OR_EQUAL: return "<=";
+    case OP_GREATER_THAN_OR_EQUAL: return ">=";
+    case OP_AND: return "&&";
+    case OP_OR: return "||";
+    default: return "?";
+    }
+}
+
+static void print_literal_value(const LiteralNode *lit) {
+    switch (lit->literal_type) {
+    case LITERAL_STRING:
+        printf("%s", lit->value.string_value ? lit->value.string_value : "");
+        break;
+    case LITERAL_BOOL:
+        printf("%s", lit->value.bool_value ? "true" : "false");
+        break;
+    case LITERAL_FLOAT:
+    case LITERAL_F32:
+    case LITERAL_F64:
+        printf("%g", lit->value.float_value);
+        break;
+    default:
+        printf("%d", lit->value.int_value);
+        break;
+    }
+}
+
+static void dump_expr(ASTNode *n, int depth);
+
+static void dump_expr(ASTNode *n, int depth) {
+    if (!n) {
+        print_indent(depth);
+        printf("(null)\n");
+        return;
+    }
+    switch (n->type) {
+    case NODE_IDENTIFIER:
+        print_indent(depth);
+        printf("Identifier: %s\n", ((IdentifierNode *)n)->name);
+        break;
+    case NODE_LITERAL:
+        print_indent(depth);
+        printf("Literal(%s): ", literal_type_str(((LiteralNode *)n)->literal_type));
+        print_literal_value((LiteralNode *)n);
+        printf("\n");
+        break;
+    case NODE_BINARY_OP: {
+        BinaryOpNode *b = (BinaryOpNode *)n;
+        print_indent(depth);
+        printf("BinaryOp: %s\n", binary_op_str(b->op_type));
+        dump_expr(b->left, depth + 2);
+        dump_expr(b->right, depth + 2);
+        break;
+    }
+    case NODE_FUNCTION_CALL: {
+        FunctionCallNode *fc = (FunctionCallNode *)n;
+        print_indent(depth);
+        printf("Call: %s(\n", fc->name);
+        for (ASTNode *a = fc->arguments; a; a = a->next) {
+            dump_expr(a, depth + 2);
+        }
+        print_indent(depth);
+        printf(")\n");
+        break;
+    }
+    default:
+        print_indent(depth);
+        printf("(unknown expr node type %d)\n", n->type);
+        break;
+    }
+}
+
+static void dump_stmt(ASTNode *n, int depth);
+
+static void dump_stmt_list(ASTNode *head, int depth) {
+    for (ASTNode *s = head; s; s = s->next) {
+        dump_stmt(s, depth);
+    }
+}
+
+static void dump_stmt(ASTNode *n, int depth) {
+    if (!n) {
+        return;
+    }
+    switch (n->type) {
+    case NODE_VAR_DECL: {
+        VarDeclNode *v = (VarDeclNode *)n;
+        print_indent(depth);
+        printf("VarDecl: %s : %s\n", v->name, literal_type_str(v->type->type));
+        if (v->expression) {
+            print_indent(depth + 2);
+            printf("init:\n");
+            dump_expr(v->expression, depth + 4);
+        }
+        break;
+    }
+    case NODE_RETURN:
+        print_indent(depth);
+        printf("Return\n");
+        dump_expr(((ReturnNode *)n)->expression, depth + 2);
+        break;
+    case NODE_PRINT:
+        print_indent(depth);
+        printf("Print(\n");
+        for (ASTNode *a = ((PrintNode *)n)->arguments; a; a = a->next) {
+            dump_expr(a, depth + 2);
+        }
+        print_indent(depth);
+        printf(")\n");
+        break;
+    case NODE_IF_STATEMENT: {
+        IfStatementNode *in = (IfStatementNode *)n;
+        print_indent(depth);
+        printf("If\n");
+        print_indent(depth + 2);
+        printf("condition:\n");
+        dump_expr(in->condition, depth + 4);
+        print_indent(depth + 2);
+        printf("then:\n");
+        dump_stmt_list(in->consequence, depth + 4);
+        if (in->alternative) {
+            print_indent(depth + 2);
+            printf("else:\n");
+            if (in->alternative->type == NODE_IF_STATEMENT) {
+                dump_stmt(in->alternative, depth + 4);
+            } else {
+                dump_stmt_list(in->alternative, depth + 4);
+            }
+        }
+        break;
+    }
+    default:
+        print_indent(depth);
+        printf("(unknown stmt node type %d)\n", n->type);
+        break;
+    }
+}
+
+void print_ast(const ProgramNode *program) {
+    printf("Program\n");
+    for (ASTNode *fn = program->functions; fn; fn = fn->next) {
+        if (fn->type != NODE_FUNCTION) {
+            continue;
+        }
+        FunctionNode *f = (FunctionNode *)fn;
+        printf("  Function: %s", f->name);
+        if (f->return_type) {
+            printf(" -> %s", literal_type_str(f->return_type->type));
+        }
+        printf("\n");
+
+        ASTNode *p = f->params;
+        ASTNode *pt = f->param_types;
+        while (p || pt) {
+            print_indent(4);
+            printf("Param: ");
+            if (p && p->type == NODE_IDENTIFIER) {
+                printf("%s", ((IdentifierNode *)p)->name);
+            } else {
+                printf("?");
+            }
+            if (pt && pt->type == NODE_VAR_TYPE) {
+                printf(" : %s", literal_type_str(((VarTypeNode *)pt)->type));
+            }
+            printf("\n");
+            p = p ? p->next : NULL;
+            pt = pt ? pt->next : NULL;
+        }
+
+        print_indent(4);
+        printf("Body:\n");
+        dump_stmt_list(f->body, 6);
+    }
+}
+
 // 创建程序节点
 ProgramNode *create_program() {
     if (debug) printf("- 创建程序节点\n");

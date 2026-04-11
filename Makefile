@@ -1,8 +1,8 @@
 # Makefile for 4yue Lang compiler
 
 # 编译器和编译选项
-# CC = clang
-CC = gcc
+CC = clang
+# CC = gcc
 # CXX = clang++
 LIBS = -lLLVM-21 -lm
 

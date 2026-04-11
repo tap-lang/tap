@@ -169,4 +169,7 @@ IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, A
 // 释放AST的函数
 void free_ast(ASTNode *node);
 
+// 将语法树打印到 stdout（用于 -parse）
+void print_ast(const ProgramNode *program);
+
 #endif // AST_H

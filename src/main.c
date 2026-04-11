@@ -16,6 +16,7 @@ static void print_usage() {
     printf("  -ir               生成LLVM IR代码\n");
     printf("  -emit-obj         生成目标文件\n");
     printf("  -lex              只输出词法分析结果\n");
+    printf("  -parse            只输出语法分析结果\n");
     printf("  -run              编译并运行程序\n");
     printf("  -V, --version     显示版本号\n");
 }
@@ -49,6 +50,7 @@ int main(int argc, char *argv[]) {
     int emit_obj = 0;
     int run = 0;
     int lex_only = 0;
+    int parse_only = 0;
 
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
@@ -74,6 +76,8 @@ int main(int argc, char *argv[]) {
             run = 1;
         } else if (strcmp(argv[i], "-lex") == 0) {
             lex_only = 1;
+        } else if (strcmp(argv[i], "-parse") == 0) {
+            parse_only = 1;
         } else if (strcmp(argv[i], "-debug") == 0) {
             debug = 1;
         } else if (argv[i][0] == '-') {
@@ -120,6 +124,14 @@ int main(int argc, char *argv[]) {
     }
 
     ProgramNode *program = parse_program(parser);
+
+    if (parse_only) {
+        print_ast(program);
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return 0;
+    }
 
     // 3. 代码生成
     CodeGenContext *codegen_context = create_codegen_context(input_file);

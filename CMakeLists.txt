@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(4yue)
 
 # 设置编译器
+# set(CMAKE_C_COMPILER "clang")
 # set(CMAKE_CXX_COMPILER "clang++")
 message(STATUS "C_COMPILER: ${CMAKE_C_COMPILER}")
 # message(STATUS "CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
