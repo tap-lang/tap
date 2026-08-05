@@ -2,7 +2,7 @@
 
 # 编译器和编译选项
 CC = clang
-# CC = gcc
+# CC = gcc-13
 # CXX = clang++
 LIBS = -lLLVM-21 -lm
 
@@ -92,12 +92,12 @@ clean:
 
 # 运行测试
 test: $(TARGET)
-	./$(TARGET) tests/1.tp -run
-	./$(TARGET) tests/hello.tp -run
-	./$(TARGET) tests/fibonacci.tp -run
+	./$(TARGET) run tests/1.tp
+	./$(TARGET) run tests/hello.tp
+	./$(TARGET) run tests/fibonacci.tp
 
 test_hello: $(TARGET)
-	./$(TARGET) tests/hello.tp -o hello
-	./hello
+	./$(TARGET) tests/hello.tp -o build/hello
+	./build/hello
 
 .PHONY: all clean run src/version.h

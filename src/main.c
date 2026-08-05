@@ -2,14 +2,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <errno.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#endif
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
 #include "version.h"
 
+#ifndef _WIN32
+extern char **environ;
+#endif
+
 // 打印用法
 static void print_usage() {
-    printf("用法: 4yue <源文件>\n");
+    printf("用法: 4yue [选项] <源文件>\n");
+    printf("      4yue run [选项] <源文件>\n");
+    printf("命令:\n");
+    printf("  run               编译为本地可执行文件并运行\n");
     printf("选项:\n");
     printf("  -h, --help        显示此帮助信息\n");
     printf("  -o <文件>         指定输出文件\n");
@@ -17,7 +29,7 @@ static void print_usage() {
     printf("  -emit-obj         生成目标文件\n");
     printf("  -lex              只输出词法分析结果\n");
     printf("  -parse            只输出语法分析结果\n");
-    printf("  -run              编译并运行程序\n");
+    printf("  -run-lli          生成LLVM IR并使用lli运行程序\n");
     printf("  -V, --version     显示版本号\n");
 }
 
@@ -42,13 +54,87 @@ static void run_lex_only(Lexer *lexer) {
     }
 }
 
+static int compile_to_executable(CodeGenContext *context, const char *exe_file) {
+    const char *temp_ir_file = "temp_output.ll";
+
+    if (write_ir_to_file(context, temp_ir_file) != 0) {
+        fprintf(stderr, "写入临时IR文件失败\n");
+        return 1;
+    }
+
+    int result = compile_ir_to_exe(temp_ir_file, exe_file);
+    remove(temp_ir_file);
+
+    if (result != 0) {
+        fprintf(stderr, "生成可执行文件失败\n");
+        return 1;
+    }
+
+#ifndef _WIN32
+    if (chmod(exe_file, 0755) != 0) {
+        fprintf(stderr, "设置可执行权限失败: %s\n", exe_file);
+        return 1;
+    }
+#endif
+
+    if (debug) printf("可执行文件已生成: %s\n", exe_file);
+    return 0;
+}
+
+static int execute_file(const char *exe_file) {
+    fflush(NULL);
+
+#ifdef _WIN32
+    int result = system(exe_file);
+    return result == -1 ? 1 : result;
+#else
+    char *relative_path = NULL;
+    const char *exec_path = exe_file;
+
+    if (!strchr(exe_file, '/')) {
+        size_t path_size = strlen(exe_file) + 3;
+        relative_path = malloc(path_size);
+        if (!relative_path) {
+            fprintf(stderr, "内存分配失败\n");
+            return 1;
+        }
+        snprintf(relative_path, path_size, "./%s", exe_file);
+        exec_path = relative_path;
+    }
+
+    pid_t pid;
+    char *const child_argv[] = {(char *)exec_path, NULL};
+    int spawn_result = posix_spawn(&pid, exec_path, NULL, NULL, child_argv, environ);
+    if (spawn_result != 0) {
+        fprintf(stderr, "运行可执行文件失败: %s: %s\n", exec_path, strerror(spawn_result));
+        free(relative_path);
+        return 1;
+    }
+
+    int status;
+    while (waitpid(pid, &status, 0) == -1) {
+        if (errno != EINTR) {
+            fprintf(stderr, "等待程序结束失败: %s\n", strerror(errno));
+            free(relative_path);
+            return 1;
+        }
+    }
+    free(relative_path);
+
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+#endif
+}
+
 int main(int argc, char *argv[]) {
     
     char *input_file = NULL;       
     char *output_file = NULL;   
     int emit_ir = 0;        
     int emit_obj = 0;
-    int run = 0;
+    int run_lli = 0;
+    int run_native = 0;
     int lex_only = 0;
     int parse_only = 0;
 
@@ -72,8 +158,8 @@ int main(int argc, char *argv[]) {
             emit_ir = 1;
         } else if (strcmp(argv[i], "-emit-obj") == 0) {
             emit_obj = 1;
-        } else if (strcmp(argv[i], "-run") == 0) {
-            run = 1;
+        } else if (strcmp(argv[i], "-run-lli") == 0) {
+            run_lli = 1;
         } else if (strcmp(argv[i], "-lex") == 0) {
             lex_only = 1;
         } else if (strcmp(argv[i], "-parse") == 0) {
@@ -84,6 +170,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "错误: 未知选项 %s\n", argv[i]);
             print_usage();
             return 1;
+        } else if (strcmp(argv[i], "run") == 0 && !input_file && !run_native) {
+            run_native = 1;
         } else if (!input_file) {
             input_file = argv[i];
         } else {
@@ -97,6 +185,11 @@ int main(int argc, char *argv[]) {
     if (!input_file) {
         fprintf(stderr, "错误: 未指定输入文件\n");
         print_usage();
+        return 1;
+    }
+
+    if (run_native && (emit_ir || emit_obj || run_lli || lex_only || parse_only)) {
+        fprintf(stderr, "错误: run 命令不能与其他输出或运行模式组合使用\n");
         return 1;
     }
 
@@ -159,7 +252,7 @@ int main(int argc, char *argv[]) {
         } else {
             printf("目标文件已写入到 %s\n", obj_file);
         }
-    } else if (run) {
+    } else if (run_lli) {
         // 使用LLVM解释器(lli)执行生成的代码，而不是自己实现执行逻辑
         if (debug) printf("执行程序...\n");
         
@@ -177,45 +270,21 @@ int main(int argc, char *argv[]) {
             remove(temp_ir_file);
         }
     } else {
-        // 默认行为：生成可执行文件
+        // 默认行为生成可执行文件；run命令会在编译成功后执行它。
         char *exe_file = output_file ? output_file : "output";
-        
+
         if (debug) printf("生成可执行文件...\n");
-        
-        // 生成临时IR文件
-        char *temp_ir_file = "temp_output.ll";
-        
-        if (write_ir_to_file(codegen_context, temp_ir_file) != 0) {
-            fprintf(stderr, "写入临时IR文件失败\n");
-        } else {
-            /**
-            // 直接使用clang编译IR文件生成可执行文件，让clang处理整个编译过程
-            char clang_command[256];
-            snprintf(clang_command, sizeof(clang_command), "clang %s -o %s", temp_ir_file, exe_file);
-            
-            if (system(clang_command) != 0) {
-                fprintf(stderr, "生成可执行文件失败\n");
-            } else {
-                if (debug) printf("可执行文件已生成: %s\n", exe_file);
-                
-                // 设置可执行权限
-                chmod(exe_file, 0755);
-            }
-             */
-            
-            // 调用llvm库编译IR文件生成可执行文件
-            if (compile_ir_to_exe(temp_ir_file, exe_file) != 0) {
-                fprintf(stderr, "生成可执行文件失败\n");
-            } else {
-                if (debug) printf("可执行文件已生成: %s\n", exe_file);
-                
-                // 设置可执行权限
-                chmod(exe_file, 0755);
-            }
-             
-            // 删除临时IR文件
-            remove(temp_ir_file);
+
+        int result = compile_to_executable(codegen_context, exe_file);
+        if (result == 0 && run_native) {
+            result = execute_file(exe_file);
         }
+
+        free_codegen_context(codegen_context);
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return result;
     }
 
     // 清理资源

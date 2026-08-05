@@ -1086,7 +1086,7 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file){
     char obj_file[PATH_MAX];
     snprintf(obj_file, PATH_MAX, "%s.o", exe_file);
     
-    printf("生成目标文件: %s\n", obj_file);
+    // printf("生成目标文件: %s\n", obj_file);
 
     // 编译IR到目标文件(.o)
     if (LLVMTargetMachineEmitToFile(target_machine, module, obj_file, LLVMObjectFile, &error) != 0) {
@@ -1110,7 +1110,7 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file){
     snprintf(link_command, sizeof(link_command), "ld -o %s %s -lc -e main", exe_file, obj_file);
     #endif
     
-    printf("链接目标文件: %s\n", link_command);
+    // printf("链接目标文件: %s\n", link_command);
     
     if (system(link_command) != 0) {
         fprintf(stderr, "链接失败: %s\n", link_command);
@@ -1131,6 +1131,6 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file){
     LLVMDisposeModule(module);
     LLVMContextDispose(context);
     
-    printf("成功编译IR文件 '%s' 到目标文件 '%s'\n", ir_file, exe_file);
+    // printf("成功编译IR文件 '%s' 到目标文件 '%s'\n", ir_file, exe_file);
     return 0;
 }
