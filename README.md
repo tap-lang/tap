@@ -71,17 +71,10 @@ cmake --build .
 ./build/4yue -parse tests/fibonacci.tp
 ```
 
-## 源码结构（`src/`）
+## 开发文档
 
-| 文件 | 职责 |
-|------|------|
-| `main.c` | 入口、CLI、`-lex` / `-parse` 等模式 |
-| `token.c` / `token.h` | Token 类型、字面量释放、`TokenNames` |
-| `lexer.c` / `lexer.h` | 词法分析 |
-| `parser.c` / `parser.h` | 语法分析 |
-| `ast.c` / `ast.h` | AST 与 `print_ast`（供 `-parse`） |
-| `codegen.c` / `codegen.h` | LLVM IR 生成与链接 |
-| `run.c` / `run.h` | 本地可执行文件与 `lli` 运行流程 |
+- [源码结构](docs/src.md)
+- [AST](docs/ast.md)
 
 ## 许可
 

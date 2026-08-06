@@ -1,0 +1,45 @@
+# 源码结构
+
+4yue 当前采用手写前端和 LLVM 后端，主要编译流程如下：
+
+```text
+源文件 -> Lexer -> Token -> Parser -> AST -> LLVM Codegen -> IR / 可执行文件
+```
+
+## 核心模块
+
+| 文件 | 职责 |
+|---|---|
+| [`main.c`](../src/main.c) | 程序入口、命令行参数解析和编译模式分发 |
+| [`token.c`](../src/token.c) / [`token.h`](../src/token.h) | Token 类型、名称映射和资源释放 |
+| [`lexer.c`](../src/lexer.c) / [`lexer.h`](../src/lexer.h) | 读取源文件并执行词法分析 |
+| [`parser.c`](../src/parser.c) / [`parser.h`](../src/parser.h) | 将 Token 流解析为 AST |
+| [`ast.c`](../src/ast.c) / [`ast.h`](../src/ast.h) | AST 节点定义、构造、打印和释放；详见 [AST 文档](ast.md) |
+| [`codegen.c`](../src/codegen.c) / [`codegen.h`](../src/codegen.h) | 遍历 AST、生成 LLVM IR，并将 IR 编译链接为可执行文件 |
+| [`run.c`](../src/run.c) / [`run.h`](../src/run.h) | 本地可执行文件与 `lli` 的运行、退出码和临时产物清理 |
+| [`version.c`](../src/version.c) / [`version.h`](../src/version.h) | 版本信息实现和生成结果 |
+
+## 模块依赖
+
+依赖关系整体保持从入口到前端、后端和运行层的单向流动：
+
+```text
+main
+├── lexer -> token
+├── parser -> lexer + ast
+├── codegen -> ast + LLVM
+└── run -> codegen
+```
+
+- Lexer 只负责产生 Token，不创建 AST。
+- Parser 拥有 AST 的创建过程。
+- Codegen 和 Run 消费 AST/LLVM 结果，不参与语法解析。
+- `main.c` 负责组装各阶段，并在流程结束后释放资源。
+
+## 版本生成
+
+版本模板是 [`version.h.ini`](../src/version.h.ini)。构建时由
+[`scripts/version.sh`](../src/scripts/version.sh) 或
+[`scripts/version.bat`](../src/scripts/version.bat) 根据 Git 信息生成 `src/version.h`。
+
+Make 和 CMake 都会在编译前触发版本文件生成。
