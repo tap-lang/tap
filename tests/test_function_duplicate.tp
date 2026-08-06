@@ -1,0 +1,11 @@
+fn helper(): i32 {
+    return 1;
+}
+
+fn helper(): i32 {
+    return 2;
+}
+
+fn main(): i32 {
+    return helper();
+}
