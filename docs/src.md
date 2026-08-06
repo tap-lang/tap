@@ -14,6 +14,7 @@
 | [`token.c`](../src/token.c) / [`token.h`](../src/token.h) | Token 类型、名称映射和资源释放 |
 | [`lexer.c`](../src/lexer.c) / [`lexer.h`](../src/lexer.h) | 读取源文件并执行词法分析 |
 | [`parser.c`](../src/parser.c) / [`parser.h`](../src/parser.h) | 将 Token 流解析为 AST |
+| [`prelude.c`](../src/prelude.c) / [`prelude.h`](../src/prelude.h) | 定位并解析 Prelude，检查重复函数后合并到用户程序 AST |
 | [`ast.c`](../src/ast.c) / [`ast.h`](../src/ast.h) | AST 节点定义、构造、打印和释放；详见 [AST 文档](ast.md) |
 | [`codegen.c`](../src/codegen.c) / [`codegen.h`](../src/codegen.h) | 遍历 AST、生成 LLVM IR，并将 IR 编译链接为可执行文件 |
 | [`run.c`](../src/run.c) / [`run.h`](../src/run.h) | 本地可执行文件与 `lli` 的运行、退出码和临时产物清理 |
@@ -27,6 +28,7 @@
 main
 ├── lexer -> token
 ├── parser -> lexer + ast
+├── prelude -> parser + ast
 ├── codegen -> ast + LLVM
 └── run -> codegen
 ```
@@ -35,6 +37,22 @@ main
 - Parser 拥有 AST 的创建过程。
 - Codegen 和 Run 消费 AST/LLVM 结果，不参与语法解析。
 - `main.c` 负责组装各阶段，并在流程结束后释放资源。
+
+## Prelude 标准库
+
+[`std/prelude.tp`](../std/prelude.tp) 使用 4yue 源码实现第一阶段标准库函数。
+普通编译、IR 生成和运行模式会先解析用户源码，再由 `prelude.c` 解析 Prelude，
+检查两边是否存在同名函数，最后将两个函数列表合并后交给 Codegen。
+
+查找顺序如下：
+
+1. `4YUE_STD_PATH/prelude.tp`
+2. 当前工作目录下的 `std/prelude.tp`
+3. 编译器可执行文件相邻源码目录下的 `std/prelude.tp`
+4. 安装前缀下的 `share/4yue/std/prelude.tp`
+
+这种方式保持标准库函数与普通用户函数使用同一套 Parser、AST 和 Codegen；
+`-lex`、`-parse` 模式不会加载 Prelude，便于单独观察目标源文件。
 
 ## 版本生成
 

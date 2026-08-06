@@ -89,9 +89,9 @@ static void skip_whitespace(Lexer *lexer) {
                 advance(lexer);
                 break;
             case '\n':
+                advance(lexer);
                 lexer->line++;
                 lexer->column = 1;
-                advance(lexer);
                 break;
             case '/':
                 if (peek_next(lexer) == '/') {
@@ -294,10 +294,12 @@ static Token *string(Lexer *lexer) {
             advance(lexer);
         } else {
             if (peek(lexer) == '\n') {
+                advance(lexer);
                 lexer->line++;
                 lexer->column = 1;
+            } else {
+                advance(lexer);
             }
-            advance(lexer);
         }
     }
     
@@ -374,18 +376,21 @@ Token *get_next_token(Lexer *lexer) {
     // 处理字母和下划线（标识符或关键字）
     if (isalpha(c) || c == '_') {
         lexer->current--;
+        lexer->column--;
         return identifier(lexer);
     }
     
     // 处理数字
     if (isdigit(c)) {
         lexer->current--;
+        lexer->column--;
         return number(lexer);
     }
     
     // 处理字符串
     if (c == '"') {
         lexer->current--;
+        lexer->column--;
         return string(lexer);
     }
     

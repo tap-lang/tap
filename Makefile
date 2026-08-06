@@ -100,6 +100,17 @@ test: $(TARGET)
 	./$(TARGET) run tests/hello.tp
 	./$(TARGET) run tests/fibonacci.tp
 	./$(TARGET) run tests/test_integer_types.tp
+	./$(TARGET) run tests/test_prelude.tp
+	@output=`./$(TARGET) -ir tests/test_prelude_duplicate.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected duplicate Prelude function to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -q "tests/test_prelude_duplicate.tp:1:4: 错误: 重复函数定义 'min'"
+	@output=`./$(TARGET) -ir tests/test_function_duplicate.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected duplicate user function to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -q "tests/test_function_duplicate.tp:5:4: 错误: 重复函数定义 'helper'"
 
 test_hello: $(TARGET)
 	./$(TARGET) tests/hello.tp -o build/hello

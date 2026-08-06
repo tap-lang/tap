@@ -276,10 +276,15 @@ static FunctionNode *parse_function(Parser *parser) {
         parser_error(parser, "期望函数名");
     }
     char *function_name = strdup(parser->current_token->lexeme);
+    int function_line = parser->current_token->line;
+    int function_column = parser->current_token->column;
     consume(parser, TOKEN_IDENTIFIER);
     
     // 创建函数节点
     FunctionNode *function = create_function(function_name);
+    function->filename = strdup(parser->lexer->filename);
+    function->line = function_line;
+    function->column = function_column;
     free(function_name);
     
     // 解析参数列表

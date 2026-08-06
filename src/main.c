@@ -3,6 +3,7 @@
 #include <string.h>
 #include "lexer.h"
 #include "parser.h"
+#include "prelude.h"
 #include "codegen.h"
 #include "run.h"
 #include "version.h"
@@ -142,6 +143,13 @@ int main(int argc, char *argv[]) {
         free_parser(parser);
         free_lexer(lexer);
         return 0;
+    }
+
+    if (load_prelude(program, argv[0]) != 0) {
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return 1;
     }
 
     // 3. 代码生成

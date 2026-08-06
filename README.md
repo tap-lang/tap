@@ -71,6 +71,20 @@ cmake --build .
 ./build/4yue -parse tests/fibonacci.tp
 ```
 
+## 标准库
+
+编译阶段会自动加载 [`std/prelude.tp`](std/prelude.tp)，源文件无需显式导入即可使用以下 `i32` 函数：
+
+```text
+min(a: i32, b: i32): i32
+max(a: i32, b: i32): i32
+abs(value: i32): i32
+```
+
+Prelude 中的函数名不能在用户源码中重复定义。编译器依次从环境变量
+`4YUE_STD_PATH`、当前目录的 `std`、可执行文件相邻的源码或安装目录查找
+`prelude.tp`。`-lex` 和 `-parse` 只处理指定源文件，不加载 Prelude。
+
 ## 开发文档
 
 - [源码结构](docs/src.md)

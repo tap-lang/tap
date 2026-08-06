@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
 project(4yue)
 
+# Homebrew GCC uses its own fixed macOS headers; CMake's SDK sysroot mixes in
+# incompatible CommandLineTools headers and breaks standard includes.
+if(APPLE AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    set(CMAKE_OSX_SYSROOT "" CACHE PATH "macOS SDK sysroot" FORCE)
+endif()
+
 # 设置编译器
 # set(CMAKE_C_COMPILER "clang")
 # set(CMAKE_CXX_COMPILER "clang++")
@@ -21,11 +27,13 @@ add_executable(4yue
     src/main.c
     src/ast.c
     src/parser.c
+    src/prelude.c
     src/lexer.c
     src/token.c
     src/codegen.c
     src/run.c
 )
+set_target_properties(4yue PROPERTIES LINKER_LANGUAGE C)
 
 # 查找LLVM 限制版本大于21
 find_package(LLVM REQUIRED CONFIG)
@@ -95,3 +103,4 @@ target_link_libraries(4yue ${llvm_libs} m)
 
 # 安装目标
 install(TARGETS 4yue DESTINATION bin)
+install(FILES std/prelude.tp DESTINATION share/4yue/std)

@@ -225,7 +225,7 @@ Codegen 对 `ProgramNode.functions` 执行两轮遍历：
 
 ## 当前限制与注意事项
 
-- AST 节点不保存源文件、行号和列号，进入 Codegen 后难以给出精确源码位置。
+- `FunctionNode` 保存函数名 Token 的源文件、行号和列号，用于重复定义诊断；其他 AST 节点暂不保存源码位置。
 - `LiteralType` 同时承担字面量类型和声明类型，后续类型系统扩展时应考虑拆分。
 - `params` 与 `param_types` 使用平行链表；混合有类型和无类型参数时容易发生位置错配。
 - `print_ast()` 当前直接访问 `VarDeclNode.type`，无类型变量声明可能导致空指针访问。

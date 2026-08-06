@@ -250,6 +250,9 @@ FunctionNode *create_function(char *name) {
     function->base.type = NODE_FUNCTION;
     function->base.next = NULL;
     function->name = strdup(name);
+    function->filename = NULL;
+    function->line = 0;
+    function->column = 0;
     function->params = NULL;
     function->param_types = NULL;
     function->body = NULL;
@@ -538,6 +541,7 @@ void free_ast(ASTNode *node) {
         case NODE_FUNCTION: {
             FunctionNode *function = (FunctionNode *)node;
             free(function->name);
+            free(function->filename);
             free_ast(function->params);
             free_ast(function->param_types);
             free_ast(function->body);

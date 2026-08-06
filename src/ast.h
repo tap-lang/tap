@@ -82,6 +82,9 @@ typedef struct {
 typedef struct {
     ASTNode base;
     char *name;            // 函数名
+    char *filename;        // 函数定义所在文件
+    int line;              // 函数名所在行
+    int column;            // 函数名所在列
     ASTNode *params;       // 参数列表
     ASTNode *param_types;  // 参数类型列表
     ASTNode *body;         // 函数体语句列表
