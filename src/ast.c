@@ -131,6 +131,9 @@ static void dump_stmt(ASTNode *n, int depth) {
         return;
     }
     switch (n->type) {
+    case NODE_FUNCTION_CALL:
+        dump_expr(n, depth);
+        break;
     case NODE_VAR_DECL: {
         VarDeclNode *v = (VarDeclNode *)n;
         print_indent(depth);
@@ -434,6 +437,9 @@ FunctionCallNode *create_function_call(char *name) {
     }
     function_call->base.type = NODE_FUNCTION_CALL;
     function_call->base.next = NULL;
+    function_call->filename = NULL;
+    function_call->line = 0;
+    function_call->column = 0;
     function_call->name = strdup(name);
     function_call->arguments = NULL;
     return function_call;
@@ -592,6 +598,7 @@ void free_ast(ASTNode *node) {
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *function_call = (FunctionCallNode *)node;
             free(function_call->name);
+            free(function_call->filename);
             free_ast(function_call->arguments);
             break;
         }

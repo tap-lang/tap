@@ -278,6 +278,11 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
 }
 
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call) {
+    if (strcmp(call->name, "assert") == 0) {
+        fprintf(stderr, "error: assert can only be used as a statement\n");
+        exit(1);
+    }
+
     LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, call->name);
     FunctionNode *function = find_function(context, call->name);
     if (!llvm_function || !function) {
@@ -410,6 +415,59 @@ static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition)
     exit(1);
 }
 
+static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
+    unsigned count = 0;
+    for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
+
+    if (count < 1 || count > 2) {
+        fprintf(stderr, "%s:%d:%d: error: assert expects one or two arguments\n",
+                call->filename ? call->filename : "<unknown>", call->line, call->column);
+        exit(1);
+    }
+
+    const char *message = "condition is false";
+    if (count == 2) {
+        ASTNode *message_node = call->arguments->next;
+        if (message_node->type != NODE_LITERAL ||
+            ((LiteralNode *)message_node)->literal_type != LITERAL_STRING) {
+            fprintf(stderr, "%s:%d:%d: error: assert message must be a string literal\n",
+                    call->filename ? call->filename : "<unknown>", call->line, call->column);
+            exit(1);
+        }
+        message = ((LiteralNode *)message_node)->value.string_value;
+    }
+
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    LLVMBasicBlockRef pass_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "assert_pass");
+    LLVMBasicBlockRef fail_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "assert_fail");
+
+    LLVMBuildCondBr(context->builder, condition_value(context, call->arguments),
+                    pass_block, fail_block);
+
+    LLVMPositionBuilderAtEnd(context->builder, fail_block);
+    LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
+    LLVMValueRef printf_arguments[5] = {
+        LLVMBuildGlobalStringPtr(context->builder,
+            "Assertion failed at %s:%d:%d: %s\n", "assert_format"),
+        LLVMBuildGlobalStringPtr(context->builder,
+            call->filename ? call->filename : "<unknown>", "assert_filename"),
+        LLVMConstInt(int32_type, (unsigned)call->line, 0),
+        LLVMConstInt(int32_type, (unsigned)call->column, 0),
+        LLVMBuildGlobalStringPtr(context->builder, message, "assert_message")
+    };
+    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
+                   printf_arguments, 5, "assert_printf");
+
+    LLVMValueRef exit_argument = LLVMConstInt(int32_type, 1, 0);
+    LLVMBuildCall2(context->builder, context->exit_type, context->exit_func,
+                   &exit_argument, 1, "");
+    LLVMBuildUnreachable(context->builder);
+
+    LLVMPositionBuilderAtEnd(context->builder, pass_block);
+}
+
 static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_node) {
     LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
     LLVMBasicBlockRef then_block = LLVMAppendBasicBlockInContext(context->context, function, "if_then");
@@ -469,6 +527,15 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 LLVMValueRef value = generate_expression_as(context, return_node->expression,
                                                              context->current_return_type);
                 LLVMBuildRet(context->builder, value);
+                break;
+            }
+            case NODE_FUNCTION_CALL: {
+                FunctionCallNode *call = (FunctionCallNode *)statement;
+                if (strcmp(call->name, "assert") == 0) {
+                    generate_assert(context, call);
+                } else {
+                    generate_function_call(context, call);
+                }
                 break;
             }
             case NODE_IF_STATEMENT:
@@ -540,6 +607,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     LLVMTypeRef char_ptr_type = LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
     context->printf_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 1);
     context->printf_func = LLVMAddFunction(context->module, "printf", context->printf_type);
+    context->exit_type = LLVMFunctionType(LLVMVoidTypeInContext(context->context), &int32_type, 1, 0);
+    context->exit_func = LLVMAddFunction(context->module, "exit", context->exit_type);
 
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;

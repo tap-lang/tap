@@ -32,6 +32,8 @@ typedef struct {
     Symbol *symbols;                // 符号表，用于存储变量和它们对应的LLVM值
     LLVMValueRef printf_func;       // printf函数引用
     LLVMTypeRef printf_type;        // printf函数类型
+    LLVMValueRef exit_func;
+    LLVMTypeRef exit_type;
     ProgramNode *program;           // 当前正在生成的AST，不拥有其内存
     enum LiteralType current_return_type;
     // LLVMValueRef puts_func;         // puts函数引用

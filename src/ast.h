@@ -142,6 +142,9 @@ typedef struct {
 // 函数调用节点
 typedef struct {
     ASTNode base;
+    char *filename;
+    int line;
+    int column;
     char *name;            // 函数名
     ASTNode *arguments;    // 参数列表
 } FunctionCallNode;

@@ -1,0 +1,5 @@
+fn main(): int {
+    assert(0, "expected failure");
+    print("unreachable\n");
+    return 0;
+}

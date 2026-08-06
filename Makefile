@@ -104,6 +104,13 @@ test: $(TARGET)
 	$(TARGET) run tests/fibonacci.tp
 	$(TARGET) run tests/test_integer_types.tp
 	$(TARGET) run tests/test_prelude.tp
+	$(TARGET) run tests/test_assert.tp
+	@output=`$(TARGET) run tests/test_assert_failure.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected failed assertion to return non-zero"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -Fq \
+			"Assertion failed at tests/test_assert_failure.tp:2:5: expected failure"
 	@output=`./$(TARGET) -ir tests/test_prelude_duplicate.tp 2>&1`; status=$$?; \
 		if [ $$status -eq 0 ]; then \
 			echo "expected duplicate Prelude function to fail"; exit 1; \

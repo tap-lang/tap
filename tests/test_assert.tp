@@ -1,0 +1,15 @@
+fn observe(value: int): int {
+    print("observed %d\n", value);
+    return value;
+}
+
+fn main(): int {
+    let value: int = 3;
+    assert(1);
+    assert(value == 3, "value must equal three");
+    observe(value);
+    if (value) {
+        assert(value > 0);
+    }
+    return 0;
+}

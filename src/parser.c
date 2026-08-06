@@ -89,6 +89,7 @@ static ASTNode *parse_expression(Parser *parser); // 解析表达式（支持加
 static ASTNode *parse_term(Parser *parser); // 解析项（乘法和除法）
 static ASTNode *parse_factor(Parser *parser); // 解析因子（基本表达式）
 static ASTNode *parse_function_call(Parser *parser, char *function_name); // 解析函数调用
+static ASTNode *parse_expression_statement(Parser *parser);
 static ASTNode *parse_if_statement(Parser *parser); // 解析条件语句
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
@@ -209,6 +210,9 @@ static ASTNode *parse_block(Parser *parser) {
             // 解析条件语句
             ASTNode *if_statement = parse_if_statement(parser);
             add_statement(block, if_statement);
+        } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
+            ASTNode *statement = parse_expression_statement(parser);
+            add_statement(block, statement);
         } else {
             parser_error(parser, "期望语句");
         }
@@ -435,6 +439,9 @@ static FunctionNode *parse_function(Parser *parser) {
             // 解析条件语句
             ASTNode *if_statement = parse_if_statement(parser);
             add_statement(function, if_statement);
+        } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
+            ASTNode *statement = parse_expression_statement(parser);
+            add_statement(function, statement);
         } else {
             parser_error(parser, "期望语句");
         }
@@ -472,6 +479,15 @@ static ASTNode *parse_function_call(Parser *parser, char *function_name) {
     return (ASTNode *)function_call;
 }
 
+static ASTNode *parse_expression_statement(Parser *parser) {
+    ASTNode *expression = parse_expression(parser);
+    if (!expression || expression->type != NODE_FUNCTION_CALL) {
+        parser_error(parser, "only function calls can be used as expression statements");
+    }
+    consume(parser, TOKEN_SEMICOLON);
+    return expression;
+}
+
 // 解析因子（标识符或整数）
 static ASTNode *parse_factor(Parser *parser) {
     Token *token = parser->current_token;
@@ -488,12 +504,18 @@ static ASTNode *parse_factor(Parser *parser) {
         return (ASTNode *)string_literal;
     } else if (token->type == TOKEN_IDENTIFIER) {
         // 标识符（变量或函数调用）
+        int line = token->line;
+        int column = token->column;
         char *name = strdup(token->lexeme);
         consume(parser, TOKEN_IDENTIFIER);
         
         // 检查是否是函数调用
         if (parser->current_token->type == TOKEN_LPAREN) {
             ASTNode *function_call = parse_function_call(parser, name);
+            FunctionCallNode *call = (FunctionCallNode *)function_call;
+            call->filename = strdup(parser->lexer->filename);
+            call->line = line;
+            call->column = column;
             free(name);
             return function_call;
         }
