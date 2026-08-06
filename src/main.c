@@ -278,6 +278,10 @@ int main(int argc, char *argv[]) {
         int result = compile_to_executable(codegen_context, exe_file);
         if (result == 0 && run_native) {
             result = execute_file(exe_file);
+            if (remove(exe_file) != 0) {
+                fprintf(stderr, "删除临时可执行文件失败: %s\n", exe_file);
+                if (result == 0) result = 1;
+            }
         }
 
         free_codegen_context(codegen_context);
