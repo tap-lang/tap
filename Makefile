@@ -2,7 +2,7 @@
 
 # 编译器和编译选项
 # CC = clang
-CC = gcc-13
+CC = gcc
 # CXX = clang++
 LIBS = -lLLVM-21 -lm
 
