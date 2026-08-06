@@ -9,9 +9,11 @@ LIBS = -lLLVM-21 -lm
 # 根据操作系统类型设置不同的CFLAGS和LDFLAGS
 ifeq ($(OS),Windows_NT)
     # Windows系统设置
-    CFLAGS = -Wall -Wextra -g -I"C:/Program Files/LLVM/include"
+#     CFLAGS = -Wall -Wextra -g -I"C:/Program Files/LLVM/include"
+    CFLAGS = -Wall -Wextra -g
     # CXXFLAGS = $(CFLAGS)
-    LDFLAGS = -L"C:/Program Files/LLVM/lib"
+#     LDFLAGS = -L"C:/Program Files/LLVM/lib"
+    LDFLAGS = 
     # Windows下不使用address sanitizer
 else
     # 非Windows系统
@@ -51,11 +53,12 @@ BUILD_DIR = build
 
 # 查找所有源文件
 C_SOURCES = $(wildcard $(SRC_DIR)/*.c)
-CPP_SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
+# CPP_SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 SOURCES = $(C_SOURCES) $(CPP_SOURCES)
 
 # 生成目标文件
-OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES)) $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(CPP_SOURCES))
+# OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES)) $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(CPP_SOURCES))
+OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES))
 
 # 目标可执行文件
 TARGET = ./build/4yue
@@ -96,11 +99,11 @@ clean:
 
 # 运行测试
 test: $(TARGET)
-	./$(TARGET) run tests/1.tp
-	./$(TARGET) run tests/hello.tp
-	./$(TARGET) run tests/fibonacci.tp
-	./$(TARGET) run tests/test_integer_types.tp
-	./$(TARGET) run tests/test_prelude.tp
+	$(TARGET) run tests/1.tp
+	$(TARGET) run tests/hello.tp
+	$(TARGET) run tests/fibonacci.tp
+	$(TARGET) run tests/test_integer_types.tp
+	$(TARGET) run tests/test_prelude.tp
 	@output=`./$(TARGET) -ir tests/test_prelude_duplicate.tp 2>&1`; status=$$?; \
 		if [ $$status -eq 0 ]; then \
 			echo "expected duplicate Prelude function to fail"; exit 1; \
@@ -113,7 +116,7 @@ test: $(TARGET)
 		printf '%s\n' "$$output" | grep -q "tests/test_function_duplicate.tp:5:4: 错误: 重复函数定义 'helper'"
 
 test_hello: $(TARGET)
-	./$(TARGET) tests/hello.tp -o build/hello
+	$(TARGET) tests/hello.tp -o ./build/hello
 	./build/hello
 
-.PHONY: all clean run src/version.h
+.PHONY: all clean src/version.h
