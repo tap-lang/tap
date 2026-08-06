@@ -1,0 +1,39 @@
+fn add_i8(a: i8, b: i8): i8 {
+    return a + b;
+}
+
+fn divide_u64(a: u64, b: u64): u64 {
+    return a / b;
+}
+
+fn is_greater_u64(a: u64, b: u64): bool {
+    return a > b;
+}
+
+fn main(): i32 {
+    let value_i8: i8 = -8;
+    let value_u8: u8 = 250;
+    let value_i16: i16 = -1600;
+    let value_u16: u16 = 65000;
+    let value_i32: i32 = -32000;
+    let value_u32: u32 = 4000000000;
+    let value_i64: i64 = -64000;
+    let value_u64: u64 = 18446744073709551615;
+    let value_i128: i128 = -170141183460469231731687303715884105728;
+    let value_u128: u128 = 340282366920938463463374607431768211455;
+    let value_int: int = -42;
+    let value_uint: uint = 42;
+
+    let sum: i8 = add_i8(value_i8, 10);
+    let quotient: u64 = divide_u64(100, 4);
+
+    if (is_greater_u64(value_u64, 1)) {
+        print("%d %u %d %u %d %u %lld %llu %lld %llu %d %llu\n",
+              value_i8, value_u8, value_i16, value_u16,
+              value_i32, value_u32, value_i64, value_u64,
+              value_int, value_uint, sum, quotient);
+        return 0;
+    } else {
+        return 1;
+    }
+}

@@ -115,7 +115,12 @@ ProgramNode
 
 | `LiteralType` | 联合字段 |
 |---|---|
-| `LITERAL_INT`、`LITERAL_I32`、`LITERAL_I64` | `int_value` |
+| `LITERAL_INT`、`LITERAL_UINT` | `int_value` / `integer_text` |
+| `LITERAL_I8`、`LITERAL_U8` | `int_value` / `integer_text` |
+| `LITERAL_I16`、`LITERAL_U16` | `int_value` / `integer_text` |
+| `LITERAL_I32`、`LITERAL_U32` | `int_value` / `integer_text` |
+| `LITERAL_I64`、`LITERAL_U64` | `int_value` / `integer_text` |
+| `LITERAL_I128`、`LITERAL_U128` | `int_value` / `integer_text` |
 | `LITERAL_FLOAT`、`LITERAL_F32`、`LITERAL_F64` | `float_value` |
 | `LITERAL_STRING` | `string_value` |
 | `LITERAL_BOOL` | `bool_value` |
@@ -123,8 +128,9 @@ ProgramNode
 `VarTypeNode` 当前也复用 `LiteralType` 表示声明类型。需要区分：`LiteralNode.literal_type`
 描述表达式中的值，`VarTypeNode.type` 描述变量、参数或函数返回值的类型注解。
 
-目前 Parser 的普通表达式只创建整数和字符串字面量；浮点和布尔构造函数已经存在，但尚未接入
-对应的表达式解析流程。
+十进制整数字面量默认创建为 `LITERAL_I32`，同时在 `integer_text` 中保留原文，使 Codegen
+可以直接构造超过 64 位的 `i128/u128` 常量。浮点和布尔构造函数已经存在，但尚未接入对应的
+表达式解析流程。
 
 ## 链表关系
 
@@ -223,5 +229,4 @@ Codegen 对 `ProgramNode.functions` 执行两轮遍历：
 - `LiteralType` 同时承担字面量类型和声明类型，后续类型系统扩展时应考虑拆分。
 - `params` 与 `param_types` 使用平行链表；混合有类型和无类型参数时容易发生位置错配。
 - `print_ast()` 当前直接访问 `VarDeclNode.type`，无类型变量声明可能导致空指针访问。
-- `free_ast()` 当前没有释放 `FunctionNode.param_types` 和 `FunctionNode.return_type`，存在内存泄漏。
-- `NODE_STATEMENT`、`NODE_EXPRESSION`、逻辑操作符以及部分字面量类型仍是预留能力。
+- `NODE_STATEMENT`、`NODE_EXPRESSION`、逻辑操作符以及浮点/布尔字面量解析仍是预留能力。

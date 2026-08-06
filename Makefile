@@ -99,6 +99,7 @@ test: $(TARGET)
 	./$(TARGET) run tests/1.tp
 	./$(TARGET) run tests/hello.tp
 	./$(TARGET) run tests/fibonacci.tp
+	./$(TARGET) run tests/test_integer_types.tp
 
 test_hello: $(TARGET)
 	./$(TARGET) tests/hello.tp -o build/hello

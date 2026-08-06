@@ -1,4 +1,5 @@
 #include "ast.h"
+#include <inttypes.h>
 
 extern int debug;
 
@@ -11,8 +12,17 @@ static void print_indent(int depth) {
 static const char *literal_type_str(enum LiteralType t) {
     switch (t) {
     case LITERAL_INT: return "int";
+    case LITERAL_UINT: return "uint";
+    case LITERAL_I8: return "i8";
+    case LITERAL_U8: return "u8";
+    case LITERAL_I16: return "i16";
+    case LITERAL_U16: return "u16";
     case LITERAL_I32: return "i32";
+    case LITERAL_U32: return "u32";
     case LITERAL_I64: return "i64";
+    case LITERAL_U64: return "u64";
+    case LITERAL_I128: return "i128";
+    case LITERAL_U128: return "u128";
     case LITERAL_FLOAT: return "float";
     case LITERAL_F32: return "f32";
     case LITERAL_F64: return "f64";
@@ -54,7 +64,11 @@ static void print_literal_value(const LiteralNode *lit) {
         printf("%g", lit->value.float_value);
         break;
     default:
-        printf("%d", lit->value.int_value);
+        if (lit->integer_text) {
+            printf("%s", lit->integer_text);
+        } else {
+            printf("%" PRIu64, lit->value.int_value);
+        }
         break;
     }
 }
@@ -120,7 +134,11 @@ static void dump_stmt(ASTNode *n, int depth) {
     case NODE_VAR_DECL: {
         VarDeclNode *v = (VarDeclNode *)n;
         print_indent(depth);
-        printf("VarDecl: %s : %s\n", v->name, literal_type_str(v->type->type));
+        printf("VarDecl: %s", v->name);
+        if (v->type) {
+            printf(" : %s", literal_type_str(v->type->type));
+        }
+        printf("\n");
         if (v->expression) {
             print_indent(depth + 2);
             printf("init:\n");
@@ -253,7 +271,7 @@ IdentifierNode *create_identifier(char *name) {
 }
 
 // 创建整数字面量节点
-LiteralNode *create_int_literal(int value) {
+LiteralNode *create_int_literal(uint64_t value) {
     LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
     if (!literal) {
         fprintf(stderr, "内存分配失败\n");
@@ -261,8 +279,15 @@ LiteralNode *create_int_literal(int value) {
     }
     literal->base.type = NODE_LITERAL;
     literal->base.next = NULL;
-    literal->literal_type = LITERAL_INT;
+    literal->literal_type = LITERAL_I32;
+    literal->integer_text = NULL;
     literal->value.int_value = value;
+    return literal;
+}
+
+LiteralNode *create_int_literal_text(const char *value) {
+    LiteralNode *literal = create_int_literal(strtoull(value, NULL, 10));
+    literal->integer_text = strdup(value);
     return literal;
 }
 
@@ -276,6 +301,7 @@ LiteralNode *create_string_literal(char *value) {
     literal->base.type = NODE_LITERAL;
     literal->base.next = NULL;
     literal->literal_type = LITERAL_STRING;
+    literal->integer_text = NULL;
     literal->value.string_value = strdup(value);
     return literal;
 }
@@ -290,6 +316,7 @@ LiteralNode *create_float_literal(double value) {
     literal->base.type = NODE_LITERAL;
     literal->base.next = NULL;
     literal->literal_type = LITERAL_FLOAT;
+    literal->integer_text = NULL;
     literal->value.float_value = value;
     return literal;
 }
@@ -304,6 +331,7 @@ LiteralNode *create_bool_literal(int value) {
     literal->base.type = NODE_LITERAL;
     literal->base.next = NULL;
     literal->literal_type = LITERAL_BOOL;
+    literal->integer_text = NULL;
     literal->value.bool_value = value;
     return literal;
 }
@@ -511,7 +539,9 @@ void free_ast(ASTNode *node) {
             FunctionNode *function = (FunctionNode *)node;
             free(function->name);
             free_ast(function->params);
+            free_ast(function->param_types);
             free_ast(function->body);
+            free_ast((ASTNode *)function->return_type);
             break;
         }
         case NODE_IDENTIFIER: {
@@ -524,6 +554,7 @@ void free_ast(ASTNode *node) {
             if (literal->literal_type == LITERAL_STRING) {
                 free(literal->value.string_value);
             }
+            free(literal->integer_text);
             break;
         }
         case NODE_RETURN: {

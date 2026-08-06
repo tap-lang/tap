@@ -139,23 +139,34 @@ static enum TokenType check_keyword(const char *text, int length) {
     case 2:
         if (memcmp(text, "fn", 2) == 0) return TOKEN_FN;
         if (memcmp(text, "if", 2) == 0) return TOKEN_IF;
+        if (memcmp(text, "i8", 2) == 0) return TOKEN_I8;
+        if (memcmp(text, "u8", 2) == 0) return TOKEN_U8;
         break;
     case 3:
         if (memcmp(text, "let", 3) == 0) return TOKEN_LET;
         if (memcmp(text, "int", 3) == 0) return TOKEN_INT;
+        if (memcmp(text, "i16", 3) == 0) return TOKEN_I16;
+        if (memcmp(text, "u16", 3) == 0) return TOKEN_U16;
         if (memcmp(text, "i32", 3) == 0) return TOKEN_I32;
+        if (memcmp(text, "u32", 3) == 0) return TOKEN_U32;
         if (memcmp(text, "i64", 3) == 0) return TOKEN_I64;
+        if (memcmp(text, "u64", 3) == 0) return TOKEN_U64;
         if (memcmp(text, "f32", 3) == 0) return TOKEN_F32;
         if (memcmp(text, "f64", 3) == 0) return TOKEN_F64;
         break;
     case 4:
         if (memcmp(text, "else", 4) == 0) return TOKEN_ELSE;
+        if (memcmp(text, "bool", 4) == 0) return TOKEN_BOOL;
         if (memcmp(text, "true", 4) == 0) return TOKEN_BOOL;
+        if (memcmp(text, "uint", 4) == 0) return TOKEN_UINT;
+        if (memcmp(text, "i128", 4) == 0) return TOKEN_I128;
+        if (memcmp(text, "u128", 4) == 0) return TOKEN_U128;
         break;
     case 5:
         if (memcmp(text, "false", 5) == 0) return TOKEN_BOOL;
         if (memcmp(text, "print", 5) == 0) return TOKEN_PRINT;
         if (memcmp(text, "array", 5) == 0) return TOKEN_ARRAY;
+        if (memcmp(text, "float", 5) == 0) return TOKEN_FLOAT;
         break;
     case 6:
         if (memcmp(text, "elseif", 6) == 0) return TOKEN_ELSEIF;
@@ -216,7 +227,7 @@ static Token *number(Lexer *lexer) {
         token->value.float_value = atof(token->lexeme);
     } else {
         token = create_token(lexer, TOKEN_I32, start, lexer->current);
-        token->value.int_value = atoi(token->lexeme);
+        token->value.int_value = strtoull(token->lexeme, NULL, 10);
     }
     
     return token;

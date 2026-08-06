@@ -2,6 +2,7 @@
 #define AST_H
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,8 +26,17 @@ enum NodeType {
 // 字面量类型
 enum LiteralType {
     LITERAL_INT,                    // 整数 int
+    LITERAL_UINT,                   // 无符号整数 uint
+    LITERAL_I8,                     // 8位有符号整数 i8
+    LITERAL_U8,                     // 8位无符号整数 u8
+    LITERAL_I16,                    // 16位有符号整数 i16
+    LITERAL_U16,                    // 16位无符号整数 u16
     LITERAL_I32,                    // 32位整数 i32
+    LITERAL_U32,                    // 32位无符号整数 u32
     LITERAL_I64,                    // 64位整数 i64
+    LITERAL_U64,                    // 64位无符号整数 u64
+    LITERAL_I128,                   // 128位有符号整数 i128
+    LITERAL_U128,                   // 128位无符号整数 u128
     LITERAL_FLOAT,                  // 浮点数 float
     LITERAL_F32,                    // 32位浮点数 f32
     LITERAL_F64,                    // 64位浮点数 f64
@@ -88,8 +98,9 @@ typedef struct {
 typedef struct {
     ASTNode base;
     enum LiteralType literal_type;
+    char *integer_text;       // 十进制整数原文，用于构造 i128/u128 常量
     union {
-        int int_value;
+        uint64_t int_value;
         char *string_value;
         double float_value;
         int bool_value;
@@ -137,7 +148,8 @@ ProgramNode *create_program();
 FunctionNode *create_function(char *name);
 IdentifierNode *create_identifier(char *name);
 VarTypeNode *create_var_type(enum LiteralType type);
-LiteralNode *create_int_literal(int value);
+LiteralNode *create_int_literal(uint64_t value);
+LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);
 LiteralNode *create_float_literal(double value);
 LiteralNode *create_bool_literal(int value);

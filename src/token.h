@@ -17,8 +17,17 @@ enum TokenType {
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符
     TOKEN_INT,         // 32/64位整数
+    TOKEN_UINT,        // 32/64位无符号整数
+    TOKEN_I8,          // 8位有符号整数
+    TOKEN_U8,          // 8位无符号整数
+    TOKEN_I16,         // 16位有符号整数
+    TOKEN_U16,         // 16位无符号整数
     TOKEN_I32,         // 32位整数
+    TOKEN_U32,         // 32位无符号整数
     TOKEN_I64,         // 64位整数
+    TOKEN_U64,         // 64位无符号整数
+    TOKEN_I128,        // 128位有符号整数
+    TOKEN_U128,        // 128位无符号整数
     TOKEN_FLOAT,       // 浮点数
     TOKEN_F32,         // 32位浮点数
     TOKEN_F64,         // 64位浮点数
@@ -68,7 +77,7 @@ typedef struct {
 
     // 根据标记类型存储不同的值
     union {
-        int int_value;
+        unsigned long long int_value;
         char *string_value;
         double float_value;
         int bool_value;

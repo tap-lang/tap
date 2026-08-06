@@ -92,6 +92,41 @@ static ASTNode *parse_function_call(Parser *parser, char *function_name); // 解
 static ASTNode *parse_if_statement(Parser *parser); // 解析条件语句
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
+static VarTypeNode *parse_type(Parser *parser) {
+    enum LiteralType type;
+    enum TokenType token_type = parser->current_token->type;
+
+    switch (token_type) {
+        case TOKEN_INT: type = LITERAL_INT; break;
+        case TOKEN_UINT: type = LITERAL_UINT; break;
+        case TOKEN_I8: type = LITERAL_I8; break;
+        case TOKEN_U8: type = LITERAL_U8; break;
+        case TOKEN_I16: type = LITERAL_I16; break;
+        case TOKEN_U16: type = LITERAL_U16; break;
+        case TOKEN_I32: type = LITERAL_I32; break;
+        case TOKEN_U32: type = LITERAL_U32; break;
+        case TOKEN_I64: type = LITERAL_I64; break;
+        case TOKEN_U64: type = LITERAL_U64; break;
+        case TOKEN_I128: type = LITERAL_I128; break;
+        case TOKEN_U128: type = LITERAL_U128; break;
+        case TOKEN_FLOAT: type = LITERAL_FLOAT; break;
+        case TOKEN_F32: type = LITERAL_F32; break;
+        case TOKEN_F64: type = LITERAL_F64; break;
+        case TOKEN_BOOL: type = LITERAL_BOOL; break;
+        case TOKEN_STRING: type = LITERAL_STRING; break;
+        case TOKEN_ARRAY:
+            // Array has no dedicated AST type yet; preserve the existing placeholder.
+            type = LITERAL_STRING;
+            break;
+        default:
+            parser_error(parser, "期望类型");
+            return NULL;
+    }
+
+    consume(parser, token_type);
+    return create_var_type(type);
+}
+
 // 解析代码块（由花括号包围的语句序列）
 static ASTNode *parse_block(Parser *parser) {
     // 创建一个临时的函数节点来存储代码块中的语句
@@ -101,7 +136,7 @@ static ASTNode *parse_block(Parser *parser) {
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
         // 解析语句
         if (parser->current_token->type == TOKEN_PRINT) {
-            printf("解析打印语句 in {代码块} \n");
+            if (debug) printf("解析打印语句 in {代码块} \n");
             // 解析打印语句
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);
@@ -143,35 +178,7 @@ static ASTNode *parse_block(Parser *parser) {
             VarTypeNode *type = NULL;
             if (parser->current_token->type == TOKEN_COLON) {
                 consume(parser, TOKEN_COLON);
-                
-                // 解析类型
-                if (parser->current_token->type == TOKEN_INT) {
-                    type = create_var_type(LITERAL_INT);
-                    consume(parser, TOKEN_INT);
-                } else if (parser->current_token->type == TOKEN_I32) {
-                    type = create_var_type(LITERAL_I32);
-                    consume(parser, TOKEN_I32);
-                } else if (parser->current_token->type == TOKEN_I64) {
-                    type = create_var_type(LITERAL_I64);
-                    consume(parser, TOKEN_I64);
-                } else if (parser->current_token->type == TOKEN_FLOAT) {
-                    type = create_var_type(LITERAL_FLOAT);
-                    consume(parser, TOKEN_FLOAT);
-                } else if (parser->current_token->type == TOKEN_F32) {
-                    type = create_var_type(LITERAL_F32);
-                    consume(parser, TOKEN_F32);
-                } else if (parser->current_token->type == TOKEN_F64) {
-                    type = create_var_type(LITERAL_F64);
-                    consume(parser, TOKEN_F64);
-                } else if (parser->current_token->type == TOKEN_STRING) {
-                    type = create_var_type(LITERAL_STRING);
-                    consume(parser, TOKEN_STRING);
-                } else if (parser->current_token->type == TOKEN_BOOL) {
-                    type = create_var_type(LITERAL_BOOL);
-                    consume(parser, TOKEN_BOOL);
-                } else {
-                    parser_error(parser, "未知的类型");
-                }
+                type = parse_type(parser);
             }
             
             // 解析等号
@@ -290,45 +297,14 @@ static FunctionNode *parse_function(Parser *parser) {
         free(param_name);
         add_param(function, param);
 
-        // 解析参数类型
+        // 解析参数类型；未标注时使用默认 i32，保持参数与类型链表对齐。
+        VarTypeNode *param_type = create_var_type(LITERAL_I32);
         if (parser->current_token->type == TOKEN_COLON) {
             consume(parser, TOKEN_COLON);
-            
-            VarTypeNode *param_type = NULL;
-            if (parser->current_token->type == TOKEN_INT) {
-                consume(parser, TOKEN_INT);
-                param_type = create_var_type(LITERAL_INT);
-            } else if (parser->current_token->type == TOKEN_I32) {
-                consume(parser, TOKEN_I32);
-                param_type = create_var_type(LITERAL_I32);
-            } else if (parser->current_token->type == TOKEN_I64) {
-                consume(parser, TOKEN_I64);
-                param_type = create_var_type(LITERAL_I64);
-            }  else if (parser->current_token->type == TOKEN_F32) {
-                consume(parser, TOKEN_F32);
-                param_type = create_var_type(LITERAL_F32);
-            } else if (parser->current_token->type == TOKEN_F64) {
-                consume(parser, TOKEN_F64);
-                param_type = create_var_type(LITERAL_F64);
-            } else if (parser->current_token->type == TOKEN_BOOL) {
-                consume(parser, TOKEN_BOOL);
-                param_type = create_var_type(LITERAL_BOOL);
-            } else if (parser->current_token->type == TOKEN_STRING) {
-                consume(parser, TOKEN_STRING);
-                param_type = create_var_type(LITERAL_STRING);
-            } else if (parser->current_token->type == TOKEN_ARRAY) {
-                consume(parser, TOKEN_ARRAY);
-                // 数组类型暂时使用LITERAL_STRING作为占位符
-                param_type = create_var_type(LITERAL_STRING);
-            } else {
-                parser_error(parser, "期望参数类型");
-            }
-            
-            // 将参数类型添加到函数节点
-            if (param_type) {
-                add_param_type(function, param_type);
-            }
+            free(param_type);
+            param_type = parse_type(parser);
         }
+        add_param_type(function, param_type);
         
         // 解析更多参数
         while (parser->current_token->type == TOKEN_COMMA) {
@@ -345,41 +321,13 @@ static FunctionNode *parse_function(Parser *parser) {
             add_param(function, param);
             
             // 解析参数类型
+            param_type = create_var_type(LITERAL_I32);
             if (parser->current_token->type == TOKEN_COLON) {
                 consume(parser, TOKEN_COLON);
-                
-                VarTypeNode *param_type = NULL;
-                
-                if (parser->current_token->type == TOKEN_INT) {
-                    consume(parser, TOKEN_INT);
-                    param_type = create_var_type(LITERAL_INT);
-                } else if (parser->current_token->type == TOKEN_I32) {
-                    consume(parser, TOKEN_I32);
-                    param_type = create_var_type(LITERAL_I32);
-                } else if (parser->current_token->type == TOKEN_I64) {
-                    consume(parser, TOKEN_I64);
-                    param_type = create_var_type(LITERAL_I64);
-                }  else if (parser->current_token->type == TOKEN_F32) {
-                    consume(parser, TOKEN_F32);
-                    param_type = create_var_type(LITERAL_FLOAT);
-                } else if (parser->current_token->type == TOKEN_BOOL) {
-                    consume(parser, TOKEN_BOOL);
-                    param_type = create_var_type(LITERAL_BOOL);
-                } else if (parser->current_token->type == TOKEN_STRING) {
-                    consume(parser, TOKEN_STRING);
-                    param_type = create_var_type(LITERAL_STRING);
-                } else if (parser->current_token->type == TOKEN_ARRAY) {
-                    consume(parser, TOKEN_ARRAY);
-                    param_type = create_var_type(LITERAL_STRING);
-                } else {
-                    parser_error(parser, "期望参数类型");
-                }
-                
-                // 将参数类型添加到函数节点
-                if (param_type) {
-                    add_param_type(function, param_type);
-                }
+                free(param_type);
+                param_type = parse_type(parser);
             }
+            add_param_type(function, param_type);
         }
     }
     
@@ -395,40 +343,7 @@ static FunctionNode *parse_function(Parser *parser) {
             print_token(parser->current_token);
         }
         
-        // 这里可以添加返回类型的处理逻辑
-        // 分别处理不同的类型标记
-        if (parser->current_token->type == TOKEN_INT) {
-            if(debug) printf("Consuming TOKEN_INT\n");
-            consume(parser, TOKEN_INT);
-            function->return_type = create_var_type(LITERAL_INT);
-        } else if (parser->current_token->type == TOKEN_I32) {
-            if(debug) printf("Consuming TOKEN_I32\n");
-            consume(parser, TOKEN_I32);
-            function->return_type = create_var_type(LITERAL_I32);
-        } else if (parser->current_token->type == TOKEN_I64) {
-            if(debug) printf("Consuming TOKEN_I64\n");
-            consume(parser, TOKEN_I64);
-            function->return_type = create_var_type(LITERAL_I64);
-        } else if (parser->current_token->type == TOKEN_F32) {
-            if(debug) printf("Consuming TOKEN_F32\n");
-            consume(parser, TOKEN_F32);
-            function->return_type = create_var_type(LITERAL_FLOAT);
-        } else if (parser->current_token->type == TOKEN_F64) {
-            if(debug) printf("Consuming TOKEN_F64\n");
-            consume(parser, TOKEN_F64);
-            function->return_type = create_var_type(LITERAL_F64);
-        } else if (parser->current_token->type == TOKEN_BOOL) {
-            if(debug) printf("Consuming TOKEN_BOOL\n");
-            consume(parser, TOKEN_BOOL);
-            function->return_type = create_var_type(LITERAL_BOOL);
-        } else if (parser->current_token->type == TOKEN_STRING) {
-            if(debug) printf("Consuming TOKEN_STRING\n");
-            consume(parser, TOKEN_STRING);
-            function->return_type = create_var_type(LITERAL_STRING);
-        } else {
-            printf("Consuming unknown type %d\n", parser->current_token->type);
-            parser_error(parser, "期望返回类型");
-        }
+        function->return_type = parse_type(parser);
     }
     
     // 解析函数体
@@ -484,20 +399,7 @@ static FunctionNode *parse_function(Parser *parser) {
             VarTypeNode *type = NULL;
             if (parser->current_token->type == TOKEN_COLON) {
                 consume(parser, TOKEN_COLON);
-                
-                // 解析类型注解
-                if (parser->current_token->type == TOKEN_INT) {
-                    type = create_var_type(LITERAL_INT);
-                    consume(parser, TOKEN_INT);
-                } else if (parser->current_token->type == TOKEN_I32) {
-                    type = create_var_type(LITERAL_I32);
-                    consume(parser, TOKEN_I32);
-                } else if (parser->current_token->type == TOKEN_F32) {
-                    type = create_var_type(LITERAL_F32);
-                    consume(parser, TOKEN_F32);
-                } else {
-                    parser_error(parser, "未知的类型");
-                }
+                type = parse_type(parser);
             }
             
             // 解析等号
@@ -571,7 +473,7 @@ static ASTNode *parse_factor(Parser *parser) {
     
     if (token->type == TOKEN_I32) {
         // 整数字面量
-        LiteralNode *int_literal = create_int_literal(token->value.int_value);
+        LiteralNode *int_literal = create_int_literal_text(token->lexeme);
         consume(parser, TOKEN_I32);
         return (ASTNode *)int_literal;
     } else if (token->type == TOKEN_STRING) {
