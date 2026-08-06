@@ -703,15 +703,9 @@ int compile_ir_to_exe(const char *ir_file, const char *exe_file) {
     }
 
     char link_command[PATH_MAX * 2];
-#ifdef __APPLE__
-    snprintf(link_command, sizeof(link_command),
-        "xcrun ld -o %s %s -syslibroot $(xcrun --show-sdk-path) "
-        "-L$(xcrun --show-sdk-path)/usr/lib -lSystem -e _main",
-        exe_file, obj_file);
-#else
-    snprintf(link_command, sizeof(link_command), "ld -o %s %s -lc -e main",
+    snprintf(link_command, sizeof(link_command), "cc -o \"%s\" \"%s\"",
              exe_file, obj_file);
-#endif
+    // printf("链接命令1: %s\n", link_command);
 
     if (system(link_command) != 0) {
         fprintf(stderr, "链接失败: %s\n", link_command);
