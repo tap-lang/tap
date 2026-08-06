@@ -24,6 +24,7 @@ add_executable(4yue
     src/lexer.c
     src/token.c
     src/codegen.c
+    src/run.c
 )
 
 # 查找LLVM 限制版本大于21

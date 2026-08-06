@@ -1,20 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#ifndef _WIN32
-#include <errno.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#endif
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
+#include "run.h"
 #include "version.h"
-
-#ifndef _WIN32
-extern char **environ;
-#endif
 
 // 打印用法
 static void print_usage() {
@@ -52,79 +43,6 @@ static void run_lex_only(Lexer *lexer) {
             break;
         }
     }
-}
-
-static int compile_to_executable(CodeGenContext *context, const char *exe_file) {
-    const char *temp_ir_file = "temp_output.ll";
-
-    if (write_ir_to_file(context, temp_ir_file) != 0) {
-        fprintf(stderr, "写入临时IR文件失败\n");
-        return 1;
-    }
-
-    int result = compile_ir_to_exe(temp_ir_file, exe_file);
-    remove(temp_ir_file);
-
-    if (result != 0) {
-        fprintf(stderr, "生成可执行文件失败\n");
-        return 1;
-    }
-
-#ifndef _WIN32
-    if (chmod(exe_file, 0755) != 0) {
-        fprintf(stderr, "设置可执行权限失败: %s\n", exe_file);
-        return 1;
-    }
-#endif
-
-    if (debug) printf("可执行文件已生成: %s\n", exe_file);
-    return 0;
-}
-
-static int execute_file(const char *exe_file) {
-    fflush(NULL);
-
-#ifdef _WIN32
-    int result = system(exe_file);
-    return result == -1 ? 1 : result;
-#else
-    char *relative_path = NULL;
-    const char *exec_path = exe_file;
-
-    if (!strchr(exe_file, '/')) {
-        size_t path_size = strlen(exe_file) + 3;
-        relative_path = malloc(path_size);
-        if (!relative_path) {
-            fprintf(stderr, "内存分配失败\n");
-            return 1;
-        }
-        snprintf(relative_path, path_size, "./%s", exe_file);
-        exec_path = relative_path;
-    }
-
-    pid_t pid;
-    char *const child_argv[] = {(char *)exec_path, NULL};
-    int spawn_result = posix_spawn(&pid, exec_path, NULL, NULL, child_argv, environ);
-    if (spawn_result != 0) {
-        fprintf(stderr, "运行可执行文件失败: %s: %s\n", exec_path, strerror(spawn_result));
-        free(relative_path);
-        return 1;
-    }
-
-    int status;
-    while (waitpid(pid, &status, 0) == -1) {
-        if (errno != EINTR) {
-            fprintf(stderr, "等待程序结束失败: %s\n", strerror(errno));
-            free(relative_path);
-            return 1;
-        }
-    }
-    free(relative_path);
-
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
-    return 1;
-#endif
 }
 
 int main(int argc, char *argv[]) {
@@ -253,36 +171,16 @@ int main(int argc, char *argv[]) {
             printf("目标文件已写入到 %s\n", obj_file);
         }
     } else if (run_lli) {
-        // 使用LLVM解释器(lli)执行生成的代码，而不是自己实现执行逻辑
-        if (debug) printf("执行程序...\n");
-        
-        // 生成临时IR文件
-        char *temp_ir_file = "temp_output.ll";
-        if (write_ir_to_file(codegen_context, temp_ir_file) != 0) {
-            fprintf(stderr, "写入临时IR文件失败\n");
-        } else {
-            // 直接运行lli执行生成的IR代码
-            int result = system("lli temp_output.ll");
-            
-            if (debug) printf("程序执行完毕，返回值: %d\n", WEXITSTATUS(result));
-            
-            // 删除临时文件
-            remove(temp_ir_file);
-        }
+        run_with_lli(codegen_context);
     } else {
         // 默认行为生成可执行文件；run命令会在编译成功后执行它。
         char *exe_file = output_file ? output_file : "output";
 
         if (debug) printf("生成可执行文件...\n");
 
-        int result = compile_to_executable(codegen_context, exe_file);
-        if (result == 0 && run_native) {
-            result = execute_file(exe_file);
-            if (remove(exe_file) != 0) {
-                fprintf(stderr, "删除临时可执行文件失败: %s\n", exe_file);
-                if (result == 0) result = 1;
-            }
-        }
+        int result = run_native
+            ? compile_and_run(codegen_context, exe_file)
+            : compile_to_executable(codegen_context, exe_file);
 
         free_codegen_context(codegen_context);
         free_ast((ASTNode *)program);
