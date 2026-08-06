@@ -1,8 +1,8 @@
 # Makefile for 4yue Lang compiler
 
 # 编译器和编译选项
-CC = clang
-# CC = gcc-13
+# CC = clang
+CC = gcc-13
 # CXX = clang++
 LIBS = -lLLVM-21 -lm
 
@@ -23,9 +23,13 @@ else
         LDFLAGS = -L/usr/lib/llvm-21/lib -Wl,-rpath,/usr/lib -fsanitize=address
     else ifeq ($(UNAME_S),Darwin)
         # macOS系统设置
-        CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer -I/opt/homebrew/opt/llvm/include
+        CC_IS_CLANG := $(findstring clang,$(shell $(CC) --version 2>/dev/null))
+        ifneq ($(CC_IS_CLANG),)
+            SANITIZER_FLAGS = -fsanitize=address -fno-omit-frame-pointer
+        endif
+        CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS) -I/opt/homebrew/opt/llvm/include
         # CXXFLAGS = $(CFLAGS)
-        LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib -fsanitize=address
+        LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib $(SANITIZER_FLAGS)
     else
         # 其他系统，使用默认设置
         CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer
