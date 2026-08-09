@@ -1,0 +1,1 @@
+tests/compile-fail/stdlib/prelude_duplicate.tp:1:4: 错误: 重复函数定义 'min'

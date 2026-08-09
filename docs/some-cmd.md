@@ -2,7 +2,7 @@
 
 ## 查看程序返回值
 ```sh
-./build/4yue tests/hello.tp -o ./build/hello
+./build/4yue tests/run-pass/basics/hello.tp -o ./build/hello
 ./build/hello
 echo $?
 ```
@@ -15,4 +15,3 @@ otool -L ./build/hello
 # Linux
 ldd ./build/hello
 ```
-

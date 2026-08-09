@@ -113,8 +113,8 @@ int main() {
 /**
 # 编译命令
 # 使用系统LLVM
-clang -o build/ir_add tests/llvm_ir_add.c `llvm-config --cflags --ldflags --libs core analysis executionengine target`
+clang -o build/ir_add tests/llvm/llvm_ir_add.c `llvm-config --cflags --ldflags --libs core analysis executionengine target`
 
 # 或者使用brew安装的LLVM（macOS）
-clang -o build/ir_add tests/llvm_ir_add.c -I/opt/homebrew/opt/llvm/include -L/opt/homebrew/opt/llvm/lib -lLLVM
+clang -o build/ir_add tests/llvm/llvm_ir_add.c -I/opt/homebrew/opt/llvm/include -L/opt/homebrew/opt/llvm/lib -lLLVM
 */

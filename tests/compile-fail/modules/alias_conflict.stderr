@@ -1,0 +1,2 @@
+tests/compile-fail/modules/alias_conflict.tp:2:8: 错误: 名称空间 'util' 已用于模块 'modules.math'
+tests/compile-fail/modules/alias_conflict.tp:1:8: 提示: 名称空间首次在此导入

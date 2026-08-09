@@ -1,4 +1,4 @@
-import test_module_self_import;
+import self_import;
 
 fn main(): i32 {
     return 0;

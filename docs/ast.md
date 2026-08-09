@@ -176,7 +176,7 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 使用 `-parse` 可以检查 Parser 生成的 AST：
 
 ```bash
-./build/4yue -parse tests/fibonacci.tp
+./build/4yue -parse tests/run-pass/functions/fibonacci.tp
 ```
 
 例如下面的代码：

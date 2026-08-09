@@ -102,6 +102,17 @@ add_dependencies(4yue generate_version)
 #target_link_libraries(4yue ${llvm_libs})
 target_link_libraries(4yue ${llvm_libs} m)
 
+if(BUILD_TESTS)
+    enable_testing()
+    add_test(
+        NAME language-tests
+        COMMAND sh ${CMAKE_SOURCE_DIR}/tests/run-tests.sh $<TARGET_FILE:4yue>
+    )
+    set_tests_properties(language-tests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+endif()
+
 # 安装目标
 install(TARGETS 4yue DESTINATION bin)
 install(DIRECTORY std/ DESTINATION share/4yue/std FILES_MATCHING PATTERN "*.tp")

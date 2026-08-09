@@ -62,13 +62,13 @@ cmake --build .
 ### 示例
 
 ```bash
-./build/4yue tests/hello.tp
-./build/4yue run tests/hello.tp
-./build/4yue -o hello.bin tests/hello.tp
-./build/4yue -ir -o out.ll tests/fibonacci.tp
-./build/4yue -run-lli tests/test_print.tp
-./build/4yue -lex tests/fibonacci.tp
-./build/4yue -parse tests/fibonacci.tp
+./build/4yue tests/run-pass/basics/hello.tp
+./build/4yue run tests/run-pass/basics/hello.tp
+./build/4yue -o hello.bin tests/run-pass/basics/hello.tp
+./build/4yue -ir -o out.ll tests/run-pass/functions/fibonacci.tp
+./build/4yue -run-lli tests/run-pass/basics/print.tp
+./build/4yue -lex tests/run-pass/functions/fibonacci.tp
+./build/4yue -parse tests/run-pass/functions/fibonacci.tp
 ```
 
 ## 模块导入
