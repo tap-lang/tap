@@ -193,6 +193,12 @@ static void dump_stmt(ASTNode *n, int depth) {
 
 void print_ast(const ProgramNode *program) {
     printf("Program\n");
+    for (ASTNode *node = program->imports; node; node = node->next) {
+        if (node->type == NODE_IMPORT) {
+            ImportNode *import_node = (ImportNode *)node;
+            printf("  Import: %s as %s\n", import_node->module_name, import_node->alias);
+        }
+    }
     for (ASTNode *fn = program->functions; fn; fn = fn->next) {
         if (fn->type != NODE_FUNCTION) {
             continue;
@@ -238,8 +244,26 @@ ProgramNode *create_program() {
     }
     program->base.type = NODE_PROGRAM;
     program->base.next = NULL;
+    program->imports = NULL;
     program->functions = NULL;
     return program;
+}
+
+ImportNode *create_import(
+    const char *module_name, const char *alias, const char *filename, int line, int column) {
+    ImportNode *import_node = (ImportNode *)malloc(sizeof(ImportNode));
+    if (!import_node) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    import_node->base.type = NODE_IMPORT;
+    import_node->base.next = NULL;
+    import_node->module_name = strdup(module_name);
+    import_node->alias = strdup(alias);
+    import_node->filename = strdup(filename);
+    import_node->line = line;
+    import_node->column = column;
+    return import_node;
 }
 
 // 创建函数节点
@@ -458,6 +482,17 @@ void add_function(ProgramNode *program, FunctionNode *function) {
     }
 }
 
+void add_import(ProgramNode *program, ImportNode *import_node) {
+    if (!program->imports) {
+        program->imports = (ASTNode *)import_node;
+        return;
+    }
+
+    ASTNode *current = program->imports;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)import_node;
+}
+
 // 添加参数到函数
 void add_param(FunctionNode *function, IdentifierNode *param) {
     
@@ -541,7 +576,15 @@ void free_ast(ASTNode *node) {
     switch (node->type) {
         case NODE_PROGRAM: {
             ProgramNode *program = (ProgramNode *)node;
+            free_ast(program->imports);
             free_ast(program->functions);
+            break;
+        }
+        case NODE_IMPORT: {
+            ImportNode *import_node = (ImportNode *)node;
+            free(import_node->module_name);
+            free(import_node->alias);
+            free(import_node->filename);
             break;
         }
         case NODE_FUNCTION: {

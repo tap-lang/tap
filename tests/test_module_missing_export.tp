@@ -1,0 +1,5 @@
+import modules.math;
+
+fn main(): i32 {
+    return math.triple(2);
+}

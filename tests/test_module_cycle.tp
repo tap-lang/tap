@@ -1,0 +1,6 @@
+import modules.cycle.a;
+
+fn main(): i32 {
+    print("%d %d\n", a.cycle_a(), a.cycle_sum());
+    return 0;
+}

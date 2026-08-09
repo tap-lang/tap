@@ -71,6 +71,22 @@ cmake --build .
 ./build/4yue -parse tests/fibonacci.tp
 ```
 
+## 模块导入
+
+使用点分隔模块名导入其他 `.tp` 文件。默认名称空间取模块名最后一段，
+也可以使用 `as` 重命名：
+
+```text
+import std.math;
+import modules.helpers as helper;
+
+fn main(): i32 {
+    return math.square(5);
+}
+```
+
+模块路径、递归加载、循环导入、环境变量和错误规则详见[模块导入文档](docs/module.md)。
+
 ## 标准库
 
 编译阶段会自动加载 [`std/prelude.tp`](std/prelude.tp)，源文件无需显式导入即可使用以下 `i32` 函数：
@@ -79,6 +95,7 @@ cmake --build .
 min(a: i32, b: i32): i32
 max(a: i32, b: i32): i32
 abs(value: i32): i32
+square(value: i32): i32  # import std.math; 后通过 math.square(...) 调用
 ```
 
 Prelude 中的函数名不能在用户源码中重复定义。编译器依次从环境变量
@@ -89,6 +106,7 @@ Prelude 中的函数名不能在用户源码中重复定义。编译器依次从
 
 - [源码结构](docs/src.md)
 - [AST](docs/ast.md)
+- [模块导入](docs/module.md)
 
 ## 许可
 

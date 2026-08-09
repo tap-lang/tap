@@ -1,0 +1,11 @@
+import modules.conflict;
+import modules.min;
+
+fn conflict(): i32 {
+    return 2;
+}
+
+fn main(): i32 {
+    print("%d %d %d %d\n", conflict.conflict(), conflict(), min.min(), min(1, 2));
+    return 0;
+}

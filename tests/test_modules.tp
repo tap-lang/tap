@@ -1,0 +1,13 @@
+import modules.math;
+import modules.math;
+import modules.math as calc;
+import modules.offset;
+import modules.string as text;
+import std.math as stdmath;
+
+fn main(): i32 {
+    print("%d %d %d %d %d\n",
+        math.double(4), calc.double(6), offset.offset(4),
+        stdmath.square(5), text.keyword_module_value());
+    return 0;
+}

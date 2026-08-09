@@ -129,6 +129,7 @@ static Token *create_token(Lexer *lexer, enum TokenType type, const char *start,
     token->type = type;
     token->line = lexer->line;
     token->column = lexer->column - length;
+    memset(&token->value, 0, sizeof(token->value));
     
     return token;
 }
@@ -137,6 +138,7 @@ static Token *create_token(Lexer *lexer, enum TokenType type, const char *start,
 static enum TokenType check_keyword(const char *text, int length) {
     switch (length) {
     case 2:
+        if (memcmp(text, "as", 2) == 0) return TOKEN_AS;
         if (memcmp(text, "fn", 2) == 0) return TOKEN_FN;
         if (memcmp(text, "if", 2) == 0) return TOKEN_IF;
         if (memcmp(text, "i8", 2) == 0) return TOKEN_I8;
@@ -170,6 +172,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         break;
     case 6:
         if (memcmp(text, "elseif", 6) == 0) return TOKEN_ELSEIF;
+        if (memcmp(text, "import", 6) == 0) return TOKEN_IMPORT;
         if (memcmp(text, "return", 6) == 0) return TOKEN_RETURN;
         if (memcmp(text, "string", 6) == 0) return TOKEN_STRING;
         break;
@@ -457,6 +460,8 @@ Token *get_next_token(Lexer *lexer) {
             break;
         case ':':
             return create_token(lexer, TOKEN_COLON, lexer->current - 1, lexer->current);
+        case '.':
+            return create_token(lexer, TOKEN_DOT, lexer->current - 1, lexer->current);
     }
     
     // 未识别的字符

@@ -14,6 +14,7 @@
 | [`token.c`](../src/token.c) / [`token.h`](../src/token.h) | Token 类型、名称映射和资源释放 |
 | [`lexer.c`](../src/lexer.c) / [`lexer.h`](../src/lexer.h) | 读取源文件并执行词法分析 |
 | [`parser.c`](../src/parser.c) / [`parser.h`](../src/parser.h) | 将 Token 流解析为 AST |
+| [`module.c`](../src/module.c) / [`module.h`](../src/module.h) | 解析模块路径、递归加载导入并合并函数；详见[模块导入文档](module.md) |
 | [`prelude.c`](../src/prelude.c) / [`prelude.h`](../src/prelude.h) | 定位并解析 Prelude，检查重复函数后合并到用户程序 AST |
 | [`ast.c`](../src/ast.c) / [`ast.h`](../src/ast.h) | AST 节点定义、构造、打印和释放；详见 [AST 文档](ast.md) |
 | [`codegen.c`](../src/codegen.c) / [`codegen.h`](../src/codegen.h) | 遍历 AST、生成 LLVM IR，并将 IR 编译链接为可执行文件 |
@@ -28,6 +29,7 @@
 main
 ├── lexer -> token
 ├── parser -> lexer + ast
+├── module -> parser + ast
 ├── prelude -> parser + ast
 ├── codegen -> ast + LLVM
 └── run -> codegen
@@ -38,10 +40,17 @@ main
 - Codegen 和 Run 消费 AST/LLVM 结果，不参与语法解析。
 - `main.c` 负责组装各阶段，并在流程结束后释放资源。
 
+## 模块加载
+
+Parser 将 `import a.b;` 保存为 `ImportNode`，Module Loader 再把模块名转换为
+`a/b.tp`。模块文件使用同一套 Lexer 和 Parser；其递归依赖加载完成后，函数链表
+会使用唯一内部符号合并到入口程序，限定调用则按当前文件的名称空间解析，最后统一交给 Codegen。
+具体语法、查找顺序、去重和错误规则见[模块导入文档](module.md)。
+
 ## Prelude 标准库
 
 [`std/prelude.tp`](../std/prelude.tp) 使用 4yue 源码实现第一阶段标准库函数。
-普通编译、IR 生成和运行模式会先解析用户源码，再由 `prelude.c` 解析 Prelude，
+普通编译、IR 生成和运行模式会先解析用户源码和显式导入，再由 `prelude.c` 解析 Prelude，
 检查两边是否存在同名函数，最后将两个函数列表合并后交给 Codegen。
 
 查找顺序如下：

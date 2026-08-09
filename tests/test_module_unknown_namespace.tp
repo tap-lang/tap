@@ -1,0 +1,5 @@
+import modules.math;
+
+fn main(): i32 {
+    return calc.double(2);
+}

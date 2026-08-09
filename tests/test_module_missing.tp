@@ -1,0 +1,5 @@
+import modules.missing;
+
+fn main(): i32 {
+    return 0;
+}

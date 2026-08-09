@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <math.h>
 
 #include "parser.h"
@@ -92,6 +93,75 @@ static ASTNode *parse_function_call(Parser *parser, char *function_name); // 解
 static ASTNode *parse_expression_statement(Parser *parser);
 static ASTNode *parse_if_statement(Parser *parser); // 解析条件语句
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
+
+static int is_module_component(const Token *token) {
+    if ((token->type == TOKEN_STRING && token->value.string_value) ||
+        !token->lexeme ||
+        (!isalpha((unsigned char)token->lexeme[0]) && token->lexeme[0] != '_')) {
+        return 0;
+    }
+    for (const char *character = token->lexeme + 1; *character; character++) {
+        if (!isalnum((unsigned char)*character) && *character != '_') return 0;
+    }
+    return 1;
+}
+
+static char *append_name_component(char *name, const char *component) {
+    size_t size = strlen(name) + strlen(component) + 2;
+    char *expanded = realloc(name, size);
+    if (!expanded) {
+        free(name);
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    strcat(expanded, ".");
+    strcat(expanded, component);
+    return expanded;
+}
+
+static ImportNode *parse_import(Parser *parser) {
+    consume(parser, TOKEN_IMPORT);
+    if (!is_module_component(parser->current_token)) {
+        parser_error(parser, "期望模块名");
+    }
+
+    int line = parser->current_token->line;
+    int column = parser->current_token->column;
+    char *module_name = strdup(parser->current_token->lexeme);
+    consume(parser, parser->current_token->type);
+
+    while (parser->current_token->type == TOKEN_DOT) {
+        consume(parser, TOKEN_DOT);
+        if (!is_module_component(parser->current_token)) {
+            free(module_name);
+            parser_error(parser, "期望模块路径标识符");
+        }
+
+        module_name = append_name_component(module_name, parser->current_token->lexeme);
+        consume(parser, parser->current_token->type);
+    }
+
+    const char *last_dot = strrchr(module_name, '.');
+    char *alias = strdup(last_dot ? last_dot + 1 : module_name);
+    if (parser->current_token->type == TOKEN_AS) {
+        consume(parser, TOKEN_AS);
+        if (!is_module_component(parser->current_token)) {
+            free(alias);
+            free(module_name);
+            parser_error(parser, "期望模块别名");
+        }
+        free(alias);
+        alias = strdup(parser->current_token->lexeme);
+        consume(parser, parser->current_token->type);
+    }
+
+    consume(parser, TOKEN_SEMICOLON);
+    ImportNode *import_node = create_import(
+        module_name, alias, parser->lexer->filename, line, column);
+    free(alias);
+    free(module_name);
+    return import_node;
+}
 
 static VarTypeNode *parse_type(Parser *parser) {
     enum LiteralType type;
@@ -210,7 +280,7 @@ static ASTNode *parse_block(Parser *parser) {
             // 解析条件语句
             ASTNode *if_statement = parse_if_statement(parser);
             add_statement(block, if_statement);
-        } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
+        } else if (is_module_component(parser->current_token)) {
             ASTNode *statement = parse_expression_statement(parser);
             add_statement(block, statement);
         } else {
@@ -492,22 +562,33 @@ static ASTNode *parse_expression_statement(Parser *parser) {
 static ASTNode *parse_factor(Parser *parser) {
     Token *token = parser->current_token;
     
-    if (token->type == TOKEN_I32) {
+    if (token->type == TOKEN_I32 && isdigit((unsigned char)token->lexeme[0])) {
         // 整数字面量
         LiteralNode *int_literal = create_int_literal_text(token->lexeme);
         consume(parser, TOKEN_I32);
         return (ASTNode *)int_literal;
-    } else if (token->type == TOKEN_STRING) {
+    } else if (token->type == TOKEN_STRING && token->value.string_value) {
         // 字符串字面量
         LiteralNode *string_literal = create_string_literal(token->value.string_value);
         consume(parser, TOKEN_STRING);
         return (ASTNode *)string_literal;
-    } else if (token->type == TOKEN_IDENTIFIER) {
-        // 标识符（变量或函数调用）
+    } else if (is_module_component(token)) {
+        // 标识符、函数调用或名称空间限定函数调用
         int line = token->line;
         int column = token->column;
+        enum TokenType token_type = token->type;
         char *name = strdup(token->lexeme);
-        consume(parser, TOKEN_IDENTIFIER);
+        consume(parser, token_type);
+
+        while (parser->current_token->type == TOKEN_DOT) {
+            consume(parser, TOKEN_DOT);
+            if (!is_module_component(parser->current_token)) {
+                free(name);
+                parser_error(parser, "期望名称空间成员");
+            }
+            name = append_name_component(name, parser->current_token->lexeme);
+            consume(parser, parser->current_token->type);
+        }
         
         // 检查是否是函数调用
         if (parser->current_token->type == TOKEN_LPAREN) {
@@ -518,6 +599,11 @@ static ASTNode *parse_factor(Parser *parser) {
             call->column = column;
             free(name);
             return function_call;
+        }
+
+        if (strchr(name, '.')) {
+            free(name);
+            parser_error(parser, "名称空间成员必须作为函数调用使用");
         }
         
         // 否则是变量
@@ -628,13 +714,15 @@ static ASTNode *parse_expression(Parser *parser) {
 ProgramNode *parse_program(Parser *parser) {
     ProgramNode *program = create_program();
     
-    // 解析所有函数定义
+    // 解析所有模块导入和函数定义
     while (parser->current_token->type != TOKEN_EOF) {
-        if (parser->current_token->type == TOKEN_FN) {
+        if (parser->current_token->type == TOKEN_IMPORT) {
+            add_import(program, parse_import(parser));
+        } else if (parser->current_token->type == TOKEN_FN) {
             FunctionNode *function = parse_function(parser);
             add_function(program, function);
         } else {
-            parser_error(parser, "期望函数定义");
+            parser_error(parser, "期望模块导入或函数定义");
         }
     }
     

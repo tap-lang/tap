@@ -9,6 +9,7 @@
 // AST节点类型
 enum NodeType {
     NODE_PROGRAM,                   // 程序节点
+    NODE_IMPORT,                    // 模块导入节点
     NODE_FUNCTION,                  // 函数节点
     NODE_STATEMENT,                 // 语句节点
     NODE_EXPRESSION,                // 表达式节点
@@ -69,8 +70,19 @@ typedef struct ASTNode {
 // 程序节点
 typedef struct {
     ASTNode base;
+    ASTNode *imports;      // 模块导入列表
     ASTNode *functions;    // 函数列表
 } ProgramNode;
+
+// 模块导入节点
+typedef struct {
+    ASTNode base;
+    char *module_name;     // 点分隔模块名，例如 std.math
+    char *alias;           // 当前文件中使用的名称空间
+    char *filename;        // import 所在文件
+    int line;              // 模块名所在行
+    int column;            // 模块名所在列
+} ImportNode;
 
 // 变量类型节点
 typedef struct {
@@ -151,6 +163,8 @@ typedef struct {
 
 // 创建节点的函数声明
 ProgramNode *create_program();
+ImportNode *create_import(
+    const char *module_name, const char *alias, const char *filename, int line, int column);
 FunctionNode *create_function(char *name);
 IdentifierNode *create_identifier(char *name);
 VarTypeNode *create_var_type(enum LiteralType type);
@@ -168,6 +182,7 @@ FunctionCallNode *create_function_call(char *name);
 
 // 添加子节点的函数
 void add_function(ProgramNode *program, FunctionNode *function);
+void add_import(ProgramNode *program, ImportNode *import_node);
 void add_param(FunctionNode *function, IdentifierNode *param);
 void add_param_type(FunctionNode *function, VarTypeNode *type);
 void add_statement(FunctionNode *function, ASTNode *statement);

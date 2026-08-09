@@ -39,7 +39,8 @@ typedef struct ASTNode {
 
 | `NodeType` | 结构体 | 主要字段与含义 |
 |---|---|---|
-| `NODE_PROGRAM` | `ProgramNode` | `functions` 指向函数链表 |
+| `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
+| `NODE_IMPORT` | `ImportNode` | 模块名、名称空间别名及导入声明的源文件位置 |
 | `NODE_FUNCTION` | `FunctionNode` | 函数名、参数、参数类型、函数体和返回类型 |
 | `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
@@ -60,8 +61,13 @@ AST 根节点是 `ProgramNode`：
 
 ```text
 ProgramNode
+├── imports -> ImportNode -> ImportNode -> ...
 └── functions -> FunctionNode -> FunctionNode -> ...
 ```
+
+`ImportNode.module_name` 保存点分隔模块名，`alias` 保存当前文件使用的名称空间。
+Module Loader 消费导入列表、解析限定函数调用并合并模块函数，Codegen 不直接处理
+`ImportNode`。加载行为详见[模块导入文档](module.md)。
 
 每个 `FunctionNode` 包含：
 
@@ -138,6 +144,7 @@ ProgramNode
 
 | 链表头 | 元素类型 |
 |---|---|
+| `ProgramNode.imports` | `ImportNode` |
 | `ProgramNode.functions` | `FunctionNode` |
 | `FunctionNode.params` | `IdentifierNode` |
 | `FunctionNode.param_types` | `VarTypeNode` |
@@ -147,7 +154,7 @@ ProgramNode
 | `IfStatementNode.consequence` | 语句节点 |
 | `IfStatementNode.alternative` | 语句链表或单个 `IfStatementNode` |
 
-添加函数、参数、语句或实参时，应使用 `add_function()`、`add_param()`、
+添加导入、函数、参数、语句或实参时，应使用 `add_import()`、`add_function()`、`add_param()`、
 `add_param_type()`、`add_statement()`、`add_argument()` 和 `add_print_argument()`。
 这些函数目前通过遍历链表追加元素，单次追加的复杂度为 O(n)。
 
@@ -225,7 +232,7 @@ Codegen 对 `ProgramNode.functions` 执行两轮遍历：
 
 ## 当前限制与注意事项
 
-- `FunctionNode` 保存函数名 Token 的源文件、行号和列号，用于重复定义诊断；其他 AST 节点暂不保存源码位置。
+- `ImportNode` 和 `FunctionNode` 保存源文件、行号和列号，用于模块与重复定义诊断；其他 AST 节点仅按需保存源码位置。
 - `LiteralType` 同时承担字面量类型和声明类型，后续类型系统扩展时应考虑拆分。
 - `params` 与 `param_types` 使用平行链表；混合有类型和无类型参数时容易发生位置错配。
 - `print_ast()` 当前直接访问 `VarDeclNode.type`，无类型变量声明可能导致空指针访问。

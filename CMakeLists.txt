@@ -27,6 +27,7 @@ add_executable(4yue
     src/main.c
     src/ast.c
     src/parser.c
+    src/module.c
     src/prelude.c
     src/lexer.c
     src/token.c
@@ -103,4 +104,4 @@ target_link_libraries(4yue ${llvm_libs} m)
 
 # 安装目标
 install(TARGETS 4yue DESTINATION bin)
-install(FILES std/prelude.tp DESTINATION share/4yue/std)
+install(DIRECTORY std/ DESTINATION share/4yue/std FILES_MATCHING PATTERN "*.tp")

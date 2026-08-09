@@ -1,0 +1,6 @@
+import modules.math as util;
+import modules.string as util;
+
+fn main(): i32 {
+    return 0;
+}

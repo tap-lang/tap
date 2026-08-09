@@ -1,0 +1,9 @@
+import b;
+
+fn cycle_a(): i32 {
+    return 1;
+}
+
+fn cycle_sum(): i32 {
+    return cycle_a() + b.cycle_b();
+}

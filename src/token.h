@@ -13,6 +13,8 @@ enum TokenType {
     TOKEN_IF,        // if 条件语句
     TOKEN_ELSE,      // else 语句
     TOKEN_ELSEIF,    // elseif 语句
+    TOKEN_IMPORT,    // import 模块导入
+    TOKEN_AS,        // as 导入别名
 
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符
@@ -58,6 +60,7 @@ enum TokenType {
     TOKEN_SEMICOLON,   // ;
     TOKEN_COMMA,       // ,
     TOKEN_COLON,       // :
+    TOKEN_DOT,         // .
     TOKEN_LBRACKET,    // [
     TOKEN_RBRACKET,    // ]
 

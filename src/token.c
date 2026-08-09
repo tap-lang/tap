@@ -1,12 +1,12 @@
 #include "token.h"
 
 const char *TokenNames[] = {
-    "fn", "return", "print", "let", "if", "else", "elseif",
+    "fn", "return", "print", "let", "if", "else", "elseif", "import", "as",
     "identifier", "int", "uint", "i8", "u8", "i16", "u16", "i32", "u32",
     "i64", "u64", "i128", "u128", "float", "f32", "f64",
     "bool", "string", "array",
     "+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&&", "||",
-    "(", ")", "{", "}", ";", ",", ":", "[", "]",
+    "(", ")", "{", "}", ";", ",", ":", ".", "[", "]",
     "EOF"
 };
 

@@ -104,6 +104,9 @@ test: $(TARGET)
 	$(TARGET) run tests/fibonacci.tp
 	$(TARGET) run tests/test_integer_types.tp
 	$(TARGET) run tests/test_prelude.tp
+	$(TARGET) run tests/test_modules.tp
+	$(TARGET) run tests/test_module_cycle.tp
+	$(TARGET) run tests/test_module_namespace.tp
 	$(TARGET) run tests/test_assert.tp
 	@output=`$(TARGET) run tests/test_assert_failure.tp 2>&1`; status=$$?; \
 		if [ $$status -eq 0 ]; then \
@@ -121,6 +124,42 @@ test: $(TARGET)
 			echo "expected duplicate user function to fail"; exit 1; \
 		fi; \
 		printf '%s\n' "$$output" | grep -q "tests/test_function_duplicate.tp:5:4: 错误: 重复函数定义 'helper'"
+	@output=`$(TARGET) -ir tests/test_module_missing.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected missing module to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -Fq \
+			"tests/test_module_missing.tp:1:8: 错误: 找不到模块 'modules.missing'"
+	@output=`$(TARGET) -ir tests/test_module_alias_conflict.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected duplicate namespace alias to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -Fq \
+			"tests/test_module_alias_conflict.tp:2:8: 错误: 名称空间 'util' 已用于模块 'modules.math'"
+	@output=`$(TARGET) -ir tests/test_module_unqualified.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected unqualified module call to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -Fq \
+			"错误：未定义的函数 'double'"
+	@output=`$(TARGET) -ir tests/test_module_unknown_namespace.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected unknown namespace to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -Fq \
+			"tests/test_module_unknown_namespace.tp:4:12: 错误: 未导入名称空间 'calc'"
+	@output=`$(TARGET) -ir tests/test_module_missing_export.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected missing module export to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -Fq \
+			"tests/test_module_missing_export.tp:4:12: 错误: 模块 'modules.math' 中没有函数 'triple'"
+	@output=`$(TARGET) -ir tests/test_module_self_import.tp 2>&1`; status=$$?; \
+		if [ $$status -eq 0 ]; then \
+			echo "expected entry self-import to fail"; exit 1; \
+		fi; \
+		printf '%s\n' "$$output" | grep -Fq \
+			"tests/test_module_self_import.tp:1:8: 错误: 入口文件不能导入自身"
 
 test_hello: $(TARGET)
 	$(TARGET) tests/hello.tp -o ./build/hello
