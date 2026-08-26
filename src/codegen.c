@@ -798,7 +798,7 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
 
     LLVMTargetMachineRef target_machine = LLVMCreateTargetMachine(
         target, target_triple, "", "", LLVMCodeGenLevelDefault,
-        LLVMRelocDefault, LLVMCodeModelDefault);
+        LLVMRelocPIC, LLVMCodeModelDefault);
     if (!target_machine) {
         fprintf(stderr, "创建目标机器失败\n");
         LLVMDisposeMessage(target_triple);
