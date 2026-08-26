@@ -1,0 +1,1 @@
+Parse error: continue 只能在 for 循环中使用 (file tests/compile-fail/control-flow/continue_outside_loop.tp, line 2, column 5)

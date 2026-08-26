@@ -23,6 +23,8 @@ enum NodeType {
     NODE_FUNCTION_CALL,             // 函数调用节点
     NODE_IF_STATEMENT,              // 条件语句节点
     NODE_FOR_STATEMENT,             // for 循环节点
+    NODE_BREAK_STATEMENT,           // break 语句节点
+    NODE_CONTINUE_STATEMENT,        // continue 语句节点
     NODE_VAR_TYPE                   // 数据类型节点
 };
 
@@ -220,6 +222,8 @@ typedef struct {
 
 ForStatementNode *create_for_statement(
     ASTNode *initializer, ASTNode *condition, ASTNode *update, ASTNode *body);
+ASTNode *create_break_statement(void);
+ASTNode *create_continue_statement(void);
 
 // 释放AST的函数
 void free_ast(ASTNode *node);

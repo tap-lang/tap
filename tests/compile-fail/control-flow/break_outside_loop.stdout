@@ -1,0 +1,5 @@
+Current token: break
+   1  fn main(): i32 {
+-> 2      break;
+   3      return 0;
+   4  }

@@ -12,6 +12,8 @@ enum TokenType {
     TOKEN_LET,       // let 语句
     TOKEN_IF,        // if 条件语句
     TOKEN_FOR,       // for 循环
+    TOKEN_BREAK,     // break 跳出循环
+    TOKEN_CONTINUE,  // continue 进入下一轮循环
     TOKEN_ELSE,      // else 语句
     TOKEN_ELSEIF,    // elseif 语句
     TOKEN_IMPORT,    // import 模块导入

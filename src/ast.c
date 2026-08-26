@@ -215,6 +215,14 @@ static void dump_stmt(ASTNode *n, int depth) {
         dump_stmt_list(for_node->body, depth + 4);
         break;
     }
+    case NODE_BREAK_STATEMENT:
+        print_indent(depth);
+        printf("Break\n");
+        break;
+    case NODE_CONTINUE_STATEMENT:
+        print_indent(depth);
+        printf("Continue\n");
+        break;
     default:
         print_indent(depth);
         printf("(unknown stmt node type %d)\n", n->type);
@@ -623,6 +631,25 @@ ForStatementNode *create_for_statement(
     for_node->update = update;
     for_node->body = body;
     return for_node;
+}
+
+static ASTNode *create_control_statement(enum NodeType type) {
+    ASTNode *node = (ASTNode *)malloc(sizeof(ASTNode));
+    if (!node) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    node->type = type;
+    node->next = NULL;
+    return node;
+}
+
+ASTNode *create_break_statement(void) {
+    return create_control_statement(NODE_BREAK_STATEMENT);
+}
+
+ASTNode *create_continue_statement(void) {
+    return create_control_statement(NODE_CONTINUE_STATEMENT);
 }
 
 // 释放AST节点

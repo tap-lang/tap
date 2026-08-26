@@ -532,7 +532,14 @@ static void generate_for_statement(CodeGenContext *context, ForStatementNode *fo
     LLVMBuildCondBr(context->builder, condition, body_block, end_block);
 
     LLVMPositionBuilderAtEnd(context->builder, body_block);
+    LoopContext loop_context = {
+        .continue_block = update_block,
+        .break_block = end_block,
+        .parent = context->current_loop
+    };
+    context->current_loop = &loop_context;
     generate_statement_list(context, for_node->body);
+    context->current_loop = loop_context.parent;
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(context->builder))) {
         LLVMBuildBr(context->builder, update_block);
     }
@@ -596,6 +603,20 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_FOR_STATEMENT:
                 generate_for_statement(context, (ForStatementNode *)statement);
+                break;
+            case NODE_BREAK_STATEMENT:
+                if (!context->current_loop) {
+                    fprintf(stderr, "错误：break 只能在 for 循环中使用\n");
+                    exit(1);
+                }
+                LLVMBuildBr(context->builder, context->current_loop->break_block);
+                break;
+            case NODE_CONTINUE_STATEMENT:
+                if (!context->current_loop) {
+                    fprintf(stderr, "错误：continue 只能在 for 循环中使用\n");
+                    exit(1);
+                }
+                LLVMBuildBr(context->builder, context->current_loop->continue_block);
                 break;
             default:
                 fprintf(stderr, "错误：不支持的语句类型 %d\n", statement->type);

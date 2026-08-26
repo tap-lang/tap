@@ -166,6 +166,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "u128", 4) == 0) return TOKEN_U128;
         break;
     case 5:
+        if (memcmp(text, "break", 5) == 0) return TOKEN_BREAK;
         if (memcmp(text, "false", 5) == 0) return TOKEN_BOOL;
         if (memcmp(text, "print", 5) == 0) return TOKEN_PRINT;
         if (memcmp(text, "array", 5) == 0) return TOKEN_ARRAY;
@@ -176,6 +177,9 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "import", 6) == 0) return TOKEN_IMPORT;
         if (memcmp(text, "return", 6) == 0) return TOKEN_RETURN;
         if (memcmp(text, "string", 6) == 0) return TOKEN_STRING;
+        break;
+    case 8:
+        if (memcmp(text, "continue", 8) == 0) return TOKEN_CONTINUE;
         break;
     default:
         break;

@@ -23,6 +23,12 @@ typedef struct Symbol {
     struct Symbol *next;
 } Symbol;
 
+typedef struct LoopContext {
+    LLVMBasicBlockRef continue_block;
+    LLVMBasicBlockRef break_block;
+    struct LoopContext *parent;
+} LoopContext;
+
 // 代码生成器上下文
 typedef struct {
     LLVMModuleRef module;           // LLVM模块，用于存储生成的代码
@@ -36,6 +42,7 @@ typedef struct {
     LLVMTypeRef exit_type;
     ProgramNode *program;           // 当前正在生成的AST，不拥有其内存
     enum LiteralType current_return_type;
+    LoopContext *current_loop;
     // LLVMValueRef puts_func;         // puts函数引用
     // LLVMTypeRef puts_type;          // puts函数类型
 } CodeGenContext;

@@ -52,6 +52,8 @@ typedef struct ASTNode {
 | `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名和实参链表 |
 | `NODE_IF_STATEMENT` | `IfStatementNode` | 条件、真分支和假分支 |
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
+| `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
+| `NODE_CONTINUE_STATEMENT` | `ASTNode` | 跳到当前循环的更新块 |
 | `NODE_VAR_TYPE` | `VarTypeNode` | 类型注解，目前复用 `LiteralType` 表示 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或
@@ -92,6 +94,8 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 - `PrintNode`：一个或多个打印参数。
 - `IfStatementNode`：`if`、`elseif` 和 `else`。
 - `ForStatementNode`：经典三段式 `for` 循环。
+- `NODE_BREAK_STATEMENT`：`break;`，结束最内层循环。
+- `NODE_CONTINUE_STATEMENT`：`continue;`，进入最内层循环的更新阶段。
 
 `IfStatementNode.consequence` 指向真分支的语句链表。`alternative` 有两种形态：
 
@@ -100,7 +104,7 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 
 `ForStatementNode` 对应 `for (initializer; condition; update) { body }`。三个循环头字段均可为空；
 条件为空时 Codegen 将其视为真。初始化支持 `let` 或赋值，更新支持赋值、后缀 `++` 和后缀 `--`。
-当前尚不支持 `break` 和 `continue`。
+Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块，因此嵌套循环只影响最内层。
 
 ### 表达式
 

@@ -8,6 +8,7 @@
 typedef struct {
     Lexer *lexer;
     Token *current_token;
+    int loop_depth;
 } Parser;
 
 Parser *create_parser(Lexer *lexer);
