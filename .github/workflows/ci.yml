@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 20
     env:
       LLVM_VERSION: "21"
-      LLVM_ROOT: ${{ runner.tool_cache }}/llvm-21
+      LLVM_ROOT: ${{ github.workspace }}/.cache/llvm-21
 
     steps:
       - name: Checkout
