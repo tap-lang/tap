@@ -1,0 +1,3 @@
+fn main(){
+    print("Hello 4yue! 你好，4月！😀\n");
+}

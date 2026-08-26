@@ -1,0 +1,1 @@
+Parse error: 期望 标记 `;`，但得到 `print` (file tests/compile-fail/parser/blank_lines.tp, line 7, column 5)
