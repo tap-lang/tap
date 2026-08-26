@@ -14,11 +14,25 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Ubuntu / GCC / Release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    name: ${{ matrix.name }} / Release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu / GCC
+            os: ubuntu-24.04
+            compiler: gcc
+          - name: macOS / Clang
+            os: macos-14
+            compiler: clang
+          - name: Windows / MSVC
+            os: windows-2022
+            compiler: cl
     env:
       LLVM_VERSION: "21"
+      LLVM_RELEASE: "21.1.8"
       LLVM_ROOT: ${{ github.workspace }}/.cache/llvm-21
 
     steps:
@@ -30,10 +44,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-v1
+          key: llvm-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v1
 
-      - name: Install LLVM 21
-        if: steps.llvm-cache.outputs.cache-hit != 'true'
+      - name: Install LLVM 21 on Ubuntu
+        if: runner.os == 'Linux' && steps.llvm-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           curl --fail --silent --show-error --location \
@@ -46,23 +60,89 @@ jobs:
           cp --recursive --dereference --preserve=mode,timestamps \
             "/usr/lib/llvm-$LLVM_VERSION/." "$LLVM_ROOT/"
 
-      - name: Configure LLVM environment
+      - name: Install LLVM 21 on macOS
+        if: runner.os == 'macOS' && steps.llvm-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          brew install llvm@21
+          mkdir -p "$LLVM_ROOT"
+          cp -RL "$(brew --prefix llvm@21)/." "$LLVM_ROOT/"
+
+      - name: Install LLVM 21 on Windows
+        if: runner.os == 'Windows' && steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: tap-lang/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_RELEASE }}
+
+      - name: Stage LLVM cache on Windows
+        if: runner.os == 'Windows' && steps.llvm-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $searchRoots = @("C:\Program Files\LLVM")
+          if ($env:LLVM_DIR) {
+            $searchRoots = @($env:LLVM_DIR) + $searchRoots
+          }
+          $config = $searchRoots |
+            Where-Object { Test-Path $_ } |
+            ForEach-Object { Get-ChildItem -Path $_ -Filter LLVMConfig.cmake -Recurse } |
+            Select-Object -First 1
+          if (-not $config) {
+            throw "LLVMConfig.cmake was not found after installing LLVM"
+          }
+
+          $prefix = $config.Directory
+          while ($prefix -and -not (Test-Path (Join-Path $prefix.FullName "bin"))) {
+            $prefix = $prefix.Parent
+          }
+          if (-not $prefix) {
+            throw "LLVM installation prefix could not be determined"
+          }
+
+          New-Item -ItemType Directory -Force -Path "$env:LLVM_ROOT" | Out-Null
+          Copy-Item -Path "$($prefix.FullName)\*" -Destination "$env:LLVM_ROOT" -Recurse -Force
+
+      - name: Configure LLVM environment on Unix
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           test -x "$LLVM_ROOT/bin/llvm-config"
           test -f "$LLVM_ROOT/lib/cmake/llvm/LLVMConfig.cmake"
           echo "$LLVM_ROOT/bin" >> "$GITHUB_PATH"
+          echo "LLVM_CMAKE_DIR=$LLVM_ROOT/lib/cmake/llvm" >> "$GITHUB_ENV"
 
-      - name: Configure
+      - name: Configure LLVM environment on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $config = Get-ChildItem -Path "$env:LLVM_ROOT" -Filter LLVMConfig.cmake -Recurse | Select-Object -First 1
+          if (-not $config) {
+            throw "LLVMConfig.cmake was not found in $env:LLVM_ROOT"
+          }
+          "$env:LLVM_ROOT\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "LLVM_CMAKE_DIR=$($config.Directory.FullName)" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure on Unix
+        if: runner.os != 'Windows'
+        shell: bash
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_C_COMPILER=gcc
-          -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm"
+          -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DLLVM_DIR="$LLVM_CMAKE_DIR"
+          -DBUILD_TESTS=ON
+
+      - name: Configure on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          "-DLLVM_DIR=$env:LLVM_CMAKE_DIR"
           -DBUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel 2
+        run: cmake --build build --config Release --parallel 2
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --build-config Release --output-on-failure

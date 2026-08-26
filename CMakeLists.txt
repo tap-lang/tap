@@ -95,8 +95,14 @@ endif()
 add_dependencies(4yue generate_version)
 
 # 链接LLVM库
-#target_link_libraries(4yue ${llvm_libs})
-target_link_libraries(4yue ${llvm_libs} m)
+if(WIN32)
+    target_link_libraries(4yue ${llvm_libs})
+    if(MSVC)
+        target_compile_definitions(4yue PRIVATE strdup=_strdup)
+    endif()
+else()
+    target_link_libraries(4yue ${llvm_libs} m)
+endif()
 
 if(BUILD_TESTS)
     enable_testing()

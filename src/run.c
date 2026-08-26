@@ -159,7 +159,13 @@ static int run_process(char *const argv[]) {
 }
 
 static int link_object_file(const char *object_file, const char *exe_file) {
-    char *const argv[] = {"cc", (char *)object_file, "-o", (char *)exe_file, NULL};
+#ifdef _WIN32
+    const char *linker = "clang";
+#else
+    const char *linker = "cc";
+#endif
+    char *const argv[] = {(char *)linker, (char *)object_file,
+                          "-o", (char *)exe_file, NULL};
     int result = run_process(argv);
     if (result != 0) {
         fprintf(stderr, "链接失败，链接器退出码: %d\n", result);

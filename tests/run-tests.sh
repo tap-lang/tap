@@ -8,7 +8,7 @@ COMPILER=${1:-"$PROJECT_ROOT/build/4yue"}
 FILTER=${TEST_FILTER:-${2:-}}
 
 case "$COMPILER" in
-    /*) ;;
+    /*|[A-Za-z]:/*) ;;
     *) COMPILER="$PROJECT_ROOT/${COMPILER#./}" ;;
 esac
 
@@ -22,6 +22,10 @@ trap 'rm -rf "$TEMP_ROOT"' EXIT HUP INT TERM
 
 MODULE_PATH="$TEST_ROOT/fixtures"
 STD_PATH="$PROJECT_ROOT/std"
+EXE_SUFFIX=
+case $(uname -s) in
+    MINGW*|MSYS*|CYGWIN*) EXE_SUFFIX=.exe ;;
+esac
 
 total=0
 passed=0
@@ -101,7 +105,7 @@ run_case() {
         fi
     else
         env "4YUE_MODULE_PATH=$MODULE_PATH" "4YUE_STD_PATH=$STD_PATH" \
-            "$COMPILER" run -o "$TEMP_ROOT/$total-program" "$relative_file" \
+            "$COMPILER" run -o "$TEMP_ROOT/$total-program$EXE_SUFFIX" "$relative_file" \
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?
 
