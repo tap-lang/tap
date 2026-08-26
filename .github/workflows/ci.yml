@@ -27,9 +27,9 @@ jobs:
           - name: macOS / Clang
             os: macos-14
             compiler: clang
-          - name: Windows / MSVC
+          - name: Windows / Clang
             os: windows-2022
-            compiler: cl
+            compiler: clang
     env:
       LLVM_VERSION: "21"
       LLVM_RELEASE: "21.1.8"
@@ -41,6 +41,7 @@ jobs:
 
       - name: Restore LLVM cache
         id: llvm-cache
+        if: runner.os != 'Windows'
         uses: actions/cache@v4
         with:
           path: ${{ env.LLVM_ROOT }}
@@ -68,38 +69,18 @@ jobs:
           mkdir -p "$LLVM_ROOT"
           cp -RL "$(brew --prefix llvm@21)/." "$LLVM_ROOT/"
 
-      - name: Install LLVM 21 on Windows
-        if: runner.os == 'Windows' && steps.llvm-cache.outputs.cache-hit != 'true'
-        uses: tap-lang/install-llvm-action@v1
+      - name: Install LLVM on Windows
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
         with:
-          version: ${{ env.LLVM_RELEASE }}
-
-      - name: Stage LLVM cache on Windows
-        if: runner.os == 'Windows' && steps.llvm-cache.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $searchRoots = @("C:\Program Files\LLVM")
-          if ($env:LLVM_DIR) {
-            $searchRoots = @($env:LLVM_DIR) + $searchRoots
-          }
-          $config = $searchRoots |
-            Where-Object { Test-Path $_ } |
-            ForEach-Object { Get-ChildItem -Path $_ -Filter LLVMConfig.cmake -Recurse } |
-            Select-Object -First 1
-          if (-not $config) {
-            throw "LLVMConfig.cmake was not found after installing LLVM"
-          }
-
-          $prefix = $config.Directory
-          while ($prefix -and -not (Test-Path (Join-Path $prefix.FullName "bin"))) {
-            $prefix = $prefix.Parent
-          }
-          if (-not $prefix) {
-            throw "LLVM installation prefix could not be determined"
-          }
-
-          New-Item -ItemType Directory -Force -Path "$env:LLVM_ROOT" | Out-Null
-          Copy-Item -Path "$($prefix.FullName)\*" -Destination "$env:LLVM_ROOT" -Recurse -Force
+          msystem: UCRT64
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-llvm
 
       - name: Configure LLVM environment on Unix
         if: runner.os != 'Windows'
@@ -109,18 +90,6 @@ jobs:
           test -f "$LLVM_ROOT/lib/cmake/llvm/LLVMConfig.cmake"
           echo "$LLVM_ROOT/bin" >> "$GITHUB_PATH"
           echo "LLVM_CMAKE_DIR=$LLVM_ROOT/lib/cmake/llvm" >> "$GITHUB_ENV"
-
-      - name: Configure LLVM environment on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $config = Get-ChildItem -Path "$env:LLVM_ROOT" -Filter LLVMConfig.cmake -Recurse | Select-Object -First 1
-          if (-not $config) {
-            throw "LLVMConfig.cmake was not found in $env:LLVM_ROOT"
-          }
-          "$env:LLVM_ROOT\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          "LLVM_CMAKE_DIR=$($config.Directory.FullName)" |
-            Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Configure on Unix
         if: runner.os != 'Windows'
@@ -134,15 +103,28 @@ jobs:
 
       - name: Configure on Windows
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: msys2 {0}
         run: >-
-          cmake -S . -B build
+          cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          "-DLLVM_DIR=$env:LLVM_CMAKE_DIR"
+          -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DLLVM_DIR=/ucrt64/lib/cmake/llvm
           -DBUILD_TESTS=ON
 
-      - name: Build
+      - name: Build on Unix
+        if: runner.os != 'Windows'
         run: cmake --build build --config Release --parallel 2
 
-      - name: Test
+      - name: Build on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cmake --build build --parallel 2
+
+      - name: Test on Unix
+        if: runner.os != 'Windows'
         run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Test on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: ctest --test-dir build --output-on-failure
