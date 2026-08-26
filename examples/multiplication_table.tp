@@ -1,0 +1,11 @@
+// 九九乘法表
+fn main(): i32 {
+    print("九九乘法表\n");
+    for (let row: i32 = 1; row <= 9; row++) {
+        for (let column: i32 = 1; column <= row; column++) {
+            print("%d x %d = %d\t", column, row, column * row);
+        }
+        print("\n");
+    }
+    return 0;
+}
