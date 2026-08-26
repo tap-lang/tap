@@ -1,7 +1,6 @@
 #include "codegen.h"
 
 #include <limits.h>
-#include <unistd.h>
 
 extern int debug;
 
@@ -783,99 +782,58 @@ int write_ir_to_file(CodeGenContext *context, const char *filename) {
 }
 
 int write_object_to_file(CodeGenContext *context, const char *filename) {
-    (void)context;
-    (void)filename;
-    fprintf(stderr, "写入目标文件功能尚未完全实现\n");
-    return -1;
-}
-
-int compile_ir_to_exe(const char *ir_file, const char *exe_file) {
     LLVMInitializeNativeTarget();
     LLVMInitializeNativeAsmPrinter();
     LLVMInitializeNativeAsmParser();
 
-#if defined(__APPLE__) && defined(__MACH__) && defined(__aarch64__)
-    LLVMInitializeAArch64TargetMC();
-#elif defined(__APPLE__) && defined(__MACH__) && defined(__x86_64__)
-    LLVMInitializeX86TargetMC();
-#else
-    LLVMInitializeX86TargetMC();
-#endif
-
-    LLVMContextRef context = LLVMContextCreate();
     char *error = NULL;
-    LLVMMemoryBufferRef buffer = NULL;
-    if (LLVMCreateMemoryBufferWithContentsOfFile(ir_file, &buffer, &error)) {
-        fprintf(stderr, "加载IR文件失败: %s\n", error);
-        LLVMDisposeMessage(error);
-        LLVMContextDispose(context);
-        return -1;
-    }
-
-    LLVMModuleRef module = NULL;
-    if (LLVMParseIRInContext(context, buffer, &module, &error)) {
-        fprintf(stderr, "解析IR文件失败: %s\n", error);
-        LLVMDisposeMessage(error);
-        LLVMContextDispose(context);
-        return -1;
-    }
-
     LLVMTargetRef target = NULL;
     char *target_triple = LLVMGetDefaultTargetTriple();
     if (LLVMGetTargetFromTriple(target_triple, &target, &error) != 0) {
         fprintf(stderr, "获取目标机器失败: %s\n", error);
         LLVMDisposeMessage(error);
         LLVMDisposeMessage(target_triple);
-        LLVMDisposeModule(module);
-        LLVMContextDispose(context);
         return -1;
     }
 
     LLVMTargetMachineRef target_machine = LLVMCreateTargetMachine(
         target, target_triple, "", "", LLVMCodeGenLevelDefault,
         LLVMRelocDefault, LLVMCodeModelDefault);
+    if (!target_machine) {
+        fprintf(stderr, "创建目标机器失败\n");
+        LLVMDisposeMessage(target_triple);
+        return -1;
+    }
 
-    char obj_file[PATH_MAX];
-    snprintf(obj_file, sizeof(obj_file), "%s.o", exe_file);
-    if (LLVMTargetMachineEmitToFile(target_machine, module, obj_file,
-                                    LLVMObjectFile, &error) != 0) {
-        fprintf(stderr, "编译IR失败: %s\n", error);
+    LLVMSetTarget(context->module, target_triple);
+    LLVMTargetDataRef target_data = LLVMCreateTargetDataLayout(target_machine);
+    char *data_layout = LLVMCopyStringRepOfTargetData(target_data);
+    LLVMSetDataLayout(context->module, data_layout);
+
+    char *output_path = strdup(filename);
+    if (!output_path) {
+        fprintf(stderr, "内存分配失败\n");
+        LLVMDisposeMessage(data_layout);
+        LLVMDisposeTargetData(target_data);
+        LLVMDisposeTargetMachine(target_machine);
+        LLVMDisposeMessage(target_triple);
+        return -1;
+    }
+
+    int result = LLVMTargetMachineEmitToFile(
+        target_machine, context->module, output_path, LLVMObjectFile, &error);
+    if (result != 0) {
+        fprintf(stderr, "写入目标文件失败: %s\n", error);
         LLVMDisposeMessage(error);
-        LLVMDisposeTargetMachine(target_machine);
-        LLVMDisposeMessage(target_triple);
-        LLVMDisposeModule(module);
-        LLVMContextDispose(context);
-        return -1;
+        result = -1;
+    } else {
+        result = 0;
     }
 
-    char link_command[PATH_MAX * 2];
-    // snprintf(link_command, sizeof(link_command), "cc -o \"%s\" \"%s\"",
-        // exe_file, obj_file);
-#ifdef __APPLE__
-    snprintf(link_command, sizeof(link_command),
-        "xcrun ld -o %s %s -syslibroot $(xcrun --show-sdk-path) "
-        "-L$(xcrun --show-sdk-path)/usr/lib -lSystem -e _main",
-        exe_file, obj_file);
-#else
-    snprintf(link_command, sizeof(link_command), "cc -o \"%s\" \"%s\"",
-        exe_file, obj_file);
-#endif
-    // printf("链接命令1: %s\n", link_command);
-
-    if (system(link_command) != 0) {
-        fprintf(stderr, "链接失败: %s\n", link_command);
-        unlink(obj_file);
-        LLVMDisposeTargetMachine(target_machine);
-        LLVMDisposeMessage(target_triple);
-        LLVMDisposeModule(module);
-        LLVMContextDispose(context);
-        return -1;
-    }
-
-    unlink(obj_file);
+    free(output_path);
+    LLVMDisposeMessage(data_layout);
+    LLVMDisposeTargetData(target_data);
     LLVMDisposeTargetMachine(target_machine);
     LLVMDisposeMessage(target_triple);
-    LLVMDisposeModule(module);
-    LLVMContextDispose(context);
-    return 0;
+    return result;
 }

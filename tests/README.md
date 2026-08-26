@@ -17,4 +17,4 @@ TEST_FILTER=module make test
 ./tests/run-tests.sh ./build/4yue hello
 ```
 
-测试当前串行执行，因为编译器仍使用固定名称的临时 IR 文件。
+测试脚本当前按文件名串行执行。编译器内部使用独立临时目录，并发执行时不会共享中间文件。

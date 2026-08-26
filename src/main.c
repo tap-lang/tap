@@ -30,6 +30,30 @@ static void print_version() {
     printf("4yue version %s (%s)\n", VERSION, GIT_COMMIT_ID);
 }
 
+static char *default_executable_name(const char *input_file) {
+    const char *filename = input_file;
+    const char *slash = strrchr(input_file, '/');
+    const char *backslash = strrchr(input_file, '\\');
+    if (slash || backslash) {
+        const char *separator = !slash || (backslash && backslash > slash) ? backslash : slash;
+        filename = separator + 1;
+    }
+
+    const char *extension = strrchr(filename, '.');
+    size_t length = extension && extension != filename
+        ? (size_t)(extension - filename)
+        : strlen(filename);
+
+    char *name = malloc(length + 1);
+    if (!name) {
+        fprintf(stderr, "内存分配失败\n");
+        return NULL;
+    }
+    memcpy(name, filename, length);
+    name[length] = '\0';
+    return name;
+}
+
 // 全局debug变量，供其他模块使用
 int debug = 0;
 
@@ -165,38 +189,46 @@ int main(int argc, char *argv[]) {
 
     generate_code(codegen_context, program);
 
+    int result = 0;
+
     // 输出生成的LLVM IR
     if (emit_ir) {
         char *ir_file = output_file ? output_file : "output.ll";
         if (write_ir_to_file(codegen_context, ir_file) != 0) {
             fprintf(stderr, "写入IR文件失败\n");
+            result = 1;
         } else {
             printf("IR代码已写入到 %s\n", ir_file);
         }
-    } else if (emit_obj) {  // todo 
+    } else if (emit_obj) {
         char *obj_file = output_file ? output_file : "output.o";
         if (write_object_to_file(codegen_context, obj_file) != 0) {
             fprintf(stderr, "写入目标文件失败\n");
+            result = 1;
         } else {
             printf("目标文件已写入到 %s\n", obj_file);
         }
     } else if (run_lli) {
-        run_with_lli(codegen_context);
+        result = run_with_lli(codegen_context);
     } else {
         // 默认行为生成可执行文件；run命令会在编译成功后执行它。
-        char *exe_file = output_file ? output_file : "output";
+        char *default_exe_file = NULL;
+        char *exe_file = output_file;
+        if (!exe_file && !run_native) {
+            default_exe_file = default_executable_name(input_file);
+            exe_file = default_exe_file;
+        }
 
-        if (debug) printf("生成可执行文件...\n");
+        if (!run_native && !exe_file) {
+            result = 1;
+        } else {
+            if (debug) printf("生成可执行文件...\n");
 
-        int result = run_native
-            ? compile_and_run(codegen_context, exe_file)
-            : compile_to_executable(codegen_context, exe_file);
-
-        free_codegen_context(codegen_context);
-        free_ast((ASTNode *)program);
-        free_parser(parser);
-        free_lexer(lexer);
-        return result;
+            result = run_native
+                ? compile_and_run(codegen_context, exe_file)
+                : compile_to_executable(codegen_context, exe_file);
+        }
+        free(default_exe_file);
     }
 
     // 清理资源
@@ -205,5 +237,5 @@ int main(int argc, char *argv[]) {
     free_parser(parser);
     free_lexer(lexer);
 
-    return 0;
+    return result;
 }
