@@ -67,11 +67,7 @@ else()
         Analysis
         BitWriter
         IRReader
-        AArch64AsmParser
-        AArch64CodeGen
-        AArch64Desc
-        AArch64Info
-        AArch64Utils
+        native
     )
 endif()
 
