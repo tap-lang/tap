@@ -1,6 +1,4 @@
 #include <ctype.h>
-#include <math.h>
-
 #include "parser.h"
 #include "ast.h"
 #include "lexer.h"
@@ -34,23 +32,42 @@ void free_parser(Parser *parser) {
     }
 }
  
+static int decimal_width(int value) {
+    int width = 1;
+    while (value >= 10) {
+        value /= 10;
+        width++;
+    }
+    return width;
+}
+
 // 打印代码当前行以及上下各context_lines行
 void print_code_line(const char *source_code, int line, int context_lines) {
-    int start_line = line - context_lines;
+    if (!source_code || line < 1 || context_lines < 0) return;
+
+    int start_line = line > context_lines ? line - context_lines : 1;
     int end_line = line + context_lines;
-    int max_line_len = (int)log10(end_line) + 4;
-    int max_line_len2 = (int)log10(end_line);
-    char *lines = strtok((char *)source_code, "\n");
+    int line_number_width = decimal_width(end_line);
     int current_line = 1;
-    while (lines != NULL) {
+    const char *line_start = source_code;
+
+    while (*line_start != '\0' && current_line <= end_line) {
+        const char *line_end = strchr(line_start, '\n');
+        size_t line_length = line_end
+            ? (size_t)(line_end - line_start)
+            : strlen(line_start);
+
         if (current_line >= start_line && current_line <= end_line) {
-            if (current_line == line) {
-                printf("-> %*d  %s\n", max_line_len2, current_line, lines);
-            } else {
-                printf("%*d  %s\n", max_line_len, current_line, lines);
-            }
+            printf("%s %*d  %.*s\n",
+                   current_line == line ? "->" : "  ",
+                   line_number_width,
+                   current_line,
+                   (int)line_length,
+                   line_start);
         }
-        lines = strtok(NULL, "\n");
+
+        if (!line_end) break;
+        line_start = line_end + 1;
         current_line++;
     }
 }
