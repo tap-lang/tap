@@ -105,4 +105,4 @@ test_hello: $(TARGET)
 	$(TARGET) tests/run-pass/basics/hello.tp -o ./build/hello
 	./build/hello
 
-.PHONY: all clean test test_hello src/version.h
+.PHONY: all clean test test_hello
