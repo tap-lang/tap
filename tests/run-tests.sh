@@ -36,14 +36,18 @@ mark_failure() {
     printf '  %s\n' "$1" >&2
 }
 
+read_text_file() {
+    tr -d '\r' < "$1"
+}
+
 check_stdout() {
     expected_file=${case_file%.tp}.stdout
     if [ -f "$expected_file" ]; then
-        expected_output=$(cat "$expected_file")
-        actual_output=$(cat "$stdout_file")
+        expected_output=$(read_text_file "$expected_file")
+        actual_output=$(read_text_file "$stdout_file")
         if [ "$actual_output" != "$expected_output" ]; then
             mark_failure "stdout does not match $expected_file"
-            diff -u "$expected_file" "$stdout_file" >&2 || true
+            diff -u --strip-trailing-cr "$expected_file" "$stdout_file" >&2 || true
         fi
     elif [ -s "$stdout_file" ]; then
         mark_failure "unexpected stdout"
@@ -60,17 +64,18 @@ check_stderr() {
         fi
 
         while IFS= read -r expected_line || [ -n "$expected_line" ]; do
+            expected_line=$(printf '%s' "$expected_line" | tr -d '\r')
             [ -z "$expected_line" ] && continue
-            if ! grep -Fq -- "$expected_line" "$stderr_file"; then
+            if ! read_text_file "$stderr_file" | grep -Fq -- "$expected_line"; then
                 mark_failure "missing stderr text: $expected_line"
             fi
         done < "$expected_file"
     elif [ -f "$expected_file" ]; then
-        expected_output=$(cat "$expected_file")
-        actual_output=$(cat "$stderr_file")
+        expected_output=$(read_text_file "$expected_file")
+        actual_output=$(read_text_file "$stderr_file")
         if [ "$actual_output" != "$expected_output" ]; then
             mark_failure "stderr does not match $expected_file"
-            diff -u "$expected_file" "$stderr_file" >&2 || true
+            diff -u --strip-trailing-cr "$expected_file" "$stderr_file" >&2 || true
         fi
     elif [ -s "$stderr_file" ]; then
         mark_failure "unexpected stderr"
@@ -117,7 +122,13 @@ run_case() {
                 mark_failure "missing expected exit file $exit_file"
                 expected_status=
             else
-                expected_status=$(cat "$exit_file")
+                expected_status=$(tr -d '[:space:]' < "$exit_file")
+                case "$expected_status" in
+                    ''|*[!0-9]*)
+                        mark_failure "invalid exit status in $exit_file"
+                        expected_status=
+                        ;;
+                esac
             fi
         fi
 
