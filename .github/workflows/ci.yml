@@ -17,27 +17,48 @@ jobs:
     name: Ubuntu / GCC / Release
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      LLVM_VERSION: "21"
+      LLVM_ROOT: ${{ runner.tool_cache }}/llvm-21
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore LLVM cache
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LLVM_ROOT }}
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-v1
+
       - name: Install LLVM 21
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           curl --fail --silent --show-error --location \
             https://apt.llvm.org/llvm.sh --output /tmp/llvm.sh
           chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 21
-          sudo apt-get install --yes llvm-21-dev
-          echo "/usr/lib/llvm-21/bin" >> "$GITHUB_PATH"
+          sudo /tmp/llvm.sh "$LLVM_VERSION"
+          sudo apt-get install --yes "llvm-$LLVM_VERSION-dev"
+
+          mkdir --parents "$LLVM_ROOT"
+          cp --recursive --dereference --preserve=mode,timestamps \
+            "/usr/lib/llvm-$LLVM_VERSION/." "$LLVM_ROOT/"
+
+      - name: Configure LLVM environment
+        shell: bash
+        run: |
+          test -x "$LLVM_ROOT/bin/llvm-config"
+          test -f "$LLVM_ROOT/lib/cmake/llvm/LLVMConfig.cmake"
+          echo "$LLVM_ROOT/bin" >> "$GITHUB_PATH"
 
       - name: Configure
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER=gcc
-          -DLLVM_DIR=/usr/lib/llvm-21/lib/cmake/llvm
+          -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm"
           -DBUILD_TESTS=ON
 
       - name: Build
