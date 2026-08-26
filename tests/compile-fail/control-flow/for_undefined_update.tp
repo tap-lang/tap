@@ -1,0 +1,5 @@
+fn main(): i32 {
+    for (let i: i32 = 0; i < 1; missing++) {
+    }
+    return 0;
+}

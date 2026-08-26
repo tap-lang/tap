@@ -1,0 +1,25 @@
+fn return_from_loop(): i32 {
+    for (;;) {
+        return 7;
+    }
+    return 0;
+}
+
+fn main(): i32 {
+    let sum: i32 = 0;
+    for (let i: i32 = 0; i < 5; i++) {
+        sum = sum + i;
+    }
+
+    let descending: i32 = 0;
+    for (let i: i32 = 3; i > 0; i--) {
+        descending = descending * 10 + i;
+    }
+
+    let count: i32 = 0;
+    for (count = 0; count < 2; count = count + 1) {
+    }
+
+    print("%d %d %d %d\n", sum, descending, count, return_from_loop());
+    return 0;
+}
