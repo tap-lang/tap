@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v1
+          key: llvm-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Install LLVM 21 on Ubuntu
         if: runner.os == 'Linux' && steps.llvm-cache.outputs.cache-hit != 'true'
@@ -55,11 +55,11 @@ jobs:
             https://apt.llvm.org/llvm.sh --output /tmp/llvm.sh
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh "$LLVM_VERSION"
-          sudo apt-get install --yes "llvm-$LLVM_VERSION-dev"
+          sudo apt-get install --yes "llvm-$LLVM_VERSION-dev" rsync
 
           mkdir --parents "$LLVM_ROOT"
-          cp --recursive --dereference --preserve=mode,timestamps \
-            "/usr/lib/llvm-$LLVM_VERSION/." "$LLVM_ROOT/"
+          rsync --archive --copy-links --exclude='/build/' \
+            "/usr/lib/llvm-$LLVM_VERSION/" "$LLVM_ROOT/"
 
       - name: Install LLVM 21 on macOS
         if: runner.os == 'macOS' && steps.llvm-cache.outputs.cache-hit != 'true'
