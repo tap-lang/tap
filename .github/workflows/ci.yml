@@ -24,8 +24,11 @@ jobs:
           - name: Ubuntu / GCC
             os: ubuntu-24.04
             compiler: gcc
-          - name: macOS / Clang
-            os: macos-14
+          - name: macOS 15 Intel / Clang
+            os: macos-15-intel
+            compiler: clang
+          - name: macOS 26 ARM64 / Clang
+            os: macos-26
             compiler: clang
           - name: Windows / Clang
             os: windows-2022
@@ -86,7 +89,7 @@ jobs:
       - name: Restore LLVM cache on Windows
         if: runner.os == 'Windows'
         id: windows-llvm-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ steps.windows-llvm-path.outputs.root }}
           key: llvm-msys2-ucrt64-${{ env.LLVM_RELEASE }}-${{ runner.arch }}-v1
@@ -108,6 +111,13 @@ jobs:
           test -x /ucrt64/bin/llvm-config.exe
           test -f /ucrt64/lib/cmake/llvm/LLVMConfig.cmake
           llvm-config --version
+
+      - name: Save LLVM cache on Windows
+        if: runner.os == 'Windows' && steps.windows-llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.windows-llvm-path.outputs.root }}
+          key: llvm-msys2-ucrt64-${{ env.LLVM_RELEASE }}-${{ runner.arch }}-v1
 
       - name: Configure LLVM environment on Unix
         if: runner.os != 'Windows'
