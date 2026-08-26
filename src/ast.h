@@ -19,8 +19,10 @@ enum NodeType {
     NODE_PRINT,                     // 打印语句节点
     NODE_BINARY_OP,                 // 二元操作符节点
     NODE_VAR_DECL,                  // 变量声明节点
+    NODE_ASSIGNMENT,                // 赋值语句节点
     NODE_FUNCTION_CALL,             // 函数调用节点
     NODE_IF_STATEMENT,              // 条件语句节点
+    NODE_FOR_STATEMENT,             // for 循环节点
     NODE_VAR_TYPE                   // 数据类型节点
 };
 
@@ -151,6 +153,13 @@ typedef struct {
     ASTNode *expression;   // 初始化表达式
 } VarDeclNode;
 
+// 赋值语句节点
+typedef struct {
+    ASTNode base;
+    char *name;
+    ASTNode *expression;
+} AssignmentNode;
+
 // 函数调用节点
 typedef struct {
     ASTNode base;
@@ -178,6 +187,7 @@ PrintNode *create_print();
 void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression);
+AssignmentNode *create_assignment(const char *name, ASTNode *expression);
 FunctionCallNode *create_function_call(char *name);
 
 // 添加子节点的函数
@@ -198,6 +208,18 @@ typedef struct {
 
 // 创建条件语句节点
 IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, ASTNode *alternative);
+
+// for 循环节点
+typedef struct {
+    ASTNode base;
+    ASTNode *initializer;
+    ASTNode *condition;
+    ASTNode *update;
+    ASTNode *body;
+} ForStatementNode;
+
+ForStatementNode *create_for_statement(
+    ASTNode *initializer, ASTNode *condition, ASTNode *update, ASTNode *body);
 
 // 释放AST的函数
 void free_ast(ASTNode *node);

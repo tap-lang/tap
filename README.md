@@ -71,6 +71,17 @@ cmake --build .
 ./build/4yue -parse tests/run-pass/functions/fibonacci.tp
 ```
 
+## For 循环
+
+```text
+for (let i: i32 = 0; i < 10; i++) {
+    print("%d\n", i);
+}
+```
+
+循环头支持变量声明或赋值初始化、可选条件，以及赋值、`++`、`--` 更新。三个部分都可以为空，
+例如 `for (;;) { ... }`。当前不支持 `break` 和 `continue`。
+
 ## 模块导入
 
 使用点分隔模块名导入其他 `.tp` 文件。默认名称空间取模块名最后一段，

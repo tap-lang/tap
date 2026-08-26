@@ -447,6 +447,10 @@ static int rewrite_statement_list(
                 result = rewrite_expression(
                     ((VarDeclNode *)statement)->expression, current_module, bindings);
                 break;
+            case NODE_ASSIGNMENT:
+                result = rewrite_expression(
+                    ((AssignmentNode *)statement)->expression, current_module, bindings);
+                break;
             case NODE_RETURN:
                 result = rewrite_expression(
                     ((ReturnNode *)statement)->expression, current_module, bindings);
@@ -470,6 +474,26 @@ static int rewrite_statement_list(
                 if (result == 0) {
                     result = rewrite_statement_list(
                         if_node->alternative, current_module, bindings);
+                }
+                break;
+            }
+            case NODE_FOR_STATEMENT: {
+                ForStatementNode *for_node = (ForStatementNode *)statement;
+                if (for_node->initializer) {
+                    result = rewrite_statement_list(
+                        for_node->initializer, current_module, bindings);
+                }
+                if (result == 0) {
+                    result = rewrite_expression(
+                        for_node->condition, current_module, bindings);
+                }
+                if (result == 0 && for_node->update) {
+                    result = rewrite_statement_list(
+                        for_node->update, current_module, bindings);
+                }
+                if (result == 0) {
+                    result = rewrite_statement_list(
+                        for_node->body, current_module, bindings);
                 }
                 break;
             }

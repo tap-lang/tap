@@ -403,6 +403,16 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
 
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement);
 
+static void generate_assignment(CodeGenContext *context, AssignmentNode *assignment) {
+    Symbol *symbol = find_symbol(context, assignment->name);
+    if (!symbol) {
+        fprintf(stderr, "错误：未定义的变量 '%s'\n", assignment->name);
+        exit(1);
+    }
+    LLVMValueRef value = generate_expression_as(context, assignment->expression, symbol->type);
+    LLVMBuildStore(context->builder, value, symbol->value);
+}
+
 static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition) {
     LLVMValueRef value = generate_expression(context, condition);
     enum LiteralType type = expression_type(context, condition);
@@ -498,6 +508,46 @@ static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_n
     LLVMPositionBuilderAtEnd(context->builder, merge_block);
 }
 
+static void generate_for_statement(CodeGenContext *context, ForStatementNode *for_node) {
+    if (for_node->initializer) {
+        generate_statement_list(context, for_node->initializer);
+    }
+
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    LLVMBasicBlockRef condition_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "for_condition");
+    LLVMBasicBlockRef body_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "for_body");
+    LLVMBasicBlockRef update_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "for_update");
+    LLVMBasicBlockRef end_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "for_end");
+
+    LLVMBuildBr(context->builder, condition_block);
+
+    LLVMPositionBuilderAtEnd(context->builder, condition_block);
+    LLVMValueRef condition = for_node->condition
+        ? condition_value(context, for_node->condition)
+        : LLVMConstInt(LLVMInt1TypeInContext(context->context), 1, 0);
+    LLVMBuildCondBr(context->builder, condition, body_block, end_block);
+
+    LLVMPositionBuilderAtEnd(context->builder, body_block);
+    generate_statement_list(context, for_node->body);
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(context->builder))) {
+        LLVMBuildBr(context->builder, update_block);
+    }
+
+    LLVMPositionBuilderAtEnd(context->builder, update_block);
+    if (for_node->update) {
+        generate_statement_list(context, for_node->update);
+    }
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(context->builder))) {
+        LLVMBuildBr(context->builder, condition_block);
+    }
+
+    LLVMPositionBuilderAtEnd(context->builder, end_block);
+}
+
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement) {
     for (; statement; statement = statement->next) {
         LLVMBasicBlockRef block = LLVMGetInsertBlock(context->builder);
@@ -522,6 +572,9 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 }
                 break;
             }
+            case NODE_ASSIGNMENT:
+                generate_assignment(context, (AssignmentNode *)statement);
+                break;
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
                 LLVMValueRef value = generate_expression_as(context, return_node->expression,
@@ -540,6 +593,9 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
             }
             case NODE_IF_STATEMENT:
                 generate_if_statement(context, (IfStatementNode *)statement);
+                break;
+            case NODE_FOR_STATEMENT:
+                generate_for_statement(context, (ForStatementNode *)statement);
                 break;
             default:
                 fprintf(stderr, "错误：不支持的语句类型 %d\n", statement->type);

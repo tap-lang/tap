@@ -48,8 +48,10 @@ typedef struct ASTNode {
 | `NODE_PRINT` | `PrintNode` | `arguments` 指向打印参数链表 |
 | `NODE_BINARY_OP` | `BinaryOpNode` | 操作符、左操作数和右操作数 |
 | `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型和初始化表达式 |
+| `NODE_ASSIGNMENT` | `AssignmentNode` | 被赋值变量名和新的值表达式 |
 | `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名和实参链表 |
 | `NODE_IF_STATEMENT` | `IfStatementNode` | 条件、真分支和假分支 |
+| `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_VAR_TYPE` | `VarTypeNode` | 类型注解，目前复用 `LiteralType` 表示 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或
@@ -85,14 +87,20 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 当前函数体和条件分支可包含以下语句：
 
 - `VarDeclNode`：变量声明和初始化。
+- `AssignmentNode`：变量赋值，以及 `++`、`--` 展开后的更新。
 - `ReturnNode`：返回表达式。
 - `PrintNode`：一个或多个打印参数。
 - `IfStatementNode`：`if`、`elseif` 和 `else`。
+- `ForStatementNode`：经典三段式 `for` 循环。
 
 `IfStatementNode.consequence` 指向真分支的语句链表。`alternative` 有两种形态：
 
 - `else`：指向语句链表。
 - `elseif`：指向另一个 `IfStatementNode`，形成嵌套条件链。
+
+`ForStatementNode` 对应 `for (initializer; condition; update) { body }`。三个循环头字段均可为空；
+条件为空时 Codegen 将其视为真。初始化支持 `let` 或赋值，更新支持赋值、后缀 `++` 和后缀 `--`。
+当前尚不支持 `break` 和 `continue`。
 
 ### 表达式
 

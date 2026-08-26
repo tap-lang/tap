@@ -108,7 +108,9 @@ static ASTNode *parse_term(Parser *parser); // 解析项（乘法和除法）
 static ASTNode *parse_factor(Parser *parser); // 解析因子（基本表达式）
 static ASTNode *parse_function_call(Parser *parser, char *function_name); // 解析函数调用
 static ASTNode *parse_expression_statement(Parser *parser);
+static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon);
 static ASTNode *parse_if_statement(Parser *parser); // 解析条件语句
+static ASTNode *parse_for_statement(Parser *parser);
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
 static int is_module_component(const Token *token) {
@@ -297,6 +299,8 @@ static ASTNode *parse_block(Parser *parser) {
             // 解析条件语句
             ASTNode *if_statement = parse_if_statement(parser);
             add_statement(block, if_statement);
+        } else if (parser->current_token->type == TOKEN_FOR) {
+            add_statement(block, parse_for_statement(parser));
         } else if (is_module_component(parser->current_token)) {
             ASTNode *statement = parse_expression_statement(parser);
             add_statement(block, statement);
@@ -526,7 +530,9 @@ static FunctionNode *parse_function(Parser *parser) {
             // 解析条件语句
             ASTNode *if_statement = parse_if_statement(parser);
             add_statement(function, if_statement);
-        } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
+        } else if (parser->current_token->type == TOKEN_FOR) {
+            add_statement(function, parse_for_statement(parser));
+        } else if (is_module_component(parser->current_token)) {
             ASTNode *statement = parse_expression_statement(parser);
             add_statement(function, statement);
         } else {
@@ -567,12 +573,89 @@ static ASTNode *parse_function_call(Parser *parser, char *function_name) {
 }
 
 static ASTNode *parse_expression_statement(Parser *parser) {
+    return parse_simple_statement(parser, 1);
+}
+
+static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
     ASTNode *expression = parse_expression(parser);
-    if (!expression || expression->type != NODE_FUNCTION_CALL) {
-        parser_error(parser, "only function calls can be used as expression statements");
+    ASTNode *statement = expression;
+
+    if (expression && expression->type == NODE_IDENTIFIER &&
+        parser->current_token->type == TOKEN_ASSIGN) {
+        const char *name = ((IdentifierNode *)expression)->name;
+        consume(parser, TOKEN_ASSIGN);
+        statement = (ASTNode *)create_assignment(name, parse_expression(parser));
+        free_ast(expression);
+    } else if (expression && expression->type == NODE_IDENTIFIER &&
+               (parser->current_token->type == TOKEN_INCREMENT ||
+                parser->current_token->type == TOKEN_DECREMENT)) {
+        const char *name = ((IdentifierNode *)expression)->name;
+        enum BinaryOpType operation = parser->current_token->type == TOKEN_INCREMENT
+            ? OP_ADD
+            : OP_SUBTRACT;
+        consume(parser, parser->current_token->type);
+        ASTNode *one = (ASTNode *)create_int_literal(1);
+        ASTNode *updated = (ASTNode *)create_binary_op(operation, expression, one);
+        statement = (ASTNode *)create_assignment(name, updated);
+    } else if (!expression || expression->type != NODE_FUNCTION_CALL) {
+        parser_error(parser, "期望赋值、自增、自减或函数调用");
+    }
+
+    if (consume_semicolon) consume(parser, TOKEN_SEMICOLON);
+    return statement;
+}
+
+static VarDeclNode *parse_for_initializer(Parser *parser) {
+    consume(parser, TOKEN_LET);
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "期望变量名");
+    }
+
+    char *name = strdup(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    VarTypeNode *type = NULL;
+    if (parser->current_token->type == TOKEN_COLON) {
+        consume(parser, TOKEN_COLON);
+        type = parse_type(parser);
+    }
+
+    consume(parser, TOKEN_ASSIGN);
+    ASTNode *expression = parse_expression(parser);
+    VarDeclNode *declaration = create_var_decl(name, type, expression);
+    free(name);
+    return declaration;
+}
+
+static ASTNode *parse_for_statement(Parser *parser) {
+    consume(parser, TOKEN_FOR);
+    consume(parser, TOKEN_LPAREN);
+
+    ASTNode *initializer = NULL;
+    if (parser->current_token->type == TOKEN_LET) {
+        initializer = (ASTNode *)parse_for_initializer(parser);
+    } else if (parser->current_token->type != TOKEN_SEMICOLON) {
+        initializer = parse_simple_statement(parser, 0);
     }
     consume(parser, TOKEN_SEMICOLON);
-    return expression;
+
+    ASTNode *condition = NULL;
+    if (parser->current_token->type != TOKEN_SEMICOLON) {
+        condition = parse_expression(parser);
+    }
+    consume(parser, TOKEN_SEMICOLON);
+
+    ASTNode *update = NULL;
+    if (parser->current_token->type != TOKEN_RPAREN) {
+        update = parse_simple_statement(parser, 0);
+    }
+    consume(parser, TOKEN_RPAREN);
+
+    consume(parser, TOKEN_LBRACE);
+    ASTNode *body = parse_block(parser);
+    consume(parser, TOKEN_RBRACE);
+
+    return (ASTNode *)create_for_statement(initializer, condition, update, body);
 }
 
 // 解析因子（标识符或整数）

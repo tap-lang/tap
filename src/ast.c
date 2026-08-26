@@ -149,6 +149,13 @@ static void dump_stmt(ASTNode *n, int depth) {
         }
         break;
     }
+    case NODE_ASSIGNMENT: {
+        AssignmentNode *assignment = (AssignmentNode *)n;
+        print_indent(depth);
+        printf("Assign: %s\n", assignment->name);
+        dump_expr(assignment->expression, depth + 2);
+        break;
+    }
     case NODE_RETURN:
         print_indent(depth);
         printf("Return\n");
@@ -182,6 +189,30 @@ static void dump_stmt(ASTNode *n, int depth) {
                 dump_stmt_list(in->alternative, depth + 4);
             }
         }
+        break;
+    }
+    case NODE_FOR_STATEMENT: {
+        ForStatementNode *for_node = (ForStatementNode *)n;
+        print_indent(depth);
+        printf("For\n");
+        if (for_node->initializer) {
+            print_indent(depth + 2);
+            printf("initializer:\n");
+            dump_stmt(for_node->initializer, depth + 4);
+        }
+        if (for_node->condition) {
+            print_indent(depth + 2);
+            printf("condition:\n");
+            dump_expr(for_node->condition, depth + 4);
+        }
+        if (for_node->update) {
+            print_indent(depth + 2);
+            printf("update:\n");
+            dump_stmt(for_node->update, depth + 4);
+        }
+        print_indent(depth + 2);
+        printf("body:\n");
+        dump_stmt_list(for_node->body, depth + 4);
         break;
     }
     default:
@@ -452,6 +483,19 @@ VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression)
     return var_decl;
 }
 
+AssignmentNode *create_assignment(const char *name, ASTNode *expression) {
+    AssignmentNode *assignment = (AssignmentNode *)malloc(sizeof(AssignmentNode));
+    if (!assignment) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    assignment->base.type = NODE_ASSIGNMENT;
+    assignment->base.next = NULL;
+    assignment->name = strdup(name);
+    assignment->expression = expression;
+    return assignment;
+}
+
 // 创建函数调用节点
 FunctionCallNode *create_function_call(char *name) {
     FunctionCallNode *function_call = (FunctionCallNode *)malloc(sizeof(FunctionCallNode));
@@ -565,6 +609,22 @@ IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, A
     return if_node;
 }
 
+ForStatementNode *create_for_statement(
+    ASTNode *initializer, ASTNode *condition, ASTNode *update, ASTNode *body) {
+    ForStatementNode *for_node = (ForStatementNode *)malloc(sizeof(ForStatementNode));
+    if (!for_node) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    for_node->base.type = NODE_FOR_STATEMENT;
+    for_node->base.next = NULL;
+    for_node->initializer = initializer;
+    for_node->condition = condition;
+    for_node->update = update;
+    for_node->body = body;
+    return for_node;
+}
+
 // 释放AST节点
 void free_ast(ASTNode *node) {
     if (!node) return;
@@ -638,6 +698,12 @@ void free_ast(ASTNode *node) {
             free_ast(var_decl->expression);
             break;
         }
+        case NODE_ASSIGNMENT: {
+            AssignmentNode *assignment = (AssignmentNode *)node;
+            free(assignment->name);
+            free_ast(assignment->expression);
+            break;
+        }
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *function_call = (FunctionCallNode *)node;
             free(function_call->name);
@@ -650,6 +716,14 @@ void free_ast(ASTNode *node) {
             free_ast(if_node->condition);
             free_ast(if_node->consequence);
             free_ast(if_node->alternative);
+            break;
+        }
+        case NODE_FOR_STATEMENT: {
+            ForStatementNode *for_node = (ForStatementNode *)node;
+            free_ast(for_node->initializer);
+            free_ast(for_node->condition);
+            free_ast(for_node->update);
+            free_ast(for_node->body);
             break;
         }
         default:

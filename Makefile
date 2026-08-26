@@ -59,6 +59,7 @@ SOURCES = $(C_SOURCES) $(CPP_SOURCES)
 # 生成目标文件
 # OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES)) $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(CPP_SOURCES))
 OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES))
+DEPS = $(OBJECTS:.o=.d)
 
 # 目标可执行文件
 TARGET = ./build/4yue
@@ -72,7 +73,9 @@ $(BUILD_DIR):
 
 # 编译C源文件
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+-include $(DEPS)
 
 # 编译C++源文件
 # $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)

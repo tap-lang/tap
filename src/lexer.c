@@ -145,6 +145,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "u8", 2) == 0) return TOKEN_U8;
         break;
     case 3:
+        if (memcmp(text, "for", 3) == 0) return TOKEN_FOR;
         if (memcmp(text, "let", 3) == 0) return TOKEN_LET;
         if (memcmp(text, "int", 3) == 0) return TOKEN_INT;
         if (memcmp(text, "i16", 3) == 0) return TOKEN_I16;
@@ -412,8 +413,16 @@ Token *get_next_token(Lexer *lexer) {
         case ',':
             return create_token(lexer, TOKEN_COMMA, lexer->current - 1, lexer->current);
         case '+':
+            if (peek(lexer) == '+') {
+                advance(lexer);
+                return create_token(lexer, TOKEN_INCREMENT, lexer->current - 2, lexer->current);
+            }
             return create_token(lexer, TOKEN_PLUS, lexer->current - 1, lexer->current);
         case '-':
+            if (peek(lexer) == '-') {
+                advance(lexer);
+                return create_token(lexer, TOKEN_DECREMENT, lexer->current - 2, lexer->current);
+            }
             return create_token(lexer, TOKEN_MINUS, lexer->current - 1, lexer->current);
         case '*':
             return create_token(lexer, TOKEN_MULTIPLY, lexer->current - 1, lexer->current);

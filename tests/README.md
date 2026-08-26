@@ -14,6 +14,7 @@
 make test
 TEST_FILTER=module make test
 ./tests/run-tests.sh ./build/4yue
+./tests/run-tests.sh ./build/4yue hello
 ```
 
 测试当前串行执行，因为编译器仍使用固定名称的临时 IR 文件。
