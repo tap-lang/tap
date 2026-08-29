@@ -1,0 +1,4 @@
+/* 未闭合的多行注释
+fn main(): int {
+    return 0;
+}

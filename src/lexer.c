@@ -78,6 +78,32 @@ static char peek_next(Lexer *lexer) {
     return lexer->current[1];
 }
 
+static void skip_block_comment(Lexer *lexer) {
+    int start_line = lexer->line;
+    int start_column = lexer->column;
+    advance(lexer); // /
+    advance(lexer); // *
+
+    while (!is_at_end(lexer)) {
+        if (peek(lexer) == '*' && peek_next(lexer) == '/') {
+            advance(lexer);
+            advance(lexer);
+            return;
+        }
+        if (peek(lexer) == '\n') {
+            advance(lexer);
+            lexer->line++;
+            lexer->column = 1;
+        } else {
+            advance(lexer);
+        }
+    }
+
+    fprintf(stderr, "%s:%d:%d: 错误: 未闭合的多行注释\n",
+            lexer->filename, start_line, start_column);
+    exit(1);
+}
+
 // 跳过空白字符
 static void skip_whitespace(Lexer *lexer) {
     while (1) {
@@ -99,6 +125,8 @@ static void skip_whitespace(Lexer *lexer) {
                     while (peek(lexer) != '\n' && !is_at_end(lexer)) {
                         advance(lexer);
                     }
+                } else if (peek_next(lexer) == '*') {
+                    skip_block_comment(lexer);
                 } else {
                     return;
                 }

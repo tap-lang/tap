@@ -1,0 +1,1 @@
+tests/compile-fail/lexer/unterminated_block_comment.tp:1:1: 错误: 未闭合的多行注释
