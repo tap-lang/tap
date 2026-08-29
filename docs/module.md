@@ -166,11 +166,7 @@ tests/compile-fail/modules/alias_conflict.tp:1:8: 提示: 名称空间首次在�
 - [`missing_export.tp`](../tests/compile-fail/modules/missing_export.tp)：模块导出函数不存在诊断
 - [`self_import.tp`](../tests/compile-fail/modules/self_import.tp)：入口文件自导入诊断
 
-运行全部测试：
-
-```bash
-make test
-```
+完整的测试目录结构、用例格式和运行方式见[测试文档](test.md)。
 
 ## 当前限制
 

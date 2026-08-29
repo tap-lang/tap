@@ -119,6 +119,7 @@ Prelude 中的函数名不能在用户源码中重复定义。编译器依次从
 - [源码结构](docs/src.md)
 - [AST](docs/ast.md)
 - [模块导入](docs/module.md)
+- [测试](docs/test.md)
 
 ## 许可
 
