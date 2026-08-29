@@ -36,7 +36,7 @@ jobs:
     env:
       LLVM_VERSION: "21"
       LLVM_RELEASE: "21.1.8"
-      LLVM_ROOT: ${{ github.workspace }}/.cache/llvm-21
+      LLVM_CACHE_ROOT: ${{ github.workspace }}/.cache/llvm-21
 
     steps:
       - name: Normalize line endings on Windows
@@ -51,7 +51,7 @@ jobs:
         if: runner.os != 'Windows'
         uses: actions/cache@v4
         with:
-          path: ${{ env.LLVM_ROOT }}
+          path: ${{ env.LLVM_CACHE_ROOT }}
           key: llvm-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Install LLVM 21 on Ubuntu
@@ -64,17 +64,17 @@ jobs:
           sudo /tmp/llvm.sh "$LLVM_VERSION"
           sudo apt-get install --yes "llvm-$LLVM_VERSION-dev" rsync
 
-          mkdir --parents "$LLVM_ROOT"
+          mkdir --parents "$LLVM_CACHE_ROOT"
           rsync --archive --copy-links --exclude='/build/' \
-            "/usr/lib/llvm-$LLVM_VERSION/" "$LLVM_ROOT/"
+            "/usr/lib/llvm-$LLVM_VERSION/" "$LLVM_CACHE_ROOT/"
 
       - name: Install LLVM 21 on macOS
         if: runner.os == 'macOS' && steps.llvm-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           brew install llvm@21
-          mkdir -p "$LLVM_ROOT"
-          cp -RL "$(brew --prefix llvm@21)/." "$LLVM_ROOT/"
+          mkdir -p "$LLVM_CACHE_ROOT"
+          cp -RL "$(brew --prefix llvm@21)/." "$LLVM_CACHE_ROOT/"
 
       - name: Prepare Cygwin on Windows
         if: runner.os == 'Windows'
@@ -89,6 +89,7 @@ jobs:
             ninja
             llvm
             libllvm-devel
+            libpolly-devel
             git
 
       - name: Verify LLVM on Windows
@@ -104,10 +105,10 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          test -x "$LLVM_ROOT/bin/llvm-config"
-          test -f "$LLVM_ROOT/lib/cmake/llvm/LLVMConfig.cmake"
-          echo "$LLVM_ROOT/bin" >> "$GITHUB_PATH"
-          echo "LLVM_CMAKE_DIR=$LLVM_ROOT/lib/cmake/llvm" >> "$GITHUB_ENV"
+          test -x "$LLVM_CACHE_ROOT/bin/llvm-config"
+          test -f "$LLVM_CACHE_ROOT/lib/cmake/llvm/LLVMConfig.cmake"
+          echo "$LLVM_CACHE_ROOT/bin" >> "$GITHUB_PATH"
+          echo "LLVM_CMAKE_DIR=$LLVM_CACHE_ROOT/lib/cmake/llvm" >> "$GITHUB_ENV"
 
       - name: Configure on Unix
         if: runner.os != 'Windows'
