@@ -3,13 +3,8 @@ fn main() {
     let a = 1;
     let b = 2;
 
-    print("a = ");
-    print(a);
-    print("\n");
-
-    print("b = ");
-    print(b);
-    print("\n");
+    print("a = %d\n", a);
+    print("b = %d\n", b);
 
     let c = a + b;
     print("a + b = %d\n", c);
