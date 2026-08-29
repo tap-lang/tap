@@ -2,6 +2,15 @@
 
 set -u
 
+# PowerShell can launch Cygwin sh with System32 ahead of /usr/bin. Without
+# normalizing PATH, commands such as find and sort resolve to Windows tools.
+case $(uname -s) in
+    CYGWIN*)
+        PATH=/usr/bin:$PATH
+        export PATH
+        ;;
+esac
+
 TEST_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$TEST_ROOT/.." && pwd)
 COMPILER=${1:-"$PROJECT_ROOT/build/4yue"}
