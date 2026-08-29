@@ -32,3 +32,10 @@ fn main(): i32 {
     print("%d %d %d\n", sum, nested, escaped);
     return 0;
 }
+
+/** -- test
+- .stdout
+18 6 1
+- .exit
+0
+-- */

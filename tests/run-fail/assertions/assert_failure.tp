@@ -3,3 +3,10 @@ fn main(): int {
     print("unreachable\n");
     return 0;
 }
+
+/** -- test
+- .stdout
+Assertion failed at tests/run-fail/assertions/assert_failure.tp:2:5: expected failure
+- .exit
+1
+-- */

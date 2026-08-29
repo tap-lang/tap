@@ -37,17 +37,48 @@ mark_failure() {
 }
 
 read_text_file() {
-    tr -d '\r' < "$1"
+    sed -e 's/\r$//' -e 's/[[:blank:]]*$//' "$1"
+}
+
+extract_expectation() {
+    section=$1
+    source_file=$2
+    awk -v target=".$section" '
+        { sub(/\r$/, "") }
+        $0 == "/** -- test" {
+            in_test = 1
+            next
+        }
+        in_test && $0 == "-- */" {
+            in_test = 0
+            current = ""
+            next
+        }
+        in_test && $0 ~ /^- \.(stdout|stderr|exit)$/ {
+            current = substr($0, 3)
+            if (current == target) found = 1
+            next
+        }
+        in_test && current == target {
+            values[++count] = $0
+        }
+        END {
+            while (count > 0 && values[count] == "") count--
+            for (line_number = 1; line_number <= count; line_number++) {
+                print values[line_number]
+            }
+            if (!found) exit 1
+        }
+    ' "$source_file"
 }
 
 check_stdout() {
-    expected_file=${case_file%.tp}.stdout
-    if [ -f "$expected_file" ]; then
-        expected_output=$(read_text_file "$expected_file")
+    if [ "$has_expected_stdout" -eq 1 ]; then
+        expected_output=$(read_text_file "$expected_stdout_file")
         actual_output=$(read_text_file "$stdout_file")
         if [ "$actual_output" != "$expected_output" ]; then
-            mark_failure "stdout does not match $expected_file"
-            diff -u --strip-trailing-cr "$expected_file" "$stdout_file" >&2 || true
+            mark_failure "stdout does not match embedded .stdout expectation"
+            diff -u --strip-trailing-cr "$expected_stdout_file" "$stdout_file" >&2 || true
         fi
     elif [ -s "$stdout_file" ]; then
         mark_failure "unexpected stdout"
@@ -56,10 +87,9 @@ check_stdout() {
 }
 
 check_stderr() {
-    expected_file=${case_file%.tp}.stderr
     if [ "$case_mode" = "compile-fail" ]; then
-        if [ ! -f "$expected_file" ]; then
-            mark_failure "missing expected diagnostic file $expected_file"
+        if [ "$has_expected_stderr" -ne 1 ]; then
+            mark_failure "missing embedded .stderr expectation"
             return
         fi
 
@@ -69,13 +99,13 @@ check_stderr() {
             if ! read_text_file "$stderr_file" | grep -Fq -- "$expected_line"; then
                 mark_failure "missing stderr text: $expected_line"
             fi
-        done < "$expected_file"
-    elif [ -f "$expected_file" ]; then
-        expected_output=$(read_text_file "$expected_file")
+        done < "$expected_stderr_file"
+    elif [ "$has_expected_stderr" -eq 1 ]; then
+        expected_output=$(read_text_file "$expected_stderr_file")
         actual_output=$(read_text_file "$stderr_file")
         if [ "$actual_output" != "$expected_output" ]; then
-            mark_failure "stderr does not match $expected_file"
-            diff -u --strip-trailing-cr "$expected_file" "$stderr_file" >&2 || true
+            mark_failure "stderr does not match embedded .stderr expectation"
+            diff -u --strip-trailing-cr "$expected_stderr_file" "$stderr_file" >&2 || true
         fi
     elif [ -s "$stderr_file" ]; then
         mark_failure "unexpected stderr"
@@ -98,43 +128,48 @@ run_case() {
     total=$((total + 1))
     stdout_file="$TEMP_ROOT/$total.stdout"
     stderr_file="$TEMP_ROOT/$total.stderr"
+    expected_stdout_file="$TEMP_ROOT/$total.expected.stdout"
+    expected_stderr_file="$TEMP_ROOT/$total.expected.stderr"
+    expected_exit_file="$TEMP_ROOT/$total.expected.exit"
     case_failed=0
+
+    if extract_expectation stdout "$case_file" > "$expected_stdout_file"; then
+        has_expected_stdout=1
+    else
+        has_expected_stdout=0
+    fi
+    if extract_expectation stderr "$case_file" > "$expected_stderr_file"; then
+        has_expected_stderr=1
+    else
+        has_expected_stderr=0
+    fi
+    if extract_expectation exit "$case_file" > "$expected_exit_file"; then
+        expected_status=$(tr -d '[:space:]' < "$expected_exit_file")
+        case "$expected_status" in
+            ''|*[!0-9]*)
+                mark_failure "invalid embedded .exit expectation"
+                expected_status=
+                ;;
+        esac
+    else
+        mark_failure "missing embedded .exit expectation"
+        expected_status=
+    fi
 
     if [ "$case_mode" = "compile-fail" ]; then
         env "4YUE_MODULE_PATH=$MODULE_PATH" "4YUE_STD_PATH=$STD_PATH" \
             "$COMPILER" -ir -o "$TEMP_ROOT/$total.ll" "$relative_file" \
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?
-        if [ "$case_status" -eq 0 ]; then
-            mark_failure "expected compilation to fail"
-        fi
     else
         env "4YUE_MODULE_PATH=$MODULE_PATH" "4YUE_STD_PATH=$STD_PATH" \
             "$COMPILER" run -o "$TEMP_ROOT/$total-program$EXE_SUFFIX" "$relative_file" \
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?
+    fi
 
-        if [ "$case_mode" = "run-pass" ]; then
-            expected_status=0
-        else
-            exit_file=${case_file%.tp}.exit
-            if [ ! -f "$exit_file" ]; then
-                mark_failure "missing expected exit file $exit_file"
-                expected_status=
-            else
-                expected_status=$(tr -d '[:space:]' < "$exit_file")
-                case "$expected_status" in
-                    ''|*[!0-9]*)
-                        mark_failure "invalid exit status in $exit_file"
-                        expected_status=
-                        ;;
-                esac
-            fi
-        fi
-
-        if [ -n "$expected_status" ] && [ "$case_status" -ne "$expected_status" ]; then
-            mark_failure "exit status $case_status, expected $expected_status"
-        fi
+    if [ -n "$expected_status" ] && [ "$case_status" -ne "$expected_status" ]; then
+        mark_failure "exit status $case_status, expected $expected_status"
     fi
 
     check_stdout

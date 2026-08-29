@@ -3,3 +3,10 @@ import modules.missing;
 fn main(): i32 {
     return 0;
 }
+
+/** -- test
+- .stderr
+tests/compile-fail/modules/missing.tp:1:8: 错误: 找不到模块 'modules.missing'
+- .exit
+1
+-- */

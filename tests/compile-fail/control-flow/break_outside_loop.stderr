@@ -1,1 +1,0 @@
-Parse error: break 只能在 for 循环中使用 (file tests/compile-fail/control-flow/break_outside_loop.tp, line 2, column 5)

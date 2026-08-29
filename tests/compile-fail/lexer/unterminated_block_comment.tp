@@ -1,3 +1,9 @@
+/** -- test
+- .stderr
+tests/compile-fail/lexer/unterminated_block_comment.tp:7:1: 错误: 未闭合的多行注释
+- .exit
+1
+-- */
 /* 未闭合的多行注释
 fn main(): int {
     return 0;

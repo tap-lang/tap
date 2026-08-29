@@ -14,3 +14,10 @@ fn fibonacci(n: 32): i32 {
         return fibonacci(n - 1) + fibonacci(n - 2);
     }
 }
+
+/** -- test
+- .stdout
+Fibonacci number at position 3 is 2
+- .exit
+0
+-- */

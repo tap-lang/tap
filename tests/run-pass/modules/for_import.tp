@@ -8,3 +8,10 @@ fn main(): i32 {
     print("%d\n", sum);
     return 0;
 }
+
+/** -- test
+- .stdout
+7
+- .exit
+0
+-- */

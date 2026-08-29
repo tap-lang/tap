@@ -5,3 +5,10 @@ fn main(): i32 {
     print("%d %d %d\n", minimum, maximum, absolute);
     return 0;
 }
+
+/** -- test
+- .stdout
+3 7 9
+- .exit
+0
+-- */

@@ -3,3 +3,10 @@ fn main(): i32 {
     }
     return 0;
 }
+
+/** -- test
+- .stderr
+错误：未定义的变量 'missing'
+- .exit
+1
+-- */

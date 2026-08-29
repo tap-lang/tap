@@ -9,3 +9,10 @@ fn main() {
 fn add(x, y) {
     return x + y;
 }
+
+/** -- test
+- .stdout
+8
+- .exit
+0
+-- */

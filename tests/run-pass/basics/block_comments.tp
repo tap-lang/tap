@@ -7,3 +7,10 @@ fn main(): int {
     print("%d\n", answer);
     return /* 行内多行注释 */ 0;
 }
+
+/** -- test
+- .stdout
+42
+- .exit
+0
+-- */

@@ -1,6 +1,0 @@
-Current token: print
-    4  
-    5  fn main() {
-    6      let n = 10
-->  7      print(n);
-    8  }

@@ -13,3 +13,10 @@ fn main(): int {
     }
     return 0;
 }
+
+/** -- test
+- .stdout
+observed 3
+- .exit
+0
+-- */

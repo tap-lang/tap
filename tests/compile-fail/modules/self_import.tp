@@ -3,3 +3,10 @@ import self_import;
 fn main(): i32 {
     return 0;
 }
+
+/** -- test
+- .stderr
+tests/compile-fail/modules/self_import.tp:1:8: 错误: 入口文件不能导入自身
+- .exit
+1
+-- */

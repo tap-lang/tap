@@ -3,3 +3,10 @@ import modules.math;
 fn main(): i32 {
     return double(2);
 }
+
+/** -- test
+- .stderr
+错误：未定义的函数 'double'
+- .exit
+1
+-- */

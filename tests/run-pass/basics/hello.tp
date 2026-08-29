@@ -4,3 +4,13 @@
 fn main() {
     print("Hello 4yue ~ 😀\n"); // 输出
 }
+
+
+/** -- test
+- .stdout
+Hello 4yue ~ 😀
+
+- .exit
+0
+
+-- */

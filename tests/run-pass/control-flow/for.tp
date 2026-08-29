@@ -23,3 +23,10 @@ fn main(): i32 {
     print("%d %d %d %d\n", sum, descending, count, return_from_loop());
     return 0;
 }
+
+/** -- test
+- .stdout
+10 321 2 7
+- .exit
+0
+-- */

@@ -1,2 +1,0 @@
-tests/compile-fail/functions/duplicate.tp:5:4: 错误: 重复函数定义 'helper'
-tests/compile-fail/functions/duplicate.tp:1:4: 提示: 此处已有定义

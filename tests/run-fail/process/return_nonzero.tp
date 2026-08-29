@@ -3,3 +3,8 @@
 fn main(){
     return 1;  // 返回值
 }
+
+/** -- test
+- .exit
+1
+-- */

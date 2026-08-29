@@ -11,3 +11,10 @@ fn main(): i32 {
         stdmath.square(5), text.keyword_module_value());
     return 0;
 }
+
+/** -- test
+- .stdout
+8 12 6 25 7
+- .exit
+0
+-- */

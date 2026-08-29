@@ -5,3 +5,10 @@ fn min(a: i32, b: i32): i32 {
 fn main(): i32 {
     return min(1, 2);
 }
+
+/** -- test
+- .stderr
+tests/compile-fail/stdlib/prelude_duplicate.tp:1:4: 错误: 重复函数定义 'min'
+- .exit
+1
+-- */

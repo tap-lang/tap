@@ -1,5 +1,0 @@
-Current token: continue
-   1  fn main(): i32 {
--> 2      continue;
-   3      return 0;
-   4  }

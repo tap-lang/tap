@@ -1,1 +1,0 @@
-tests/compile-fail/modules/missing.tp:1:8: 错误: 找不到模块 'modules.missing'

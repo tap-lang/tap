@@ -1,1 +1,0 @@
-tests/compile-fail/modules/self_import.tp:1:8: 错误: 入口文件不能导入自身

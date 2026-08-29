@@ -9,3 +9,10 @@ fn main(): i32 {
     print("%d %d %d %d\n", conflict.conflict(), conflict(), min.min(), min(1, 2));
     return 0;
 }
+
+/** -- test
+- .stdout
+1 2 100 1
+- .exit
+0
+-- */
