@@ -3,6 +3,11 @@
 
 #include "version.h"
 
+void print_version(void)
+{
+    printf("4yue version %s (%s)\n", VERSION, GIT_COMMIT_ID);
+}
+
 const char *get_version(void)
 {
     return VERSION;
@@ -44,4 +49,3 @@ const char *get_version_from_file(const char *file)
 
     return version;
 }
-

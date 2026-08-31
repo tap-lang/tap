@@ -11,6 +11,7 @@
 | 文件 | 职责 |
 |---|---|
 | [`main.c`](../src/main.c) | 程序入口、命令行参数解析和编译模式分发 |
+| [`helpers.c`](../src/helpers.c) / [`helpers.h`](../src/helpers.h) | 通用的路径与字符串辅助函数 |
 | [`token.c`](../src/token.c) / [`token.h`](../src/token.h) | Token 类型、名称映射和资源释放 |
 | [`lexer.c`](../src/lexer.c) / [`lexer.h`](../src/lexer.h) | 读取源文件并执行词法分析 |
 | [`parser.c`](../src/parser.c) / [`parser.h`](../src/parser.h) | 将 Token 流解析为 AST |

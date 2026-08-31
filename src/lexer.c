@@ -55,6 +55,18 @@ void free_lexer(Lexer *lexer) {
     }
 }
 
+void print_lexer(Lexer *lexer) {
+    for (;;) {
+        Token *token = get_next_token(lexer);
+        const char *lexeme = token->lexeme ? token->lexeme : "";
+        printf("%s:%d:%d\t%s\t'%s'\n", lexer->filename, token->line,
+               token->column, TokenNames[token->type], lexeme);
+        enum TokenType type = token->type;
+        free_token(token);
+        if (type == TOKEN_EOF) break;
+    }
+}
+
 // 检查是否到达文件末尾
 static int is_at_end(Lexer *lexer) {
     return *lexer->current == '\0';

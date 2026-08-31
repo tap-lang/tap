@@ -25,6 +25,7 @@ option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 # 添加可执行文件
 add_executable(4yue
     src/main.c
+    src/helpers.c
     src/ast.c
     src/parser.c
     src/module.c
@@ -33,6 +34,7 @@ add_executable(4yue
     src/token.c
     src/codegen.c
     src/run.c
+    src/version.c
 )
 set_target_properties(4yue PROPERTIES LINKER_LANGUAGE C)
 

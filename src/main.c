@@ -7,6 +7,7 @@
 #include "prelude.h"
 #include "codegen.h"
 #include "run.h"
+#include "helpers.h"
 #include "version.h"
 
 // 打印用法
@@ -26,50 +27,8 @@ static void print_usage() {
     printf("  -V, --version     显示版本号\n");
 }
 
-static void print_version() {
-    printf("4yue version %s (%s)\n", VERSION, GIT_COMMIT_ID);
-}
-
-static char *default_executable_name(const char *input_file) {
-    const char *filename = input_file;
-    const char *slash = strrchr(input_file, '/');
-    const char *backslash = strrchr(input_file, '\\');
-    if (slash || backslash) {
-        const char *separator = !slash || (backslash && backslash > slash) ? backslash : slash;
-        filename = separator + 1;
-    }
-
-    const char *extension = strrchr(filename, '.');
-    size_t length = extension && extension != filename
-        ? (size_t)(extension - filename)
-        : strlen(filename);
-
-    char *name = malloc(length + 1);
-    if (!name) {
-        fprintf(stderr, "内存分配失败\n");
-        return NULL;
-    }
-    memcpy(name, filename, length);
-    name[length] = '\0';
-    return name;
-}
-
 // 全局debug变量，供其他模块使用
 int debug = 0;
-
-// 只输出词法分析结果
-static void run_lex_only(Lexer *lexer) {
-    for (;;) {
-        Token *tok = get_next_token(lexer);
-        const char *lex = tok->lexeme ? tok->lexeme : "";
-        printf("%s:%d:%d\t%s\t'%s'\n", lexer->filename, tok->line, tok->column, TokenNames[tok->type], lex);
-        enum TokenType ty = tok->type;
-        free_token(tok);
-        if (ty == TOKEN_EOF) {
-            break;
-        }
-    }
-}
 
 int main(int argc, char *argv[]) {
     
@@ -148,7 +107,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (lex_only) {
-        run_lex_only(lexer);
+        print_lexer(lexer);
         free_lexer(lexer);
         return 0;
     }
@@ -215,7 +174,7 @@ int main(int argc, char *argv[]) {
         char *default_exe_file = NULL;
         char *exe_file = output_file;
         if (!exe_file && !run_native) {
-            default_exe_file = default_executable_name(input_file);
+            default_exe_file = get_basename_no_ext(input_file);
             exe_file = default_exe_file;
         }
 

@@ -19,6 +19,7 @@ typedef struct {
 // 函数声明（从 path 读入源码）
 Lexer *create_lexer(const char *filename);
 Token *get_next_token(Lexer *lexer);
+void print_lexer(Lexer *lexer);
 void free_lexer(Lexer *lexer);
 
 #endif // LEXER_H
