@@ -90,6 +90,7 @@ jobs:
             llvm
             libllvm-devel
             libpolly-devel
+            zlib-devel
             git
 
       - name: Verify LLVM on Windows
