@@ -115,8 +115,18 @@ static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRe
     symbol->name = strdup(name);
     symbol->value = value;
     symbol->type = type;
+    symbol->is_array = 0;
+    symbol->array_length = 0;
     symbol->next = context->symbols;
     context->symbols = symbol;
+}
+
+static void insert_array_symbol(CodeGenContext *context, const char *name,
+                                LLVMValueRef value, enum LiteralType element_type,
+                                uint64_t length) {
+    insert_symbol(context, name, value, element_type);
+    context->symbols->is_array = 1;
+    context->symbols->array_length = length;
 }
 
 static void free_symbols(Symbol *symbols) {
@@ -163,6 +173,20 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
         case NODE_IDENTIFIER: {
             Symbol *symbol = find_symbol(context, ((IdentifierNode *)expression)->name);
             return symbol ? symbol->type : default_integer_type();
+        }
+        case NODE_INDEX_EXPRESSION: {
+            IndexExpressionNode *index = (IndexExpressionNode *)expression;
+            if (!index->array || index->array->type != NODE_IDENTIFIER) {
+                fprintf(stderr, "错误：第一版数组索引只支持数组变量\n");
+                exit(1);
+            }
+            Symbol *symbol = find_symbol(
+                context, ((IdentifierNode *)index->array)->name);
+            if (!symbol || !symbol->is_array) {
+                fprintf(stderr, "错误：索引目标不是数组\n");
+                exit(1);
+            }
+            return symbol->type;
         }
         case NODE_FUNCTION_CALL: {
             FunctionNode *function = find_function(context, ((FunctionCallNode *)expression)->name);
@@ -235,6 +259,80 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
 
     enum LiteralType source = expression_type(context, expression);
     return cast_integer(context, generate_expression(context, expression), source, target);
+}
+
+static LLVMValueRef generate_index_address(
+    CodeGenContext *context, IndexExpressionNode *index_expression, Symbol **symbol_out) {
+    if (!index_expression->array || index_expression->array->type != NODE_IDENTIFIER) {
+        fprintf(stderr, "错误：第一版数组索引只支持数组变量\n");
+        exit(1);
+    }
+
+    const char *name = ((IdentifierNode *)index_expression->array)->name;
+    Symbol *symbol = find_symbol(context, name);
+    if (!symbol) {
+        fprintf(stderr, "错误：未定义的变量 '%s'\n", name);
+        exit(1);
+    }
+    if (!symbol->is_array) {
+        fprintf(stderr, "错误：变量 '%s' 不是数组\n", name);
+        exit(1);
+    }
+
+    enum LiteralType index_type = expression_type(context, index_expression->index);
+    if (!is_integer_type(index_type) || integer_type_bits(index_type) > 64) {
+        fprintf(stderr, "错误：数组下标必须是最多 64 位的整数\n");
+        exit(1);
+    }
+
+    LLVMValueRef raw_index = generate_expression(context, index_expression->index);
+    enum LiteralType check_type = is_unsigned_type(index_type) ? LITERAL_U64 : LITERAL_I64;
+    LLVMValueRef index = cast_integer(context, raw_index, index_type, check_type);
+    LLVMTypeRef index_llvm_type = get_llvm_type(context, check_type);
+    LLVMValueRef zero = LLVMConstInt(index_llvm_type, 0, 0);
+    LLVMValueRef length = LLVMConstInt(index_llvm_type, symbol->array_length, 0);
+    LLVMValueRef lower_ok = is_unsigned_type(index_type)
+        ? LLVMConstInt(LLVMInt1TypeInContext(context->context), 1, 0)
+        : LLVMBuildICmp(context->builder, LLVMIntSGE, index, zero, "array_index_nonnegative");
+    LLVMValueRef upper_ok = LLVMBuildICmp(
+        context->builder,
+        is_unsigned_type(index_type) ? LLVMIntULT : LLVMIntSLT,
+        index, length, "array_index_in_range");
+    LLVMValueRef in_bounds = LLVMBuildAnd(
+        context->builder, lower_ok, upper_ok, "array_index_valid");
+
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    LLVMBasicBlockRef pass_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "array_index_pass");
+    LLVMBasicBlockRef fail_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "array_index_fail");
+    LLVMBuildCondBr(context->builder, in_bounds, pass_block, fail_block);
+
+    LLVMPositionBuilderAtEnd(context->builder, fail_block);
+    LLVMValueRef printf_arguments[3] = {
+        LLVMBuildGlobalStringPtr(context->builder,
+            "Array index out of bounds: index=%lld, length=%llu\n", "array_bounds_format"),
+        index,
+        LLVMConstInt(LLVMInt64TypeInContext(context->context), symbol->array_length, 0)
+    };
+    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
+                   printf_arguments, 3, "array_bounds_printf");
+    LLVMValueRef exit_argument =
+        LLVMConstInt(LLVMInt32TypeInContext(context->context), 1, 0);
+    LLVMBuildCall2(context->builder, context->exit_type, context->exit_func,
+                   &exit_argument, 1, "");
+    LLVMBuildUnreachable(context->builder);
+
+    LLVMPositionBuilderAtEnd(context->builder, pass_block);
+    LLVMTypeRef element_type = get_llvm_type(context, symbol->type);
+    LLVMTypeRef array_type = LLVMArrayType2(element_type, symbol->array_length);
+    LLVMValueRef indexes[2] = {
+        LLVMConstInt(LLVMInt64TypeInContext(context->context), 0, 0),
+        index
+    };
+    if (symbol_out) *symbol_out = symbol;
+    return LLVMBuildGEP2(context->builder, array_type, symbol->value,
+                         indexes, 2, "array_element_ptr");
 }
 
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
@@ -332,9 +430,23 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 fprintf(stderr, "错误：未定义的变量 '%s'\n", identifier->name);
                 exit(1);
             }
+            if (symbol->is_array) {
+                fprintf(stderr, "错误：数组 '%s' 必须通过下标访问\n", identifier->name);
+                exit(1);
+            }
             return LLVMBuildLoad2(context->builder, get_llvm_type(context, symbol->type),
                                   symbol->value, "loaded_var");
         }
+        case NODE_INDEX_EXPRESSION: {
+            Symbol *symbol = NULL;
+            LLVMValueRef address = generate_index_address(
+                context, (IndexExpressionNode *)expression, &symbol);
+            return LLVMBuildLoad2(context->builder, get_llvm_type(context, symbol->type),
+                                  address, "array_element");
+        }
+        case NODE_ARRAY_LITERAL:
+            fprintf(stderr, "错误：数组字面量只能用于数组变量初始化\n");
+            exit(1);
         case NODE_FUNCTION_CALL:
             return generate_function_call(context, (FunctionCallNode *)expression);
         case NODE_BINARY_OP: {
@@ -408,8 +520,31 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
         fprintf(stderr, "错误：未定义的变量 '%s'\n", assignment->name);
         exit(1);
     }
+    if (symbol->is_array) {
+        fprintf(stderr, "错误：第一版数组暂不支持整个数组赋值\n");
+        exit(1);
+    }
     LLVMValueRef value = generate_expression_as(context, assignment->expression, symbol->type);
     LLVMBuildStore(context->builder, value, symbol->value);
+}
+
+static int array_element_type_compatible(
+    enum LiteralType expected, enum LiteralType actual) {
+    return expected == actual || (is_integer_type(expected) && is_integer_type(actual));
+}
+
+static void generate_index_assignment(
+    CodeGenContext *context, IndexAssignmentNode *assignment) {
+    Symbol *symbol = NULL;
+    LLVMValueRef address = generate_index_address(context, assignment->target, &symbol);
+    enum LiteralType actual_type = expression_type(context, assignment->expression);
+    if (!array_element_type_compatible(symbol->type, actual_type)) {
+        fprintf(stderr, "错误：数组元素赋值类型不匹配\n");
+        exit(1);
+    }
+    LLVMValueRef value = generate_expression_as(
+        context, assignment->expression, symbol->type);
+    LLVMBuildStore(context->builder, value, address);
 }
 
 static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition) {
@@ -565,6 +700,56 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_VAR_DECL: {
                 VarDeclNode *declaration = (VarDeclNode *)statement;
+                if (declaration->type && declaration->type->is_array) {
+                    if (!declaration->expression ||
+                        declaration->expression->type != NODE_ARRAY_LITERAL) {
+                        fprintf(stderr, "错误：数组变量必须使用数组字面量初始化\n");
+                        exit(1);
+                    }
+                    ArrayLiteralNode *literal =
+                        (ArrayLiteralNode *)declaration->expression;
+                    if (literal->count != declaration->type->array_length) {
+                        fprintf(stderr,
+                            "错误：数组初始化元素数量为 %llu，但声明长度为 %llu\n",
+                            (unsigned long long)literal->count,
+                            (unsigned long long)declaration->type->array_length);
+                        exit(1);
+                    }
+                    LLVMTypeRef element_type =
+                        get_llvm_type(context, declaration->type->type);
+                    LLVMTypeRef array_type = LLVMArrayType2(
+                        element_type, declaration->type->array_length);
+                    LLVMValueRef storage = LLVMBuildAlloca(
+                        context->builder, array_type, declaration->name);
+                    insert_array_symbol(context, declaration->name, storage,
+                                        declaration->type->type,
+                                        declaration->type->array_length);
+                    ASTNode *element = literal->elements;
+                    for (uint64_t i = 0; i < literal->count; i++, element = element->next) {
+                        enum LiteralType actual_type = expression_type(context, element);
+                        if (!array_element_type_compatible(
+                                declaration->type->type, actual_type)) {
+                            fprintf(stderr, "错误：数组初始化元素类型不匹配\n");
+                            exit(1);
+                        }
+                        LLVMValueRef indexes[2] = {
+                            LLVMConstInt(LLVMInt64TypeInContext(context->context), 0, 0),
+                            LLVMConstInt(LLVMInt64TypeInContext(context->context), i, 0)
+                        };
+                        LLVMValueRef address = LLVMBuildGEP2(
+                            context->builder, array_type, storage, indexes, 2,
+                            "array_init_element_ptr");
+                        LLVMValueRef value = generate_expression_as(
+                            context, element, declaration->type->type);
+                        LLVMBuildStore(context->builder, value, address);
+                    }
+                    break;
+                }
+                if (declaration->expression &&
+                    declaration->expression->type == NODE_ARRAY_LITERAL) {
+                    fprintf(stderr, "错误：数组声明必须显式指定 array[元素类型, 长度]\n");
+                    exit(1);
+                }
                 enum LiteralType type = declaration->type
                     ? declaration->type->type
                     : expression_type(context, declaration->expression);
@@ -573,13 +758,17 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                                                         declaration->name);
                 insert_symbol(context, declaration->name, storage, type);
                 if (declaration->expression) {
-                    LLVMValueRef value = generate_expression_as(context, declaration->expression, type);
+                    LLVMValueRef value = generate_expression_as(
+                        context, declaration->expression, type);
                     LLVMBuildStore(context->builder, value, storage);
                 }
                 break;
             }
             case NODE_ASSIGNMENT:
                 generate_assignment(context, (AssignmentNode *)statement);
+                break;
+            case NODE_INDEX_ASSIGNMENT:
+                generate_index_assignment(context, (IndexAssignmentNode *)statement);
                 break;
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
@@ -631,6 +820,16 @@ static unsigned function_param_count(FunctionNode *function) {
 }
 
 static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *function) {
+    if (function->return_type && function->return_type->is_array) {
+        fprintf(stderr, "错误：第一版数组暂不支持作为函数返回类型\n");
+        exit(1);
+    }
+    for (ASTNode *type = function->param_types; type; type = type->next) {
+        if (((VarTypeNode *)type)->is_array) {
+            fprintf(stderr, "错误：第一版数组暂不支持作为函数参数\n");
+            exit(1);
+        }
+    }
     unsigned count = function_param_count(function);
     LLVMTypeRef *params = count ? malloc(sizeof(LLVMTypeRef) * count) : NULL;
     for (unsigned i = 0; i < count; i++) {

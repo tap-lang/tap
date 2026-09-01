@@ -32,6 +32,14 @@ static const char *literal_type_str(enum LiteralType t) {
     }
 }
 
+static void print_var_type(const VarTypeNode *type) {
+    if (type->is_array) {
+        printf("array[%s, %" PRIu64 "]", literal_type_str(type->type), type->array_length);
+    } else {
+        printf("%s", literal_type_str(type->type));
+    }
+}
+
 static const char *binary_op_str(enum BinaryOpType op) {
     switch (op) {
     case OP_ADD: return "+";
@@ -100,6 +108,25 @@ static void dump_expr(ASTNode *n, int depth) {
         dump_expr(b->right, depth + 2);
         break;
     }
+    case NODE_ARRAY_LITERAL: {
+        ArrayLiteralNode *array = (ArrayLiteralNode *)n;
+        print_indent(depth);
+        printf("ArrayLiteral[\n");
+        for (ASTNode *element = array->elements; element; element = element->next) {
+            dump_expr(element, depth + 2);
+        }
+        print_indent(depth);
+        printf("]\n");
+        break;
+    }
+    case NODE_INDEX_EXPRESSION: {
+        IndexExpressionNode *index = (IndexExpressionNode *)n;
+        print_indent(depth);
+        printf("Index\n");
+        dump_expr(index->array, depth + 2);
+        dump_expr(index->index, depth + 2);
+        break;
+    }
     case NODE_FUNCTION_CALL: {
         FunctionCallNode *fc = (FunctionCallNode *)n;
         print_indent(depth);
@@ -139,7 +166,8 @@ static void dump_stmt(ASTNode *n, int depth) {
         print_indent(depth);
         printf("VarDecl: %s", v->name);
         if (v->type) {
-            printf(" : %s", literal_type_str(v->type->type));
+            printf(" : ");
+            print_var_type(v->type);
         }
         printf("\n");
         if (v->expression) {
@@ -147,6 +175,14 @@ static void dump_stmt(ASTNode *n, int depth) {
             printf("init:\n");
             dump_expr(v->expression, depth + 4);
         }
+        break;
+    }
+    case NODE_INDEX_ASSIGNMENT: {
+        IndexAssignmentNode *assignment = (IndexAssignmentNode *)n;
+        print_indent(depth);
+        printf("IndexAssign\n");
+        dump_expr((ASTNode *)assignment->target, depth + 2);
+        dump_expr(assignment->expression, depth + 2);
         break;
     }
     case NODE_ASSIGNMENT: {
@@ -245,7 +281,8 @@ void print_ast(const ProgramNode *program) {
         FunctionNode *f = (FunctionNode *)fn;
         printf("  Function: %s", f->name);
         if (f->return_type) {
-            printf(" -> %s", literal_type_str(f->return_type->type));
+            printf(" -> ");
+            print_var_type(f->return_type);
         }
         printf("\n");
 
@@ -260,7 +297,8 @@ void print_ast(const ProgramNode *program) {
                 printf("?");
             }
             if (pt && pt->type == NODE_VAR_TYPE) {
-                printf(" : %s", literal_type_str(((VarTypeNode *)pt)->type));
+                printf(" : ");
+                print_var_type((VarTypeNode *)pt);
             }
             printf("\n");
             p = p ? p->next : NULL;
@@ -473,10 +511,19 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->base.type = NODE_VAR_TYPE;
     var_type->base.next = NULL;
     var_type->type = type;
+    var_type->is_array = 0;
+    var_type->array_length = 0;
     return var_type;
 }
 
 // 创建变量声明节点
+VarTypeNode *create_array_type(enum LiteralType element_type, uint64_t length) {
+    VarTypeNode *type = create_var_type(element_type);
+    type->is_array = 1;
+    type->array_length = length;
+    return type;
+}
+
 VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression) {
     VarDeclNode *var_decl = (VarDeclNode *)malloc(sizeof(VarDeclNode));
     if (!var_decl) {
@@ -505,6 +552,54 @@ AssignmentNode *create_assignment(const char *name, ASTNode *expression) {
 }
 
 // 创建函数调用节点
+ArrayLiteralNode *create_array_literal(void) {
+    ArrayLiteralNode *array = (ArrayLiteralNode *)calloc(1, sizeof(ArrayLiteralNode));
+    if (!array) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    array->base.type = NODE_ARRAY_LITERAL;
+    return array;
+}
+
+void add_array_element(ArrayLiteralNode *array, ASTNode *element) {
+    if (!array->elements) {
+        array->elements = element;
+    } else {
+        ASTNode *current = array->elements;
+        while (current->next) current = current->next;
+        current->next = element;
+    }
+    array->count++;
+}
+
+IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index) {
+    IndexExpressionNode *expression =
+        (IndexExpressionNode *)calloc(1, sizeof(IndexExpressionNode));
+    if (!expression) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    expression->base.type = NODE_INDEX_EXPRESSION;
+    expression->array = array;
+    expression->index = index;
+    return expression;
+}
+
+IndexAssignmentNode *create_index_assignment(
+    IndexExpressionNode *target, ASTNode *expression) {
+    IndexAssignmentNode *assignment =
+        (IndexAssignmentNode *)calloc(1, sizeof(IndexAssignmentNode));
+    if (!assignment) {
+        fprintf(stderr, "内存分配失败\n");
+        exit(1);
+    }
+    assignment->base.type = NODE_INDEX_ASSIGNMENT;
+    assignment->target = target;
+    assignment->expression = expression;
+    return assignment;
+}
+
 FunctionCallNode *create_function_call(char *name) {
     FunctionCallNode *function_call = (FunctionCallNode *)malloc(sizeof(FunctionCallNode));
     if (!function_call) {
@@ -728,6 +823,23 @@ void free_ast(ASTNode *node) {
         case NODE_ASSIGNMENT: {
             AssignmentNode *assignment = (AssignmentNode *)node;
             free(assignment->name);
+            free_ast(assignment->expression);
+            break;
+        }
+        case NODE_ARRAY_LITERAL: {
+            ArrayLiteralNode *array = (ArrayLiteralNode *)node;
+            free_ast(array->elements);
+            break;
+        }
+        case NODE_INDEX_EXPRESSION: {
+            IndexExpressionNode *index = (IndexExpressionNode *)node;
+            free_ast(index->array);
+            free_ast(index->index);
+            break;
+        }
+        case NODE_INDEX_ASSIGNMENT: {
+            IndexAssignmentNode *assignment = (IndexAssignmentNode *)node;
+            free_ast((ASTNode *)assignment->target);
             free_ast(assignment->expression);
             break;
         }

@@ -20,6 +20,9 @@ enum NodeType {
     NODE_BINARY_OP,                 // 二元操作符节点
     NODE_VAR_DECL,                  // 变量声明节点
     NODE_ASSIGNMENT,                // 赋值语句节点
+    NODE_ARRAY_LITERAL,             // 数组字面量节点
+    NODE_INDEX_EXPRESSION,          // 数组索引表达式节点
+    NODE_INDEX_ASSIGNMENT,          // 数组索引赋值节点
     NODE_FUNCTION_CALL,             // 函数调用节点
     NODE_IF_STATEMENT,              // 条件语句节点
     NODE_FOR_STATEMENT,             // for 循环节点
@@ -92,6 +95,8 @@ typedef struct {
 typedef struct {
     ASTNode base;
     enum LiteralType type;  // 使用现有的LiteralType枚举表示类型
+    int is_array;
+    uint64_t array_length;
 } VarTypeNode;
 
 // 函数节点
@@ -162,6 +167,25 @@ typedef struct {
     ASTNode *expression;
 } AssignmentNode;
 
+typedef struct {
+    ASTNode base;
+    ASTNode *elements;
+    uint64_t count;
+} ArrayLiteralNode;
+
+typedef struct {
+    ASTNode base;
+    ASTNode *array;
+    ASTNode *index;
+} IndexExpressionNode;
+
+typedef struct {
+    ASTNode base;
+    IndexExpressionNode *target;
+    ASTNode *expression;
+} IndexAssignmentNode;
+
+
 // 函数调用节点
 typedef struct {
     ASTNode base;
@@ -179,6 +203,7 @@ ImportNode *create_import(
 FunctionNode *create_function(char *name);
 IdentifierNode *create_identifier(char *name);
 VarTypeNode *create_var_type(enum LiteralType type);
+VarTypeNode *create_array_type(enum LiteralType element_type, uint64_t length);
 LiteralNode *create_int_literal(uint64_t value);
 LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);
@@ -190,6 +215,11 @@ void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression);
 AssignmentNode *create_assignment(const char *name, ASTNode *expression);
+ArrayLiteralNode *create_array_literal(void);
+void add_array_element(ArrayLiteralNode *array, ASTNode *element);
+IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index);
+IndexAssignmentNode *create_index_assignment(
+    IndexExpressionNode *target, ASTNode *expression);
 FunctionCallNode *create_function_call(char *name);
 
 // 添加子节点的函数

@@ -452,6 +452,10 @@ Token *get_next_token(Lexer *lexer) {
             return create_token(lexer, TOKEN_LBRACE, lexer->current - 1, lexer->current);
         case '}':
             return create_token(lexer, TOKEN_RBRACE, lexer->current - 1, lexer->current);
+        case '[':
+            return create_token(lexer, TOKEN_LBRACKET, lexer->current - 1, lexer->current);
+        case ']':
+            return create_token(lexer, TOKEN_RBRACKET, lexer->current - 1, lexer->current);
         case ';':
             return create_token(lexer, TOKEN_SEMICOLON, lexer->current - 1, lexer->current);
         case ',':

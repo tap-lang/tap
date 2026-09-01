@@ -1,0 +1,11 @@
+fn main(): i32 {
+    let values = [10, 20];
+    return 0;
+}
+
+/** -- test
+- .stderr
+错误：数组声明必须显式指定 array[元素类型, 长度]
+- .exit
+1
+-- */

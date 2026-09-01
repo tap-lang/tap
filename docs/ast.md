@@ -49,6 +49,9 @@ typedef struct ASTNode {
 | `NODE_BINARY_OP` | `BinaryOpNode` | 操作符、左操作数和右操作数 |
 | `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型和初始化表达式 |
 | `NODE_ASSIGNMENT` | `AssignmentNode` | 被赋值变量名和新的值表达式 |
+| `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
+| `NODE_INDEX_EXPRESSION` | `IndexExpressionNode` | 数组表达式和下标表达式 |
+| `NODE_INDEX_ASSIGNMENT` | `IndexAssignmentNode` | 索引目标和新的元素值 |
 | `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名和实参链表 |
 | `NODE_IF_STATEMENT` | `IfStatementNode` | 条件、真分支和假分支 |
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
@@ -90,6 +93,7 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 
 - `VarDeclNode`：变量声明和初始化。
 - `AssignmentNode`：变量赋值，以及 `++`、`--` 展开后的更新。
+- `IndexAssignmentNode`：固定长度数组元素赋值。
 - `ReturnNode`：返回表达式。
 - `PrintNode`：一个或多个打印参数。
 - `IfStatementNode`：`if`、`elseif` 和 `else`。
@@ -115,6 +119,7 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 - 函数调用。
 - 括号表达式。
 - 二元算术与比较表达式。
+- 固定长度数组字面量和数组索引表达式。
 - 一元负号；Parser 将 `-value` 转换成 `0 - value` 的 `BinaryOpNode`。
 
 `BinaryOpType` 定义了以下操作符：

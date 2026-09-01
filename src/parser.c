@@ -185,6 +185,32 @@ static ImportNode *parse_import(Parser *parser) {
 }
 
 static VarTypeNode *parse_type(Parser *parser) {
+    if (parser->current_token->type == TOKEN_ARRAY) {
+        consume(parser, TOKEN_ARRAY);
+        consume(parser, TOKEN_LBRACKET);
+        VarTypeNode *element_type = parse_type(parser);
+        if (element_type->is_array) {
+            free_ast((ASTNode *)element_type);
+            parser_error(parser, "第一版数组暂不支持嵌套数组");
+        }
+        consume(parser, TOKEN_COMMA);
+        if (parser->current_token->type != TOKEN_I32 ||
+            !isdigit((unsigned char)parser->current_token->lexeme[0])) {
+            free_ast((ASTNode *)element_type);
+            parser_error(parser, "数组长度必须是正整数字面量");
+        }
+        uint64_t length = strtoull(parser->current_token->lexeme, NULL, 10);
+        if (length == 0 || length > INT64_MAX) {
+            free_ast((ASTNode *)element_type);
+            parser_error(parser, "数组长度必须在 1 到 INT64_MAX 之间");
+        }
+        consume(parser, TOKEN_I32);
+        consume(parser, TOKEN_RBRACKET);
+        VarTypeNode *array_type = create_array_type(element_type->type, length);
+        free_ast((ASTNode *)element_type);
+        return array_type;
+    }
+
     enum LiteralType type;
     enum TokenType token_type = parser->current_token->type;
 
@@ -206,10 +232,6 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_F64: type = LITERAL_F64; break;
         case TOKEN_BOOL: type = LITERAL_BOOL; break;
         case TOKEN_STRING: type = LITERAL_STRING; break;
-        case TOKEN_ARRAY:
-            // Array has no dedicated AST type yet; preserve the existing placeholder.
-            type = LITERAL_STRING;
-            break;
         default:
             parser_error(parser, "期望类型");
             return NULL;
@@ -594,6 +616,11 @@ static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
         consume(parser, TOKEN_ASSIGN);
         statement = (ASTNode *)create_assignment(name, parse_expression(parser));
         free_ast(expression);
+    } else if (expression && expression->type == NODE_INDEX_EXPRESSION &&
+               parser->current_token->type == TOKEN_ASSIGN) {
+        consume(parser, TOKEN_ASSIGN);
+        statement = (ASTNode *)create_index_assignment(
+            (IndexExpressionNode *)expression, parse_expression(parser));
     } else if (expression && expression->type == NODE_IDENTIFIER &&
                (parser->current_token->type == TOKEN_INCREMENT ||
                 parser->current_token->type == TOKEN_DECREMENT)) {
@@ -684,21 +711,37 @@ static ASTNode *parse_loop_control_statement(Parser *parser) {
 }
 
 // 解析因子（标识符或整数）
-static ASTNode *parse_factor(Parser *parser) {
+static ASTNode *parse_array_literal(Parser *parser) {
+    consume(parser, TOKEN_LBRACKET);
+    ArrayLiteralNode *array = create_array_literal();
+    if (parser->current_token->type != TOKEN_RBRACKET) {
+        add_array_element(array, parse_expression(parser));
+        while (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            add_array_element(array, parse_expression(parser));
+        }
+    }
+    consume(parser, TOKEN_RBRACKET);
+    return (ASTNode *)array;
+}
+
+static ASTNode *parse_primary(Parser *parser) {
     Token *token = parser->current_token;
-    
+
     if (token->type == TOKEN_I32 && isdigit((unsigned char)token->lexeme[0])) {
-        // 整数字面量
         LiteralNode *int_literal = create_int_literal_text(token->lexeme);
         consume(parser, TOKEN_I32);
         return (ASTNode *)int_literal;
-    } else if (token->type == TOKEN_STRING && token->value.string_value) {
-        // 字符串字面量
+    }
+    if (token->type == TOKEN_STRING && token->value.string_value) {
         LiteralNode *string_literal = create_string_literal(token->value.string_value);
         consume(parser, TOKEN_STRING);
         return (ASTNode *)string_literal;
-    } else if (is_module_component(token)) {
-        // 标识符、函数调用或名称空间限定函数调用
+    }
+    if (token->type == TOKEN_LBRACKET) {
+        return parse_array_literal(parser);
+    }
+    if (is_module_component(token)) {
         int line = token->line;
         int column = token->column;
         enum TokenType token_type = token->type;
@@ -714,8 +757,7 @@ static ASTNode *parse_factor(Parser *parser) {
             name = append_name_component(name, parser->current_token->lexeme);
             consume(parser, parser->current_token->type);
         }
-        
-        // 检查是否是函数调用
+
         if (parser->current_token->type == TOKEN_LPAREN) {
             ASTNode *function_call = parse_function_call(parser, name);
             FunctionCallNode *call = (FunctionCallNode *)function_call;
@@ -730,29 +772,38 @@ static ASTNode *parse_factor(Parser *parser) {
             free(name);
             parser_error(parser, "名称空间成员必须作为函数调用使用");
         }
-        
-        // 否则是变量
+
         IdentifierNode *identifier = create_identifier(name);
         free(name);
         return (ASTNode *)identifier;
-    } else if (token->type == TOKEN_LPAREN) {
-        // 括号表达式
+    }
+    if (token->type == TOKEN_LPAREN) {
         consume(parser, TOKEN_LPAREN);
         ASTNode *expression = parse_expression(parser);
         consume(parser, TOKEN_RPAREN);
         return expression;
-    } else if (token->type == TOKEN_MINUS) {
-        // 负号表达式
+    }
+
+    parser_error(parser, "期望因子（整数、字符串、数组、标识符或括号表达式）");
+    return NULL;
+}
+
+static ASTNode *parse_factor(Parser *parser) {
+    if (parser->current_token->type == TOKEN_MINUS) {
         consume(parser, TOKEN_MINUS);
         ASTNode *factor = parse_factor(parser);
-        // 创建一个表示 -factor 的表达式
-        LiteralNode *zero = create_int_literal(0);
-        BinaryOpNode *binary_op = create_binary_op(OP_SUBTRACT, (ASTNode *)zero, factor);
-        return (ASTNode *)binary_op;
+        return (ASTNode *)create_binary_op(
+            OP_SUBTRACT, (ASTNode *)create_int_literal(0), factor);
     }
-    
-    parser_error(parser, "期望因子（整数、字符串、标识符、括号表达式或负号表达式）");
-    return NULL; // 不会执行到这里
+
+    ASTNode *expression = parse_primary(parser);
+    while (parser->current_token->type == TOKEN_LBRACKET) {
+        consume(parser, TOKEN_LBRACKET);
+        ASTNode *index = parse_expression(parser);
+        consume(parser, TOKEN_RBRACKET);
+        expression = (ASTNode *)create_index_expression(expression, index);
+    }
+    return expression;
 }
 
 // 解析项（乘除）

@@ -1,0 +1,12 @@
+fn main(): i32 {
+    let values: array[i32, 3] = [10, 20, 30];
+    print("%d\n", values[3]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+Array index out of bounds: index=3, length=3
+- .exit
+1
+-- */

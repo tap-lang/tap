@@ -1,0 +1,11 @@
+fn main(): i32 {
+    let values: array[i32, 3] = [10, 20];
+    return 0;
+}
+
+/** -- test
+- .stderr
+错误：数组初始化元素数量为 2，但声明长度为 3
+- .exit
+1
+-- */

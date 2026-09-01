@@ -20,6 +20,8 @@ typedef struct Symbol {
     char *name;
     LLVMValueRef value;
     enum LiteralType type;
+    int is_array;
+    uint64_t array_length;
     struct Symbol *next;
 } Symbol;
 
