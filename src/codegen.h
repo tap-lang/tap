@@ -21,8 +21,7 @@ typedef struct Symbol {
     char *name;
     LLVMValueRef value;
     enum LiteralType type;
-    int is_array;
-    uint64_t array_length;
+    const VarTypeNode *array_type; // 数组符号借用 AST 中的递归类型
     struct Symbol *next;
 } Symbol;
 

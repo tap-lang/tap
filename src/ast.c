@@ -34,7 +34,9 @@ static const char *literal_type_str(enum LiteralType t) {
 
 static void print_var_type(const VarTypeNode *type) {
     if (type->is_array) {
-        printf("array[%s, %" PRIu64 "]", literal_type_str(type->type), type->array_length);
+        printf("array[");
+        print_var_type(type->element_type);
+        printf(", %" PRIu64 "]", type->array_length);
     } else {
         printf("%s", literal_type_str(type->type));
     }
@@ -513,14 +515,16 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->type = type;
     var_type->is_array = 0;
     var_type->array_length = 0;
+    var_type->element_type = NULL;
     return var_type;
 }
 
-// 创建变量声明节点
-VarTypeNode *create_array_type(enum LiteralType element_type, uint64_t length) {
-    VarTypeNode *type = create_var_type(element_type);
+// 创建可递归嵌套的数组类型节点。
+VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length) {
+    VarTypeNode *type = create_var_type(element_type->type);
     type->is_array = 1;
     type->array_length = length;
+    type->element_type = element_type;
     return type;
 }
 
@@ -810,7 +814,9 @@ void free_ast(ASTNode *node) {
             break;
         }
         case NODE_VAR_TYPE: {
-            // VarTypeNode不需要释放额外内存
+            // 数组类型递归拥有它的元素类型。
+            VarTypeNode *var_type = (VarTypeNode *)node;
+            free_ast((ASTNode *)var_type->element_type);
             break;
         }
         case NODE_VAR_DECL: {

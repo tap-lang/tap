@@ -189,10 +189,6 @@ static VarTypeNode *parse_type(Parser *parser) {
         consume(parser, TOKEN_ARRAY);
         consume(parser, TOKEN_LBRACKET);
         VarTypeNode *element_type = parse_type(parser);
-        if (element_type->is_array) {
-            free_ast((ASTNode *)element_type);
-            parser_error(parser, "第一版数组暂不支持嵌套数组");
-        }
         consume(parser, TOKEN_COMMA);
         if (parser->current_token->type != TOKEN_I32 ||
             !isdigit((unsigned char)parser->current_token->lexeme[0])) {
@@ -206,9 +202,8 @@ static VarTypeNode *parse_type(Parser *parser) {
         }
         consume(parser, TOKEN_I32);
         consume(parser, TOKEN_RBRACKET);
-        VarTypeNode *array_type = create_array_type(element_type->type, length);
-        free_ast((ASTNode *)element_type);
-        return array_type;
+        // 数组节点保留完整元素类型，从而支持多维数组。
+        return create_array_type(element_type, length);
     }
 
     enum LiteralType type;

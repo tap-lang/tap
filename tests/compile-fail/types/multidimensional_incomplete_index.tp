@@ -1,0 +1,13 @@
+fn main(): i32 {
+    // 只索引一维的结果仍是子数组，不能当作标量打印。
+    let matrix: array[array[i32, 2], 2] = [[1, 2], [3, 4]];
+    print(matrix[0]);
+    return 0;
+}
+
+/** -- test
+- .stderr
+错误：多维数组必须索引到标量元素
+- .exit
+1
+-- */

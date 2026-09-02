@@ -98,6 +98,15 @@ static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type)
     }
 }
 
+// Recursively lower scalar and multidimensional array types to LLVM types.
+static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type) {
+    if (type->is_array) {
+        return LLVMArrayType2(
+            get_llvm_var_type(context, type->element_type), type->array_length);
+    }
+    return get_llvm_type(context, type->type);
+}
+
 static Symbol *find_symbol(CodeGenContext *context, const char *name) {
     for (Symbol *symbol = context->symbols; symbol; symbol = symbol->next) {
         if (strcmp(symbol->name, name) == 0) return symbol;
@@ -115,18 +124,16 @@ static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRe
     symbol->name = strdup(name);
     symbol->value = value;
     symbol->type = type;
-    symbol->is_array = 0;
-    symbol->array_length = 0;
+    symbol->array_type = NULL;
     symbol->next = context->symbols;
     context->symbols = symbol;
 }
 
 static void insert_array_symbol(CodeGenContext *context, const char *name,
-                                LLVMValueRef value, enum LiteralType element_type,
-                                uint64_t length) {
-    insert_symbol(context, name, value, element_type);
-    context->symbols->is_array = 1;
-    context->symbols->array_length = length;
+                                LLVMValueRef value, const VarTypeNode *array_type) {
+    insert_symbol(context, name, value, array_type->type);
+    // The declaration AST outlives Codegen, so no type copy is required here.
+    context->symbols->array_type = array_type;
 }
 
 static void free_symbols(Symbol *symbols) {
@@ -164,6 +171,36 @@ static enum LiteralType function_param_type(FunctionNode *function, unsigned ind
         : default_integer_type();
 }
 
+// Resolve the recursive type produced by an identifier or a chain of indexes.
+static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *expression) {
+    if (expression && expression->type == NODE_IDENTIFIER) {
+        const char *name = ((IdentifierNode *)expression)->name;
+        Symbol *symbol = find_symbol(context, name);
+        if (!symbol) {
+            fprintf(stderr, "错误：未定义的变量 '%s'\n", name);
+            exit(1);
+        }
+        if (!symbol->array_type) {
+            fprintf(stderr, "错误：变量 '%s' 不是数组\n", name);
+            exit(1);
+        }
+        return symbol->array_type;
+    }
+
+    if (expression && expression->type == NODE_INDEX_EXPRESSION) {
+        IndexExpressionNode *index = (IndexExpressionNode *)expression;
+        const VarTypeNode *container_type = indexed_value_type(context, index->array);
+        if (!container_type->is_array) {
+            fprintf(stderr, "错误：索引目标不是数组\n");
+            exit(1);
+        }
+        return container_type->element_type;
+    }
+
+    fprintf(stderr, "错误：数组索引目标无效\n");
+    exit(1);
+}
+
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression) {
     if (!expression) return default_integer_type();
 
@@ -175,18 +212,12 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             return symbol ? symbol->type : default_integer_type();
         }
         case NODE_INDEX_EXPRESSION: {
-            IndexExpressionNode *index = (IndexExpressionNode *)expression;
-            if (!index->array || index->array->type != NODE_IDENTIFIER) {
-                fprintf(stderr, "错误：第一版数组索引只支持数组变量\n");
+            const VarTypeNode *type = indexed_value_type(context, expression);
+            if (type->is_array) {
+                fprintf(stderr, "错误：多维数组必须索引到标量元素\n");
                 exit(1);
             }
-            Symbol *symbol = find_symbol(
-                context, ((IdentifierNode *)index->array)->name);
-            if (!symbol || !symbol->is_array) {
-                fprintf(stderr, "错误：索引目标不是数组\n");
-                exit(1);
-            }
-            return symbol->type;
+            return type->type;
         }
         case NODE_FUNCTION_CALL: {
             FunctionNode *function = find_function(context, ((FunctionCallNode *)expression)->name);
@@ -262,23 +293,40 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
 }
 
 static LLVMValueRef generate_index_address(
-    CodeGenContext *context, IndexExpressionNode *index_expression, Symbol **symbol_out) {
-    if (!index_expression->array || index_expression->array->type != NODE_IDENTIFIER) {
-        fprintf(stderr, "错误：第一版数组索引只支持数组变量\n");
+    CodeGenContext *context, IndexExpressionNode *index_expression,
+    const VarTypeNode **element_type_out) {
+    LLVMValueRef array_address = NULL;
+    const VarTypeNode *array_type = NULL;
+
+    // The first index starts from array storage; later indexes start from a subarray address.
+    if (index_expression->array &&
+        index_expression->array->type == NODE_IDENTIFIER) {
+        const char *name = ((IdentifierNode *)index_expression->array)->name;
+        Symbol *symbol = find_symbol(context, name);
+        if (!symbol) {
+            fprintf(stderr, "错误：未定义的变量 '%s'\n", name);
+            exit(1);
+        }
+        if (!symbol->array_type) {
+            fprintf(stderr, "错误：变量 '%s' 不是数组\n", name);
+            exit(1);
+        }
+        array_address = symbol->value;
+        array_type = symbol->array_type;
+    } else if (index_expression->array &&
+               index_expression->array->type == NODE_INDEX_EXPRESSION) {
+        array_address = generate_index_address(
+            context, (IndexExpressionNode *)index_expression->array, &array_type);
+        if (!array_type->is_array) {
+            fprintf(stderr, "错误：索引目标不是数组\n");
+            exit(1);
+        }
+    } else {
+        fprintf(stderr, "错误：数组索引目标无效\n");
         exit(1);
     }
 
-    const char *name = ((IdentifierNode *)index_expression->array)->name;
-    Symbol *symbol = find_symbol(context, name);
-    if (!symbol) {
-        fprintf(stderr, "错误：未定义的变量 '%s'\n", name);
-        exit(1);
-    }
-    if (!symbol->is_array) {
-        fprintf(stderr, "错误：变量 '%s' 不是数组\n", name);
-        exit(1);
-    }
-
+    // Every dimension performs its own signed/unsigned bounds check.
     enum LiteralType index_type = expression_type(context, index_expression->index);
     if (!is_integer_type(index_type) || integer_type_bits(index_type) > 64) {
         fprintf(stderr, "错误：数组下标必须是最多 64 位的整数\n");
@@ -290,7 +338,7 @@ static LLVMValueRef generate_index_address(
     LLVMValueRef index = cast_integer(context, raw_index, index_type, check_type);
     LLVMTypeRef index_llvm_type = get_llvm_type(context, check_type);
     LLVMValueRef zero = LLVMConstInt(index_llvm_type, 0, 0);
-    LLVMValueRef length = LLVMConstInt(index_llvm_type, symbol->array_length, 0);
+    LLVMValueRef length = LLVMConstInt(index_llvm_type, array_type->array_length, 0);
     LLVMValueRef lower_ok = is_unsigned_type(index_type)
         ? LLVMConstInt(LLVMInt1TypeInContext(context->context), 1, 0)
         : LLVMBuildICmp(context->builder, LLVMIntSGE, index, zero, "array_index_nonnegative");
@@ -313,7 +361,7 @@ static LLVMValueRef generate_index_address(
         LLVMBuildGlobalStringPtr(context->builder,
             "Array index out of bounds: index=%lld, length=%llu\n", "array_bounds_format"),
         index,
-        LLVMConstInt(LLVMInt64TypeInContext(context->context), symbol->array_length, 0)
+        LLVMConstInt(LLVMInt64TypeInContext(context->context), array_type->array_length, 0)
     };
     LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
                    printf_arguments, 3, "array_bounds_printf");
@@ -324,14 +372,13 @@ static LLVMValueRef generate_index_address(
     LLVMBuildUnreachable(context->builder);
 
     LLVMPositionBuilderAtEnd(context->builder, pass_block);
-    LLVMTypeRef element_type = get_llvm_type(context, symbol->type);
-    LLVMTypeRef array_type = LLVMArrayType2(element_type, symbol->array_length);
+    LLVMTypeRef llvm_array_type = get_llvm_var_type(context, array_type);
     LLVMValueRef indexes[2] = {
         LLVMConstInt(LLVMInt64TypeInContext(context->context), 0, 0),
         index
     };
-    if (symbol_out) *symbol_out = symbol;
-    return LLVMBuildGEP2(context->builder, array_type, symbol->value,
+    if (element_type_out) *element_type_out = array_type->element_type;
+    return LLVMBuildGEP2(context->builder, llvm_array_type, array_address,
                          indexes, 2, "array_element_ptr");
 }
 
@@ -430,7 +477,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 fprintf(stderr, "错误：未定义的变量 '%s'\n", identifier->name);
                 exit(1);
             }
-            if (symbol->is_array) {
+            if (symbol->array_type) {
                 fprintf(stderr, "错误：数组 '%s' 必须通过下标访问\n", identifier->name);
                 exit(1);
             }
@@ -438,10 +485,14 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                                   symbol->value, "loaded_var");
         }
         case NODE_INDEX_EXPRESSION: {
-            Symbol *symbol = NULL;
+            const VarTypeNode *element_type = NULL;
             LLVMValueRef address = generate_index_address(
-                context, (IndexExpressionNode *)expression, &symbol);
-            return LLVMBuildLoad2(context->builder, get_llvm_type(context, symbol->type),
+                context, (IndexExpressionNode *)expression, &element_type);
+            if (element_type->is_array) {
+                fprintf(stderr, "错误：多维数组必须索引到标量元素\n");
+                exit(1);
+            }
+            return LLVMBuildLoad2(context->builder, get_llvm_var_type(context, element_type),
                                   address, "array_element");
         }
         case NODE_ARRAY_LITERAL:
@@ -520,7 +571,7 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
         fprintf(stderr, "错误：未定义的变量 '%s'\n", assignment->name);
         exit(1);
     }
-    if (symbol->is_array) {
+    if (symbol->array_type) {
         fprintf(stderr, "错误：第一版数组暂不支持整个数组赋值\n");
         exit(1);
     }
@@ -533,17 +584,71 @@ static int array_element_type_compatible(
     return expected == actual || (is_integer_type(expected) && is_integer_type(actual));
 }
 
+// Recursively validate nested literals and store every scalar leaf.
+static void generate_array_initializer(
+    CodeGenContext *context, LLVMValueRef storage,
+    const VarTypeNode *array_type, ArrayLiteralNode *literal) {
+    if (literal->count != array_type->array_length) {
+        fprintf(stderr,
+            "错误：数组初始化元素数量为 %llu，但声明长度为 %llu\n",
+            (unsigned long long)literal->count,
+            (unsigned long long)array_type->array_length);
+        exit(1);
+    }
+
+    LLVMTypeRef llvm_array_type = get_llvm_var_type(context, array_type);
+    const VarTypeNode *element_type = array_type->element_type;
+    ASTNode *element = literal->elements;
+    for (uint64_t index = 0; index < literal->count; index++, element = element->next) {
+        LLVMValueRef indexes[2] = {
+            LLVMConstInt(LLVMInt64TypeInContext(context->context), 0, 0),
+            LLVMConstInt(LLVMInt64TypeInContext(context->context), index, 0)
+        };
+        LLVMValueRef element_address = LLVMBuildGEP2(
+            context->builder, llvm_array_type, storage, indexes, 2,
+            "array_init_element_ptr");
+
+        if (element_type->is_array) {
+            if (!element || element->type != NODE_ARRAY_LITERAL) {
+                fprintf(stderr, "错误：多维数组初始化需要嵌套数组字面量\n");
+                exit(1);
+            }
+            generate_array_initializer(
+                context, element_address, element_type, (ArrayLiteralNode *)element);
+            continue;
+        }
+
+        if (!element || element->type == NODE_ARRAY_LITERAL) {
+            fprintf(stderr, "错误：数组元素类型不匹配\n");
+            exit(1);
+        }
+        enum LiteralType actual_type = expression_type(context, element);
+        if (!array_element_type_compatible(element_type->type, actual_type)) {
+            fprintf(stderr, "错误：数组元素类型不匹配\n");
+            exit(1);
+        }
+        LLVMValueRef value = generate_expression_as(
+            context, element, element_type->type);
+        LLVMBuildStore(context->builder, value, element_address);
+    }
+}
+
 static void generate_index_assignment(
     CodeGenContext *context, IndexAssignmentNode *assignment) {
-    Symbol *symbol = NULL;
-    LLVMValueRef address = generate_index_address(context, assignment->target, &symbol);
+    const VarTypeNode *element_type = NULL;
+    LLVMValueRef address = generate_index_address(
+        context, assignment->target, &element_type);
+    if (element_type->is_array) {
+        fprintf(stderr, "错误：暂不支持整个子数组赋值\n");
+        exit(1);
+    }
     enum LiteralType actual_type = expression_type(context, assignment->expression);
-    if (!array_element_type_compatible(symbol->type, actual_type)) {
+    if (!array_element_type_compatible(element_type->type, actual_type)) {
         fprintf(stderr, "错误：数组元素赋值类型不匹配\n");
         exit(1);
     }
     LLVMValueRef value = generate_expression_as(
-        context, assignment->expression, symbol->type);
+        context, assignment->expression, element_type->type);
     LLVMBuildStore(context->builder, value, address);
 }
 
@@ -708,41 +813,15 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     }
                     ArrayLiteralNode *literal =
                         (ArrayLiteralNode *)declaration->expression;
-                    if (literal->count != declaration->type->array_length) {
-                        fprintf(stderr,
-                            "错误：数组初始化元素数量为 %llu，但声明长度为 %llu\n",
-                            (unsigned long long)literal->count,
-                            (unsigned long long)declaration->type->array_length);
-                        exit(1);
-                    }
-                    LLVMTypeRef element_type =
-                        get_llvm_type(context, declaration->type->type);
-                    LLVMTypeRef array_type = LLVMArrayType2(
-                        element_type, declaration->type->array_length);
+                    LLVMTypeRef array_type = get_llvm_var_type(
+                        context, declaration->type);
                     LLVMValueRef storage = LLVMBuildAlloca(
                         context->builder, array_type, declaration->name);
-                    insert_array_symbol(context, declaration->name, storage,
-                                        declaration->type->type,
-                                        declaration->type->array_length);
-                    ASTNode *element = literal->elements;
-                    for (uint64_t i = 0; i < literal->count; i++, element = element->next) {
-                        enum LiteralType actual_type = expression_type(context, element);
-                        if (!array_element_type_compatible(
-                                declaration->type->type, actual_type)) {
-                            fprintf(stderr, "错误：数组初始化元素类型不匹配\n");
-                            exit(1);
-                        }
-                        LLVMValueRef indexes[2] = {
-                            LLVMConstInt(LLVMInt64TypeInContext(context->context), 0, 0),
-                            LLVMConstInt(LLVMInt64TypeInContext(context->context), i, 0)
-                        };
-                        LLVMValueRef address = LLVMBuildGEP2(
-                            context->builder, array_type, storage, indexes, 2,
-                            "array_init_element_ptr");
-                        LLVMValueRef value = generate_expression_as(
-                            context, element, declaration->type->type);
-                        LLVMBuildStore(context->builder, value, address);
-                    }
+                    insert_array_symbol(
+                        context, declaration->name, storage, declaration->type);
+                    // Initialization follows the same recursive shape as the declared type.
+                    generate_array_initializer(
+                        context, storage, declaration->type, literal);
                     break;
                 }
                 if (declaration->expression &&

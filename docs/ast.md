@@ -57,7 +57,7 @@ typedef struct ASTNode {
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
 | `NODE_CONTINUE_STATEMENT` | `ASTNode` | 跳到当前循环的更新块 |
-| `NODE_VAR_TYPE` | `VarTypeNode` | 类型注解，目前复用 `LiteralType` 表示 |
+| `NODE_VAR_TYPE` | `VarTypeNode` | 标量类型，或通过 `element_type` 递归表示固定长度数组 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或
 Parser 产物。
@@ -93,7 +93,7 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 
 - `VarDeclNode`：变量声明和初始化。
 - `AssignmentNode`：变量赋值，以及 `++`、`--` 展开后的更新。
-- `IndexAssignmentNode`：固定长度数组元素赋值。
+- `IndexAssignmentNode`：固定长度数组的标量元素赋值，支持多维索引链。
 - `ReturnNode`：返回表达式。
 - `PrintNode`：一个或多个打印参数。
 - `IfStatementNode`：`if`、`elseif` 和 `else`。
@@ -119,7 +119,7 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 - 函数调用。
 - 括号表达式。
 - 二元算术与比较表达式。
-- 固定长度数组字面量和数组索引表达式。
+- 可嵌套的固定长度数组字面量和多维数组索引表达式。
 - 一元负号；Parser 将 `-value` 转换成 `0 - value` 的 `BinaryOpNode`。
 
 `BinaryOpType` 定义了以下操作符：

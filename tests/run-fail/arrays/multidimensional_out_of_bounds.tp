@@ -1,0 +1,13 @@
+fn main(): i32 {
+    // 第二维也必须执行独立的边界检查。
+    let matrix: array[array[i32, 2], 2] = [[1, 2], [3, 4]];
+    print(matrix[0][2]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+Array index out of bounds: index=2, length=2
+- .exit
+1
+-- */

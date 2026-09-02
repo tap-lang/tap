@@ -92,11 +92,12 @@ typedef struct {
 } ImportNode;
 
 // 变量类型节点
-typedef struct {
+typedef struct VarTypeNode {
     ASTNode base;
-    enum LiteralType type;  // 使用现有的LiteralType枚举表示类型
+    enum LiteralType type;  // 标量类型，数组节点中保留最终元素类型
     int is_array;
     uint64_t array_length;
+    struct VarTypeNode *element_type; // 数组拥有的递归元素类型
 } VarTypeNode;
 
 // 函数节点
@@ -203,7 +204,8 @@ ImportNode *create_import(
 FunctionNode *create_function(char *name);
 IdentifierNode *create_identifier(char *name);
 VarTypeNode *create_var_type(enum LiteralType type);
-VarTypeNode *create_array_type(enum LiteralType element_type, uint64_t length);
+// 数组类型接管 element_type 的所有权。
+VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length);
 LiteralNode *create_int_literal(uint64_t value);
 LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);
