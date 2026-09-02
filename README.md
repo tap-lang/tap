@@ -107,17 +107,23 @@ fn main(): i32 {
 min(a: i32, b: i32): i32
 max(a: i32, b: i32): i32
 abs(value: i32): i32
+read_key(): i32
+sleep_ms(milliseconds: i32): i32
+clear_screen(): i32
+random(maximum: i32): i32
 square(value: i32): i32  # import std.math; 后通过 math.square(...) 调用
 ```
 
 Prelude 中的函数名不能在用户源码中重复定义。编译器依次从环境变量
 `4YUE_STD_PATH`、当前目录的 `std`、可执行文件相邻的源码或安装目录查找
 `prelude.tp`。`-lex` 和 `-parse` 只处理指定源文件，不加载 Prelude。
+终端、休眠和随机数接口的行为见 [Runtime 文档](docs/runtime.md)。
 
 ## 开发文档
 
 - [源码结构](docs/src.md)
 - [AST](docs/ast.md)
+- [Runtime](docs/runtime.md)
 - [模块导入](docs/module.md)
 - [测试](docs/test.md)
 

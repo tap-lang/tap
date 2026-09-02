@@ -107,6 +107,7 @@ typedef struct {
     char *filename;        // 函数定义所在文件
     int line;              // 函数名所在行
     int column;            // 函数名所在列
+    int is_extern;         // 外部函数只生成 LLVM 声明
     ASTNode *params;       // 参数列表
     ASTNode *param_types;  // 参数类型列表
     ASTNode *body;         // 函数体语句列表

@@ -20,6 +20,7 @@
 | [`ast.c`](../src/ast.c) / [`ast.h`](../src/ast.h) | AST 节点定义、构造、打印和释放；详见 [AST 文档](ast.md) |
 | [`codegen.c`](../src/codegen.c) / [`codegen.h`](../src/codegen.h) | 遍历 AST、生成 LLVM IR，并将 IR 编译链接为可执行文件 |
 | [`run.c`](../src/run.c) / [`run.h`](../src/run.h) | 本地可执行文件与 `lli` 的运行、退出码和临时产物清理 |
+| [`runtime/src/runtime.c`](../runtime/src/runtime.c) | 终端、休眠和随机数等跨平台 C Runtime 实现 |
 | [`version.c`](../src/version.c) / [`version.h`](../src/version.h) | 版本信息实现和生成结果 |
 
 ## 模块依赖

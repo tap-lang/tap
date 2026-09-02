@@ -18,6 +18,19 @@ option(BUILD_TESTS "Build tests" ON)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
+# Build both Runtime forms: native executables use the archive and lli loads the shared library.
+add_library(4yue_runtime STATIC runtime/src/runtime.c)
+target_include_directories(4yue_runtime PUBLIC runtime/include)
+set_target_properties(4yue_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_library(4yue_runtime_shared SHARED runtime/src/runtime.c)
+target_include_directories(4yue_runtime_shared PUBLIC runtime/include)
+target_compile_definitions(4yue_runtime_shared PRIVATE FOUR_YUE_RUNTIME_SHARED=1)
+set_target_properties(4yue_runtime_shared PROPERTIES
+    OUTPUT_NAME 4yue_runtime
+    ARCHIVE_OUTPUT_NAME 4yue_runtime_shared
+)
+
 # 设置C++标准
 # set(CMAKE_CXX_STANDARD 17)
 # set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +50,7 @@ add_executable(4yue
     src/version.c
 )
 set_target_properties(4yue PROPERTIES LINKER_LANGUAGE C)
+add_dependencies(4yue 4yue_runtime 4yue_runtime_shared)
 
 # 查找LLVM 限制版本大于21
 find_package(LLVM REQUIRED CONFIG)
@@ -120,4 +134,10 @@ endif()
 
 # 安装目标
 install(TARGETS 4yue DESTINATION bin)
+install(TARGETS 4yue_runtime ARCHIVE DESTINATION lib)
+install(TARGETS 4yue_runtime_shared
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+install(DIRECTORY runtime/include/ DESTINATION include/4yue)
 install(DIRECTORY std/ DESTINATION share/4yue/std FILES_MATCHING PATTERN "*.tp")

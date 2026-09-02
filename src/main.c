@@ -96,6 +96,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Runtime libraries are resolved once so native linking and lli use the same ABI.
+    configure_runtime(argv[0]);
+
     if (debug) {
         printf("调试信息:\n");
     }

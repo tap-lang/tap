@@ -41,7 +41,7 @@ typedef struct ASTNode {
 |---|---|---|
 | `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
 | `NODE_IMPORT` | `ImportNode` | 模块名、名称空间别名及导入声明的源文件位置 |
-| `NODE_FUNCTION` | `FunctionNode` | 函数名、参数、参数类型、函数体和返回类型 |
+| `NODE_FUNCTION` | `FunctionNode` | 函数名、参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明 |
 | `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |

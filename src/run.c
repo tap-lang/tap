@@ -24,12 +24,112 @@ extern char **environ;
 
 extern int debug;
 
+// Runtime paths are configured once by main and reused by all output modes.
+static char runtime_static_path[RUN_PATH_MAX];
+static char runtime_shared_path[RUN_PATH_MAX];
+
 typedef struct {
     char directory[RUN_PATH_MAX];
     char ir_file[RUN_PATH_MAX];
     char object_file[RUN_PATH_MAX];
     char executable_file[RUN_PATH_MAX];
 } TempWorkspace;
+
+// Runtime lookup only needs regular readable library files.
+static int runtime_file_exists(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return 0;
+    fclose(file);
+    return 1;
+}
+
+// Build one candidate path and keep it only when the library exists.
+static int find_runtime_file(
+    char *output, size_t output_size, const char *directory, const char *filename) {
+    int length = snprintf(output, output_size, "%s/%s", directory, filename);
+    if (length < 0 || (size_t)length >= output_size || !runtime_file_exists(output)) {
+        output[0] = '\0';
+        return 0;
+    }
+    return 1;
+}
+
+// Resolve the directory of argv[0] for build-tree and installed layouts.
+static void compiler_directory(
+    const char *compiler_path, char *directory, size_t directory_size) {
+    char resolved[RUN_PATH_MAX];
+    const char *path = compiler_path;
+#ifdef _WIN32
+    if (_fullpath(resolved, compiler_path, sizeof(resolved))) path = resolved;
+#else
+    if (realpath(compiler_path, resolved)) path = resolved;
+#endif
+
+    const char *separator = strrchr(path, '/');
+#ifdef _WIN32
+    const char *backslash = strrchr(path, '\\');
+    if (!separator || (backslash && backslash > separator)) separator = backslash;
+#endif
+    if (!separator) {
+        snprintf(directory, directory_size, ".");
+        return;
+    }
+
+    size_t length = (size_t)(separator - path);
+    if (length >= directory_size) length = directory_size - 1;
+    memcpy(directory, path, length);
+    directory[length] = '\0';
+}
+
+// Cache both Runtime forms so later compile operations avoid repeated filesystem scans.
+void configure_runtime(const char *compiler_path) {
+    runtime_static_path[0] = '\0';
+    runtime_shared_path[0] = '\0';
+
+    char compiler_dir[RUN_PATH_MAX];
+    compiler_directory(compiler_path, compiler_dir, sizeof(compiler_dir));
+    const char *configured_dir = getenv("4YUE_RUNTIME_PATH");
+    const char *directories[3] = {
+        configured_dir && *configured_dir ? configured_dir : compiler_dir,
+        compiler_dir,
+        NULL
+    };
+    char installed_dir[RUN_PATH_MAX];
+    snprintf(installed_dir, sizeof(installed_dir), "%s/../lib", compiler_dir);
+    directories[2] = installed_dir;
+
+#ifdef _WIN32
+    const char *static_names[] = {"lib4yue_runtime.a", "4yue_runtime.lib", NULL};
+    const char *shared_names[] = {"4yue_runtime.dll", "lib4yue_runtime.dll", NULL};
+#elif defined(__APPLE__)
+    const char *static_names[] = {"lib4yue_runtime.a", NULL};
+    const char *shared_names[] = {"lib4yue_runtime.dylib", NULL};
+#else
+    const char *static_names[] = {"lib4yue_runtime.a", NULL};
+    const char *shared_names[] = {"lib4yue_runtime.so", NULL};
+#endif
+
+    // Search configured, development, and installed layouts in priority order.
+    for (size_t directory_index = 0; directory_index < 3; directory_index++) {
+        const char *directory = directories[directory_index];
+        if (!runtime_static_path[0]) {
+            for (size_t name_index = 0; static_names[name_index]; name_index++) {
+                if (find_runtime_file(runtime_static_path, sizeof(runtime_static_path),
+                                      directory, static_names[name_index])) {
+                    break;
+                }
+            }
+        }
+        if (!runtime_shared_path[0]) {
+            for (size_t name_index = 0; shared_names[name_index]; name_index++) {
+                if (find_runtime_file(runtime_shared_path, sizeof(runtime_shared_path),
+                                      directory, shared_names[name_index])) {
+                    break;
+                }
+            }
+        }
+    }
+}
 
 static int build_temp_paths(TempWorkspace *workspace, const char *separator) {
     int ir_length = snprintf(workspace->ir_file, sizeof(workspace->ir_file),
@@ -164,7 +264,12 @@ static int link_object_file(const char *object_file, const char *exe_file) {
 #else
     const char *linker = "cc";
 #endif
-    char *const argv[] = {(char *)linker, (char *)object_file,
+    if (!runtime_static_path[0]) {
+        fprintf(stderr,
+            "错误: 找不到 4yue Runtime 静态库；请设置 4YUE_RUNTIME_PATH\n");
+        return 1;
+    }
+    char *const argv[] = {(char *)linker, (char *)object_file, runtime_static_path,
                           "-o", (char *)exe_file, NULL};
     int result = run_process(argv);
     if (result != 0) {
@@ -253,8 +358,15 @@ int run_with_lli(CodeGenContext *context) {
     if (result != 0) {
         fprintf(stderr, "写入临时IR文件失败\n");
         result = 1;
+    } else if (!runtime_shared_path[0]) {
+        fprintf(stderr,
+            "错误: 找不到 4yue Runtime 共享库；请设置 4YUE_RUNTIME_PATH\n");
+        result = 1;
     } else {
-        char *const argv[] = {"lli", workspace.ir_file, NULL};
+        // lli exposes symbols from the Runtime shared library to extern declarations.
+        char load_option[RUN_PATH_MAX + 8];
+        snprintf(load_option, sizeof(load_option), "--load=%s", runtime_shared_path);
+        char *const argv[] = {"lli", load_option, workspace.ir_file, NULL};
         result = run_process(argv);
         if (debug) printf("程序执行完毕，返回值: %d\n", result);
     }

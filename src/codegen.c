@@ -934,7 +934,9 @@ static void eliminate_unreachable_functions(CodeGenContext *context) {
     LLVMPassBuilderOptionsRef options = LLVMCreatePassBuilderOptions();
     LLVMPassBuilderOptionsSetVerifyEach(options, 1);
 
-    LLVMErrorRef error = LLVMRunPasses(context->module, "globaldce", NULL, options);
+    // Remove unreachable definitions first, then discard their unused extern declarations.
+    LLVMErrorRef error = LLVMRunPasses(
+        context->module, "globaldce,strip-dead-prototypes", NULL, options);
     LLVMDisposePassBuilderOptions(options);
     if (error) {
         char *message = LLVMGetErrorMessage(error);
@@ -985,7 +987,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         LLVMValueRef llvm_function = LLVMAddFunction(
             context->module, function->name, create_function_type(context, function));
         // Executables expose only main; GlobalDCE may remove every unreachable helper.
-        if (strcmp(function->name, "main") != 0) {
+        if (!function->is_extern && strcmp(function->name, "main") != 0) {
             LLVMSetLinkage(llvm_function, LLVMInternalLinkage);
         }
     }
@@ -993,6 +995,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
+        // Runtime functions already have native implementations and need no LLVM body.
+        if (function->is_extern) continue;
         LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, function->name);
 
         free_symbols(context->symbols);

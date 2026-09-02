@@ -281,7 +281,7 @@ void print_ast(const ProgramNode *program) {
             continue;
         }
         FunctionNode *f = (FunctionNode *)fn;
-        printf("  Function: %s", f->name);
+        printf("  %sFunction: %s", f->is_extern ? "Extern " : "", f->name);
         if (f->return_type) {
             printf(" -> ");
             print_var_type(f->return_type);
@@ -359,6 +359,7 @@ FunctionNode *create_function(char *name) {
     function->filename = NULL;
     function->line = 0;
     function->column = 0;
+    function->is_extern = 0;
     function->params = NULL;
     function->param_types = NULL;
     function->body = NULL;

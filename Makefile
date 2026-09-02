@@ -5,6 +5,10 @@
 CC = gcc
 # CXX = clang++
 LIBS = -lLLVM-21 -lm
+RUNTIME_INCLUDE = -Iruntime/include
+RUNTIME_CFLAGS = -Wall -Wextra -g $(RUNTIME_INCLUDE) -fPIC
+RUNTIME_OBJECT = $(BUILD_DIR)/runtime.o
+RUNTIME_STATIC = $(BUILD_DIR)/lib4yue_runtime.a
 
 # 根据操作系统类型设置不同的CFLAGS和LDFLAGS
 ifeq ($(OS),Windows_NT)
@@ -14,6 +18,8 @@ ifeq ($(OS),Windows_NT)
     # CXXFLAGS = $(CFLAGS)
 #     LDFLAGS = -L"C:/Program Files/LLVM/lib"
     LDFLAGS = 
+    RUNTIME_SHARED = $(BUILD_DIR)/4yue_runtime.dll
+    RUNTIME_SHARED_FLAGS = -shared
     # Windows下不使用address sanitizer
 else
     # 非Windows系统
@@ -23,6 +29,8 @@ else
         CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer -I/usr/lib/llvm-21/include
         # CXXFLAGS = $(CFLAGS)
         LDFLAGS = -L/usr/lib/llvm-21/lib -Wl,-rpath,/usr/lib -fsanitize=address
+        RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.so
+        RUNTIME_SHARED_FLAGS = -shared
     else ifeq ($(UNAME_S),Darwin)
         # macOS系统设置
         CC_IS_CLANG := $(findstring clang,$(shell $(CC) --version 2>/dev/null))
@@ -32,11 +40,15 @@ else
         CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS) -I/opt/homebrew/opt/llvm/include
         # CXXFLAGS = $(CFLAGS)
         LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib $(SANITIZER_FLAGS)
+        RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.dylib
+        RUNTIME_SHARED_FLAGS = -dynamiclib
     else
         # 其他系统，使用默认设置
         CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer
         # CXXFLAGS = $(CFLAGS)
         LDFLAGS = -fsanitize=address
+        RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.so
+        RUNTIME_SHARED_FLAGS = -shared
     endif
 endif
 
@@ -75,6 +87,18 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
+# Runtime objects are position independent so the same object can back both library forms.
+$(RUNTIME_OBJECT): runtime/src/runtime.c runtime/include/4yue_runtime.h | $(BUILD_DIR)
+	$(CC) $(RUNTIME_CFLAGS) -c $< -o $@
+
+# The generated native program links this archive only when Runtime symbols are referenced.
+$(RUNTIME_STATIC): $(RUNTIME_OBJECT)
+	$(AR) rcs $@ $<
+
+# lli loads this library to resolve extern Runtime declarations.
+$(RUNTIME_SHARED): $(RUNTIME_OBJECT)
+	$(CC) $(RUNTIME_SHARED_FLAGS) -o $@ $<
+
 -include $(DEPS)
 
 # 编译C++源文件
@@ -91,7 +115,7 @@ $(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/scripts/version.sh
 endif
 
 # 链接目标文件
-$(TARGET): $(OBJECTS)
+$(TARGET): $(OBJECTS) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS) $(LDFLAGS) $(LIBS)
 #	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJECTS) $(LDFLAGS) $(LIBS)
 
@@ -101,7 +125,7 @@ clean:
 	rm -rf output *.ll hello *.exe tests/*.exe *.dSYM
 
 # 运行测试
-test: $(TARGET)
+test: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
 	sh tests/run-tests.sh $(TARGET)
 
 test_hello: $(TARGET)

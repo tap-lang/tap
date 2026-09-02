@@ -1,0 +1,132 @@
+#include "4yue_runtime.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#ifdef _WIN32
+#include <conio.h>
+#include <windows.h>
+#else
+#include <errno.h>
+#include <signal.h>
+#include <sys/select.h>
+#include <termios.h>
+#include <unistd.h>
+#endif
+
+#ifndef _WIN32
+// POSIX terminals stay in raw mode between polls and are restored at process exit.
+static struct termios original_terminal;
+static int terminal_is_raw = 0;
+
+static void restore_terminal(void) {
+    if (terminal_is_raw) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal);
+        terminal_is_raw = 0;
+    }
+}
+
+static void restore_terminal_on_signal(int signal_number) {
+    // Restore terminal state before forwarding termination to the default handler.
+    restore_terminal();
+    signal(signal_number, SIG_DFL);
+    raise(signal_number);
+}
+
+static int configure_terminal(void) {
+    if (terminal_is_raw) return 0;
+    if (!isatty(STDIN_FILENO) ||
+        tcgetattr(STDIN_FILENO, &original_terminal) != 0) {
+        return -1;
+    }
+
+    // Disable canonical input and echo so keys remain available between game frames.
+    struct termios raw = original_terminal;
+    raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) return -1;
+    terminal_is_raw = 1;
+    if (atexit(restore_terminal) != 0) {
+        restore_terminal();
+        return -1;
+    }
+    // Interactive termination must not leave the user's terminal in raw mode.
+    if (signal(SIGINT, restore_terminal_on_signal) == SIG_ERR ||
+        signal(SIGTERM, restore_terminal_on_signal) == SIG_ERR) {
+        restore_terminal();
+        return -1;
+    }
+    return 0;
+}
+#endif
+
+int32_t yue_read_key(void) {
+#ifdef _WIN32
+    // Windows provides a non-blocking console probe through conio.
+    return _kbhit() ? (int32_t)_getch() : -1;
+#else
+    // Non-interactive stdin has no terminal state and therefore no key event.
+    if (configure_terminal() != 0) return -1;
+
+    fd_set input;
+    FD_ZERO(&input);
+    FD_SET(STDIN_FILENO, &input);
+    struct timeval timeout = {0, 0};
+    int ready = select(STDIN_FILENO + 1, &input, NULL, NULL, &timeout);
+    unsigned char key = 0;
+    ssize_t bytes_read = ready > 0 ? read(STDIN_FILENO, &key, 1) : 0;
+    return bytes_read == 1 ? (int32_t)key : -1;
+#endif
+}
+
+int32_t yue_sleep_ms(int32_t milliseconds) {
+    if (milliseconds < 0) return -1;
+
+#ifdef _WIN32
+    // Sleep accepts milliseconds directly on Windows.
+    Sleep((DWORD)milliseconds);
+#else
+    // Retry nanosleep when a signal interrupts the requested delay.
+    struct timespec remaining = {
+        .tv_sec = milliseconds / 1000,
+        .tv_nsec = (long)(milliseconds % 1000) * 1000000L
+    };
+    while (nanosleep(&remaining, &remaining) != 0) {
+        if (errno != EINTR) return -1;
+    }
+#endif
+    return 0;
+}
+
+int32_t yue_clear_screen(void) {
+#ifdef _WIN32
+    // Enable ANSI escape processing for modern Windows terminals when possible.
+    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (output != INVALID_HANDLE_VALUE && GetConsoleMode(output, &mode)) {
+        SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+#endif
+
+    // ANSI clear-screen and cursor-home sequences also work on POSIX terminals.
+    if (fputs("\x1b[2J\x1b[H", stdout) == EOF) return -1;
+    return fflush(stdout) == 0 ? 0 : -1;
+}
+
+int32_t yue_random(int32_t maximum) {
+    static uint32_t state = 0;
+    if (maximum <= 0) return 0;
+
+    // Seed once, then use xorshift32 to avoid platform-specific libc random symbols.
+    if (state == 0) {
+        state = (uint32_t)time(NULL) ^ (uint32_t)clock() ^ UINT32_C(0x9e3779b9);
+        if (state == 0) state = UINT32_C(0x6d2b79f5);
+    }
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return (int32_t)(state % (uint32_t)maximum);
+}

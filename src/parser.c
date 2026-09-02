@@ -380,8 +380,8 @@ static ASTNode *parse_if_statement(Parser *parser) {
     return (ASTNode *)if_node;
 }
 
-// 解析函数定义
-static FunctionNode *parse_function(Parser *parser) {
+// 解析普通函数定义或无函数体的外部函数声明。
+static FunctionNode *parse_function(Parser *parser, int is_extern) {
     
     if (debug) printf("  - 解析函数定义\n");
 
@@ -402,6 +402,7 @@ static FunctionNode *parse_function(Parser *parser) {
     function->filename = strdup(parser->lexer->filename);
     function->line = function_line;
     function->column = function_column;
+    function->is_extern = is_extern;
     free(function_name);
     
     // 解析参数列表
@@ -466,6 +467,12 @@ static FunctionNode *parse_function(Parser *parser) {
         }
         
         function->return_type = parse_type(parser);
+    }
+
+    // External functions end after their signature and are implemented by the C Runtime.
+    if (is_extern) {
+        consume(parser, TOKEN_SEMICOLON);
+        return function;
     }
     
     // 解析函数体
@@ -889,8 +896,15 @@ ProgramNode *parse_program(Parser *parser) {
     while (parser->current_token->type != TOKEN_EOF) {
         if (parser->current_token->type == TOKEN_IMPORT) {
             add_import(program, parse_import(parser));
+        } else if (parser->current_token->type == TOKEN_EXTERN) {
+            // Only functions are supported by the first external ABI version.
+            consume(parser, TOKEN_EXTERN);
+            if (parser->current_token->type != TOKEN_FN) {
+                parser_error(parser, "extern 后必须是函数声明");
+            }
+            add_function(program, parse_function(parser, 1));
         } else if (parser->current_token->type == TOKEN_FN) {
-            FunctionNode *function = parse_function(parser);
+            FunctionNode *function = parse_function(parser, 0);
             add_function(program, function);
         } else {
             parser_error(parser, "期望模块导入或函数定义");

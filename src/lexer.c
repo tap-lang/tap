@@ -214,6 +214,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         break;
     case 6:
         if (memcmp(text, "elseif", 6) == 0) return TOKEN_ELSEIF;
+        if (memcmp(text, "extern", 6) == 0) return TOKEN_EXTERN;
         if (memcmp(text, "import", 6) == 0) return TOKEN_IMPORT;
         if (memcmp(text, "return", 6) == 0) return TOKEN_RETURN;
         if (memcmp(text, "string", 6) == 0) return TOKEN_STRING;
