@@ -1,0 +1,198 @@
+fn main(): i32 {
+    // The board keeps a one-cell border, so playable coordinates start at one.
+    let width: i32 = 22;
+    let height: i32 = 12;
+    let maximum_length: i32 = 40;
+
+    // Parallel fixed arrays store snake coordinates because arrays are not function parameters yet.
+    let snake_x: array[i32, 40] = [
+        10, 9, 8, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ];
+    let snake_y: array[i32, 40] = [
+        6, 6, 6, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ];
+
+    let length: i32 = 3;
+    let direction_x: i32 = 1;
+    let direction_y: i32 = 0;
+    let score: i32 = 0;
+    let game_over: i32 = 0;
+
+    // Place the first food away from the initial snake body.
+    let food_x: i32 = 1;
+    let food_y: i32 = 1;
+    let food_valid: i32 = 0;
+    for (; food_valid == 0;) {
+        food_x = random(width - 2) + 1;
+        food_y = random(height - 2) + 1;
+        food_valid = 1;
+        for (let food_check: i32 = 0; food_check < length; food_check++) {
+            if (food_x == snake_x[food_check]) {
+                if (food_y == snake_y[food_check]) {
+                    food_valid = 0;
+                }
+            }
+        }
+    }
+
+    for (; game_over == 0;) {
+        // Draw a complete frame using ASCII so it works on every supported terminal.
+        clear_screen();
+        print("4yue Snake | WASD: move | q: quit | score: %d\n", score);
+        for (let border_x: i32 = 0; border_x < width; border_x++) {
+            print("#");
+        }
+        print("\n");
+
+        for (let board_y: i32 = 1; board_y < (height - 1); board_y++) {
+            print("#");
+            for (let board_x: i32 = 1; board_x < (width - 1); board_x++) {
+                let drawn: i32 = 0;
+                if (board_x == snake_x[0]) {
+                    if (board_y == snake_y[0]) {
+                        print("@");
+                        drawn = 1;
+                    }
+                }
+
+                if (drawn == 0) {
+                    for (let body_index: i32 = 1;
+                         body_index < length; body_index++) {
+                        if (board_x == snake_x[body_index]) {
+                            if (board_y == snake_y[body_index]) {
+                                print("o");
+                                drawn = 1;
+                            }
+                        }
+                    }
+                }
+
+                if (drawn == 0) {
+                    if (board_x == food_x) {
+                        if (board_y == food_y) {
+                            print("*");
+                            drawn = 1;
+                        }
+                    }
+                }
+                if (drawn == 0) {
+                    print(" ");
+                }
+            }
+            print("#\n");
+        }
+
+        for (let bottom_x: i32 = 0; bottom_x < width; bottom_x++) {
+            print("#");
+        }
+        print("\n");
+
+        // read_key is non-blocking; ASCII codes below correspond to WASD and q.
+        let key: i32 = read_key();
+        if (key == 113) {
+            break;
+        } elseif (key == 119) {
+            if (direction_y != 1) {
+                direction_x = 0;
+                direction_y = -1;
+            }
+        } elseif (key == 115) {
+            if (direction_y != -1) {
+                direction_x = 0;
+                direction_y = 1;
+            }
+        } elseif (key == 97) {
+            if (direction_x != 1) {
+                direction_x = -1;
+                direction_y = 0;
+            }
+        } elseif (key == 100) {
+            if (direction_x != -1) {
+                direction_x = 1;
+                direction_y = 0;
+            }
+        }
+
+        sleep_ms(120);
+        let next_x: i32 = snake_x[0] + direction_x;
+        let next_y: i32 = snake_y[0] + direction_y;
+
+        // Stop before writing an invalid head position into the coordinate arrays.
+        if (next_x <= 0) {
+            game_over = 1;
+        }
+        if (next_x >= (width - 1)) {
+            game_over = 1;
+        }
+        if (next_y <= 0) {
+            game_over = 1;
+        }
+        if (next_y >= (height - 1)) {
+            game_over = 1;
+        }
+        if (game_over != 0) {
+            break;
+        }
+
+        // Detect self-collision against the current body before shifting it.
+        for (let collision_index: i32 = 1;
+             collision_index < length; collision_index++) {
+            if (next_x == snake_x[collision_index]) {
+                if (next_y == snake_y[collision_index]) {
+                    game_over = 1;
+                    break;
+                }
+            }
+        }
+        if (game_over != 0) {
+            break;
+        }
+
+        // Growing before the shift preserves the previous tail in the new final slot.
+        let ate_food: i32 = 0;
+        if (next_x == food_x) {
+            if (next_y == food_y) {
+                ate_food = 1;
+                score = score + 10;
+                if (length < maximum_length) {
+                    length = length + 1;
+                }
+            }
+        }
+
+        for (let move_index: i32 = length - 1; move_index > 0; move_index--) {
+            snake_x[move_index] = snake_x[move_index - 1];
+            snake_y[move_index] = snake_y[move_index - 1];
+        }
+        snake_x[0] = next_x;
+        snake_y[0] = next_y;
+
+        // Generate another unoccupied food position after eating.
+        if (ate_food != 0) {
+            food_valid = 0;
+            for (; food_valid == 0;) {
+                food_x = random(width - 2) + 1;
+                food_y = random(height - 2) + 1;
+                food_valid = 1;
+                for (let respawn_check: i32 = 0;
+                     respawn_check < length; respawn_check++) {
+                    if (food_x == snake_x[respawn_check]) {
+                        if (food_y == snake_y[respawn_check]) {
+                            food_valid = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The final message remains visible after normal collision or q termination.
+    print("Game over. Final score: %d\n", score);
+    return 0;
+}
