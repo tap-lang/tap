@@ -850,6 +850,21 @@ static LLVMValueRef zero_value(CodeGenContext *context, enum LiteralType type) {
     return LLVMConstNull(llvm_type);
 }
 
+// Remove internal functions that cannot be reached from externally visible entry points.
+static void eliminate_unreachable_functions(CodeGenContext *context) {
+    LLVMPassBuilderOptionsRef options = LLVMCreatePassBuilderOptions();
+    LLVMPassBuilderOptionsSetVerifyEach(options, 1);
+
+    LLVMErrorRef error = LLVMRunPasses(context->module, "globaldce", NULL, options);
+    LLVMDisposePassBuilderOptions(options);
+    if (error) {
+        char *message = LLVMGetErrorMessage(error);
+        fprintf(stderr, "LLVM GlobalDCE 执行失败: %s\n", message);
+        LLVMDisposeErrorMessage(message);
+        exit(1);
+    }
+}
+
 CodeGenContext *create_codegen_context(const char *module_name) {
     CodeGenContext *context = calloc(1, sizeof(CodeGenContext));
     if (!context) {
@@ -888,8 +903,12 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
-        LLVMAddFunction(context->module, function->name,
-                        create_function_type(context, function));
+        LLVMValueRef llvm_function = LLVMAddFunction(
+            context->module, function->name, create_function_type(context, function));
+        // Executables expose only main; GlobalDCE may remove every unreachable helper.
+        if (strcmp(function->name, "main") != 0) {
+            LLVMSetLinkage(llvm_function, LLVMInternalLinkage);
+        }
     }
 
     for (ASTNode *node = program->functions; node; node = node->next) {
@@ -932,6 +951,9 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         LLVMDisposeMessage(error);
         exit(1);
     }
+
+    // Run DCE only after full generation and validation so unreachable code still reports errors.
+    eliminate_unreachable_functions(context);
 }
 
 static int initialize_execution_engine(CodeGenContext *context) {

@@ -1,5 +1,5 @@
 .vscode/
-
+.cache/
 src/version.h
 
 build/

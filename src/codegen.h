@@ -14,6 +14,7 @@ typedef struct Symbol Symbol;
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
 #include <llvm-c/IRReader.h>      
+#include <llvm-c/Transforms/PassBuilder.h>
 
 // 符号表条目
 typedef struct Symbol {

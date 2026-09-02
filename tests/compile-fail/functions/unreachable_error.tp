@@ -1,0 +1,15 @@
+// 未调用函数仍需要完成语义检查，不能被 DCE 提前隐藏错误。
+fn unused(): i32 {
+    return missing;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+错误：未定义的变量 'missing'
+- .exit
+1
+-- */

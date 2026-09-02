@@ -41,6 +41,10 @@ main
 - Codegen 和 Run 消费 AST/LLVM 结果，不参与语法解析。
 - `main.c` 负责组装各阶段，并在流程结束后释放资源。
 
+Codegen 会先生成并验证全部函数，再将非 `main` 函数视为内部符号运行
+LLVM GlobalDCE。这样既保留了未调用函数的编译错误检查，也不会把不可达的
+Prelude 和模块函数写入最终 IR。
+
 ## 模块加载
 
 Parser 将 `import a.b;` 保存为 `ImportNode`，Module Loader 再把模块名转换为

@@ -69,6 +69,7 @@ else()
         Analysis
         BitWriter
         IRReader
+        Passes
         native
     )
 endif()
