@@ -36,7 +36,7 @@ static void print_var_type(const VarTypeNode *type) {
     if (type->is_array) {
         printf("[");
         print_var_type(type->element_type);
-        printf(", %" PRIu64 "]", type->array_length);
+        printf("; %" PRIu64 "]", type->array_length);
     } else {
         printf("%s", literal_type_str(type->type));
     }
@@ -116,6 +116,10 @@ static void dump_expr(ASTNode *n, int depth) {
         printf("ArrayLiteral[\n");
         for (ASTNode *element = array->elements; element; element = element->next) {
             dump_expr(element, depth + 2);
+        }
+        if (array->is_repeat) {
+            print_indent(depth + 2);
+            printf("repeat: %" PRIu64 "\n", array->repeat_count);
         }
         print_indent(depth);
         printf("]\n");
@@ -576,6 +580,11 @@ void add_array_element(ArrayLiteralNode *array, ASTNode *element) {
         current->next = element;
     }
     array->count++;
+}
+
+void set_array_repeat(ArrayLiteralNode *array, uint64_t repeat_count) {
+    array->is_repeat = 1;
+    array->repeat_count = repeat_count;
 }
 
 IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index) {

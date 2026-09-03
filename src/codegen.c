@@ -608,10 +608,13 @@ static int array_element_type_compatible(
 static void generate_array_initializer(
     CodeGenContext *context, LLVMValueRef storage,
     const VarTypeNode *array_type, ArrayLiteralNode *literal) {
-    if (literal->count != array_type->array_length) {
+    uint64_t initializer_count = literal->is_repeat
+        ? literal->repeat_count
+        : literal->count;
+    if (initializer_count != array_type->array_length) {
         fprintf(stderr,
             "错误：数组初始化元素数量为 %llu，但声明长度为 %llu\n",
-            (unsigned long long)literal->count,
+            (unsigned long long)initializer_count,
             (unsigned long long)array_type->array_length);
         exit(1);
     }
@@ -619,7 +622,8 @@ static void generate_array_initializer(
     LLVMTypeRef llvm_array_type = get_llvm_var_type(context, array_type);
     const VarTypeNode *element_type = array_type->element_type;
     ASTNode *element = literal->elements;
-    for (uint64_t index = 0; index < literal->count; index++, element = element->next) {
+    for (uint64_t index = 0; index < initializer_count; index++) {
+        ASTNode *current_element = literal->is_repeat ? literal->elements : element;
         LLVMValueRef indexes[2] = {
             LLVMConstInt(LLVMInt64TypeInContext(context->context), 0, 0),
             LLVMConstInt(LLVMInt64TypeInContext(context->context), index, 0)
@@ -629,29 +633,32 @@ static void generate_array_initializer(
             "array_init_element_ptr");
 
         if (element_type->is_array) {
-            if (!element || element->type != NODE_ARRAY_LITERAL) {
+            if (!current_element || current_element->type != NODE_ARRAY_LITERAL) {
                 fprintf(stderr, "错误：多维数组初始化需要嵌套数组字面量\n");
                 exit(1);
             }
             generate_array_initializer(
-                context, element_address, element_type, (ArrayLiteralNode *)element);
+                context, element_address, element_type, (ArrayLiteralNode *)current_element);
+            if (!literal->is_repeat) element = element->next;
             continue;
         }
 
-        if (!element || element->type == NODE_ARRAY_LITERAL) {
+        if (!current_element || current_element->type == NODE_ARRAY_LITERAL) {
             fprintf(stderr, "错误：数组元素类型不匹配\n");
             exit(1);
         }
-        enum LiteralType actual_type = expression_type(context, element);
+        enum LiteralType actual_type = expression_type(context, current_element);
         if (!array_element_type_compatible(element_type->type, actual_type)) {
             fprintf(stderr, "错误：数组元素类型不匹配\n");
             exit(1);
         }
         LLVMValueRef value = generate_expression_as(
-            context, element, element_type->type);
+            context, current_element, element_type->type);
         LLVMBuildStore(context->builder, value, element_address);
+        if (!literal->is_repeat) element = element->next;
     }
 }
+
 
 static void generate_index_assignment(
     CodeGenContext *context, IndexAssignmentNode *assignment) {
@@ -846,7 +853,7 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 }
                 if (declaration->expression &&
                     declaration->expression->type == NODE_ARRAY_LITERAL) {
-                    fprintf(stderr, "错误：数组声明必须显式指定 [元素类型, 长度]\n");
+                    fprintf(stderr, "错误：数组声明必须显式指定 [元素类型; 长度]\n");
                     exit(1);
                 }
                 enum LiteralType type = declaration->type

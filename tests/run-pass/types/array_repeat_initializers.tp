@@ -1,0 +1,17 @@
+fn main(): i32 {
+    let values: [i32; 4] = [0; 4];
+    let seeded: [i32; 4] = [3 + 2; 4];
+    let matrix: [[i32; 2]; 2] = [[7; 2]; 2];
+
+    print("%d %d %d\n", values[0], values[3], seeded[2]);
+    print("%d %d\n", matrix[0][1], matrix[1][0]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+0 0 5
+7 7
+- .exit
+0
+-- */

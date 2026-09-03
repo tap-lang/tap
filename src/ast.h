@@ -173,6 +173,8 @@ typedef struct {
     ASTNode base;
     ASTNode *elements;
     uint64_t count;
+    int is_repeat;
+    uint64_t repeat_count;
 } ArrayLiteralNode;
 
 typedef struct {
@@ -220,6 +222,7 @@ VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression)
 AssignmentNode *create_assignment(const char *name, ASTNode *expression);
 ArrayLiteralNode *create_array_literal(void);
 void add_array_element(ArrayLiteralNode *array, ASTNode *element);
+void set_array_repeat(ArrayLiteralNode *array, uint64_t repeat_count);
 IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index);
 IndexAssignmentNode *create_index_assignment(
     IndexExpressionNode *target, ASTNode *expression);

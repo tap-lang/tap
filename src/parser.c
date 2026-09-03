@@ -188,7 +188,7 @@ static VarTypeNode *parse_type(Parser *parser) {
     if (parser->current_token->type == TOKEN_LBRACKET) {
         consume(parser, TOKEN_LBRACKET);
         VarTypeNode *element_type = parse_type(parser);
-        consume(parser, TOKEN_COMMA);
+        consume(parser, TOKEN_SEMICOLON);
         if (parser->current_token->type != TOKEN_I32 ||
             !isdigit((unsigned char)parser->current_token->lexeme[0])) {
             free_ast((ASTNode *)element_type);
@@ -717,9 +717,25 @@ static ASTNode *parse_array_literal(Parser *parser) {
     ArrayLiteralNode *array = create_array_literal();
     if (parser->current_token->type != TOKEN_RBRACKET) {
         add_array_element(array, parse_expression(parser));
-        while (parser->current_token->type == TOKEN_COMMA) {
-            consume(parser, TOKEN_COMMA);
-            add_array_element(array, parse_expression(parser));
+        if (parser->current_token->type == TOKEN_SEMICOLON) {
+            consume(parser, TOKEN_SEMICOLON);
+            if (parser->current_token->type != TOKEN_I32 ||
+                !isdigit((unsigned char)parser->current_token->lexeme[0])) {
+                free_ast((ASTNode *)array);
+                parser_error(parser, "数组重复初始化长度必须是正整数数字面量");
+            }
+            uint64_t repeat_count = strtoull(parser->current_token->lexeme, NULL, 10);
+            if (repeat_count == 0 || repeat_count > INT64_MAX) {
+                free_ast((ASTNode *)array);
+                parser_error(parser, "数组重复初始化长度必须在 1 到 INT64_MAX 之间");
+            }
+            consume(parser, TOKEN_I32);
+            set_array_repeat(array, repeat_count);
+        } else {
+            while (parser->current_token->type == TOKEN_COMMA) {
+                consume(parser, TOKEN_COMMA);
+                add_array_element(array, parse_expression(parser));
+            }
         }
     }
     consume(parser, TOKEN_RBRACKET);
