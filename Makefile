@@ -5,6 +5,13 @@
 CC = gcc
 # CXX = clang++
 LIBS = -lLLVM-21 -lm
+
+# Sanitizers are opt-in because their VM reservation conflicts with macOS nano malloc.
+SANITIZE ?= 0
+ifeq ($(SANITIZE),1)
+    SANITIZER_FLAGS = -fsanitize=address -fno-omit-frame-pointer
+endif
+
 RUNTIME_INCLUDE = -Iruntime/include
 RUNTIME_CFLAGS = -Wall -Wextra -g $(RUNTIME_INCLUDE) -fPIC
 RUNTIME_OBJECT = $(BUILD_DIR)/runtime.o
@@ -26,17 +33,13 @@ else
     UNAME_S := $(shell uname -s)
     ifeq ($(UNAME_S),Linux)
         # Linux系统设置
-        CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer -I/usr/lib/llvm-21/include
+        CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS) -I/usr/lib/llvm-21/include
         # CXXFLAGS = $(CFLAGS)
-        LDFLAGS = -L/usr/lib/llvm-21/lib -Wl,-rpath,/usr/lib -fsanitize=address
+        LDFLAGS = -L/usr/lib/llvm-21/lib -Wl,-rpath,/usr/lib $(SANITIZER_FLAGS)
         RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.so
         RUNTIME_SHARED_FLAGS = -shared
     else ifeq ($(UNAME_S),Darwin)
         # macOS系统设置
-        CC_IS_CLANG := $(findstring clang,$(shell $(CC) --version 2>/dev/null))
-        ifneq ($(CC_IS_CLANG),)
-            SANITIZER_FLAGS = -fsanitize=address -fno-omit-frame-pointer
-        endif
         CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS) -I/opt/homebrew/opt/llvm/include
         # CXXFLAGS = $(CFLAGS)
         LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib $(SANITIZER_FLAGS)
@@ -44,9 +47,9 @@ else
         RUNTIME_SHARED_FLAGS = -dynamiclib
     else
         # 其他系统，使用默认设置
-        CFLAGS = -Wall -Wextra -g -fsanitize=address -fno-omit-frame-pointer
+        CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS)
         # CXXFLAGS = $(CFLAGS)
-        LDFLAGS = -fsanitize=address
+        LDFLAGS = $(SANITIZER_FLAGS)
         RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.so
         RUNTIME_SHARED_FLAGS = -shared
     endif

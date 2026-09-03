@@ -145,6 +145,26 @@ static void free_symbols(Symbol *symbols) {
     }
 }
 
+// Keep stack allocation bounded by placing every local slot in the function entry block.
+static LLVMValueRef create_entry_alloca(
+    CodeGenContext *context, LLVMTypeRef type, const char *name) {
+    LLVMBasicBlockRef current_block = LLVMGetInsertBlock(context->builder);
+    LLVMValueRef function = LLVMGetBasicBlockParent(current_block);
+    LLVMBasicBlockRef entry_block = LLVMGetEntryBasicBlock(function);
+    LLVMBuilderRef alloca_builder = LLVMCreateBuilderInContext(context->context);
+    LLVMValueRef first_instruction = LLVMGetFirstInstruction(entry_block);
+
+    // Insert before existing instructions so the slot dominates every use in loops and branches.
+    if (first_instruction) {
+        LLVMPositionBuilderBefore(alloca_builder, first_instruction);
+    } else {
+        LLVMPositionBuilderAtEnd(alloca_builder, entry_block);
+    }
+    LLVMValueRef storage = LLVMBuildAlloca(alloca_builder, type, name);
+    LLVMDisposeBuilder(alloca_builder);
+    return storage;
+}
+
 static FunctionNode *find_function(CodeGenContext *context, const char *name) {
     if (!context->program) return NULL;
     for (ASTNode *node = context->program->functions; node; node = node->next) {
@@ -815,8 +835,8 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                         (ArrayLiteralNode *)declaration->expression;
                     LLVMTypeRef array_type = get_llvm_var_type(
                         context, declaration->type);
-                    LLVMValueRef storage = LLVMBuildAlloca(
-                        context->builder, array_type, declaration->name);
+                    LLVMValueRef storage = create_entry_alloca(
+                        context, array_type, declaration->name);
                     insert_array_symbol(
                         context, declaration->name, storage, declaration->type);
                     // Initialization follows the same recursive shape as the declared type.
@@ -833,8 +853,8 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     ? declaration->type->type
                     : expression_type(context, declaration->expression);
                 LLVMTypeRef llvm_type = get_llvm_type(context, type);
-                LLVMValueRef storage = LLVMBuildAlloca(context->builder, llvm_type,
-                                                        declaration->name);
+                LLVMValueRef storage = create_entry_alloca(
+                    context, llvm_type, declaration->name);
                 insert_symbol(context, declaration->name, storage, type);
                 if (declaration->expression) {
                     LLVMValueRef value = generate_expression_as(
@@ -1011,8 +1031,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         while (param) {
             IdentifierNode *identifier = (IdentifierNode *)param;
             enum LiteralType type = function_param_type(function, param_index);
-            LLVMValueRef storage = LLVMBuildAlloca(context->builder, get_llvm_type(context, type),
-                                                    identifier->name);
+            LLVMValueRef storage = create_entry_alloca(
+                context, get_llvm_type(context, type), identifier->name);
             LLVMValueRef value = LLVMGetParam(llvm_function, param_index);
             LLVMSetValueName2(value, identifier->name, strlen(identifier->name));
             LLVMBuildStore(context->builder, value, storage);

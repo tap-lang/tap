@@ -1,18 +1,18 @@
 fn main(): i32 {
     // The board keeps a one-cell border, so playable coordinates start at one.
-    let width: i32 = 22;
-    let height: i32 = 12;
+    let width: i32 = 44;
+    let height: i32 = 24;
     let maximum_length: i32 = 40;
 
     // Parallel fixed arrays store snake coordinates because arrays are not function parameters yet.
     let snake_x: array[i32, 40] = [
-        10, 9, 8, 0, 0, 0, 0, 0, 0, 0,
+        21, 20, 19, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     ];
     let snake_y: array[i32, 40] = [
-        6, 6, 6, 0, 0, 0, 0, 0, 0, 0,
+        12, 12, 12, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -42,21 +42,21 @@ fn main(): i32 {
     }
 
     for (; game_over == 0;) {
-        // Draw a complete frame using ASCII so it works on every supported terminal.
+        // Two terminal columns per cell compensate for characters being roughly twice as tall.
         clear_screen();
         print("4yue Snake | WASD: move | q: quit | score: %d\n", score);
         for (let border_x: i32 = 0; border_x < width; border_x++) {
-            print("#");
+            print("##");
         }
         print("\n");
 
         for (let board_y: i32 = 1; board_y < (height - 1); board_y++) {
-            print("#");
+            print("##");
             for (let board_x: i32 = 1; board_x < (width - 1); board_x++) {
                 let drawn: i32 = 0;
                 if (board_x == snake_x[0]) {
                     if (board_y == snake_y[0]) {
-                        print("@");
+                        print("@@");
                         drawn = 1;
                     }
                 }
@@ -66,7 +66,7 @@ fn main(): i32 {
                          body_index < length; body_index++) {
                         if (board_x == snake_x[body_index]) {
                             if (board_y == snake_y[body_index]) {
-                                print("o");
+                                print("oo");
                                 drawn = 1;
                             }
                         }
@@ -76,20 +76,20 @@ fn main(): i32 {
                 if (drawn == 0) {
                     if (board_x == food_x) {
                         if (board_y == food_y) {
-                            print("*");
+                            print("**");
                             drawn = 1;
                         }
                     }
                 }
                 if (drawn == 0) {
-                    print(" ");
+                    print("  ");
                 }
             }
-            print("#\n");
+            print("##\n");
         }
 
         for (let bottom_x: i32 = 0; bottom_x < width; bottom_x++) {
-            print("#");
+            print("##");
         }
         print("\n");
 
@@ -119,7 +119,8 @@ fn main(): i32 {
             }
         }
 
-        sleep_ms(120);
+        // A 160 ms frame interval reduces the original 120 ms update rate to 75%.
+        sleep_ms(160);
         let next_x: i32 = snake_x[0] + direction_x;
         let next_y: i32 = snake_y[0] + direction_y;
 

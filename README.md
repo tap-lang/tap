@@ -18,6 +18,13 @@ macOS（Homebrew）示例：`brew install llvm`，并保证能解析到对应 `i
 make
 ```
 
+需要 AddressSanitizer 调试时显式开启（切换编译选项前需清理旧目标文件）：
+
+```bash
+make clean
+make SANITIZE=1
+```
+
 **CMake**
 
 ```bash

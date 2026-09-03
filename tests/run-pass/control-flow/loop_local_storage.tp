@@ -1,0 +1,19 @@
+fn main(): i32 {
+    let completed: i32 = 0;
+
+    // A loop-local declaration must reuse one entry-block slot instead of growing the stack.
+    for (let index: i32 = 0; index < 3000000; index++) {
+        let current: i32 = index;
+        if (current == 2999999) {
+            completed = 1;
+        }
+    }
+
+    assert(completed == 1, "long loop did not complete");
+    return 0;
+}
+
+/** -- test
+- .exit
+0
+-- */
