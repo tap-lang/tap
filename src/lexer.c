@@ -209,7 +209,6 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "break", 5) == 0) return TOKEN_BREAK;
         if (memcmp(text, "false", 5) == 0) return TOKEN_BOOL;
         if (memcmp(text, "print", 5) == 0) return TOKEN_PRINT;
-        if (memcmp(text, "array", 5) == 0) return TOKEN_ARRAY;
         if (memcmp(text, "float", 5) == 0) return TOKEN_FLOAT;
         break;
     case 6:

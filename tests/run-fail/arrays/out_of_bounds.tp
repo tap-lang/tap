@@ -1,5 +1,5 @@
 fn main(): i32 {
-    let values: array[i32, 3] = [10, 20, 30];
+    let values: [i32, 3] = [10, 20, 30];
     print("%d\n", values[3]);
     return 0;
 }

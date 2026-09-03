@@ -846,7 +846,7 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 }
                 if (declaration->expression &&
                     declaration->expression->type == NODE_ARRAY_LITERAL) {
-                    fprintf(stderr, "错误：数组声明必须显式指定 array[元素类型, 长度]\n");
+                    fprintf(stderr, "错误：数组声明必须显式指定 [元素类型, 长度]\n");
                     exit(1);
                 }
                 enum LiteralType type = declaration->type

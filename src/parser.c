@@ -185,8 +185,7 @@ static ImportNode *parse_import(Parser *parser) {
 }
 
 static VarTypeNode *parse_type(Parser *parser) {
-    if (parser->current_token->type == TOKEN_ARRAY) {
-        consume(parser, TOKEN_ARRAY);
+    if (parser->current_token->type == TOKEN_LBRACKET) {
         consume(parser, TOKEN_LBRACKET);
         VarTypeNode *element_type = parse_type(parser);
         consume(parser, TOKEN_COMMA);

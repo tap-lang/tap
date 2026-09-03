@@ -1,5 +1,6 @@
 fn main(): i32 {
-    let values: array[i32, 4] = [10, 20, 30, 40];
+    let values: [i32, 4] = [10, 20, 30, 40];
+    let array: i32 = 7;
     print("%d %d\n", values[0], values[3]);
 
     values[1] = 99;
@@ -8,14 +9,14 @@ fn main(): i32 {
         sum = sum + values[i];
     }
 
-    print("%d %d\n", sum, values[1]);
+    print("%d %d %d\n", sum, values[1], array);
     return 0;
 }
 
 /** -- test
 - .stdout
 10 40
-179 99
+179 99 7
 - .exit
 0
 -- */

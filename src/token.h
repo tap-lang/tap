@@ -39,7 +39,6 @@ enum TokenType {
     TOKEN_F64,         // 64位浮点数
     TOKEN_BOOL,        // 布尔值
     TOKEN_STRING,      // 字符串
-    TOKEN_ARRAY,       // 数组
 
     // 运算符
     TOKEN_PLUS,                     // +

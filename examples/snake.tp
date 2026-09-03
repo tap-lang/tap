@@ -5,13 +5,13 @@ fn main(): i32 {
     let maximum_length: i32 = 40;
 
     // Parallel fixed arrays store snake coordinates because arrays are not function parameters yet.
-    let snake_x: array[i32, 40] = [
+    let snake_x: [i32, 40] = [
         21, 20, 19, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     ];
-    let snake_y: array[i32, 40] = [
+    let snake_y: [i32, 40] = [
         12, 12, 12, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

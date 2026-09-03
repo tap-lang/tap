@@ -34,7 +34,7 @@ static const char *literal_type_str(enum LiteralType t) {
 
 static void print_var_type(const VarTypeNode *type) {
     if (type->is_array) {
-        printf("array[");
+        printf("[");
         print_var_type(type->element_type);
         printf(", %" PRIu64 "]", type->array_length);
     } else {
