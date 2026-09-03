@@ -20,6 +20,7 @@
 // POSIX terminals stay in raw mode between polls and are restored at process exit.
 static struct termios original_terminal;
 static int terminal_is_raw = 0;
+static int ansi_escape_state = 0;
 
 static void restore_terminal(void) {
     if (terminal_is_raw) {
@@ -61,24 +62,66 @@ static int configure_terminal(void) {
     }
     return 0;
 }
-#endif
 
-int32_t yue_read_key(void) {
-#ifdef _WIN32
-    // Windows provides a non-blocking console probe through conio.
-    return _kbhit() ? (int32_t)_getch() : -1;
-#else
-    // Non-interactive stdin has no terminal state and therefore no key event.
-    if (configure_terminal() != 0) return -1;
-
+static int read_terminal_byte(void) {
+    // Poll one byte without blocking so a partial ANSI sequence can continue next frame.
     fd_set input;
     FD_ZERO(&input);
     FD_SET(STDIN_FILENO, &input);
     struct timeval timeout = {0, 0};
-    int ready = select(STDIN_FILENO + 1, &input, NULL, NULL, &timeout);
+    if (select(STDIN_FILENO + 1, &input, NULL, NULL, &timeout) <= 0) return -1;
+
     unsigned char key = 0;
-    ssize_t bytes_read = ready > 0 ? read(STDIN_FILENO, &key, 1) : 0;
-    return bytes_read == 1 ? (int32_t)key : -1;
+    return read(STDIN_FILENO, &key, 1) == 1 ? (int)key : -1;
+}
+
+static int32_t decode_ansi_key(int key) {
+    // POSIX arrow keys arrive as ESC, '[', and one direction byte.
+    if (ansi_escape_state == 0) {
+        if (key == 27) {
+            ansi_escape_state = 1;
+            return -1;
+        }
+        return (int32_t)key;
+    }
+    if (ansi_escape_state == 1) {
+        ansi_escape_state = key == '[' ? 2 : 0;
+        return -1;
+    }
+
+    ansi_escape_state = 0;
+    if (key == 'A') return 'w';
+    if (key == 'B') return 's';
+    if (key == 'C') return 'd';
+    if (key == 'D') return 'a';
+    return -1;
+}
+#endif
+
+int32_t yue_read_key(void) {
+#ifdef _WIN32
+    // Windows arrow keys use a prefix byte followed by a direction scan code.
+    if (!_kbhit()) return -1;
+    int key = _getch();
+    if (key != 0 && key != 224) return (int32_t)key;
+
+    int direction = _getch();
+    if (direction == 72) return 'w';
+    if (direction == 80) return 's';
+    if (direction == 77) return 'd';
+    if (direction == 75) return 'a';
+    return -1;
+#else
+    // Non-interactive stdin has no terminal state and therefore no key event.
+    if (configure_terminal() != 0) return -1;
+
+    // Consume all currently available sequence bytes in one frame when possible.
+    for (;;) {
+        int key = read_terminal_byte();
+        if (key < 0) return -1;
+        int32_t decoded = decode_ansi_key(key);
+        if (decoded >= 0) return decoded;
+    }
 #endif
 }
 

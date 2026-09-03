@@ -78,7 +78,7 @@ cmake --build .
 ./build/4yue -parse tests/run-pass/functions/fibonacci.tp
 ```
 
-交互式贪吃蛇示例使用 WASD 移动，按 `q` 退出：
+交互式贪吃蛇示例使用 WASD 或方向键移动，按 `q` 退出：
 
 ```bash
 ./build/4yue run examples/snake.tp

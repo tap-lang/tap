@@ -11,7 +11,7 @@ extern fn yue_sleep_ms(milliseconds: i32): i32;
 
 | 函数 | 行为 |
 |---|---|
-| `read_key(): i32` | 非阻塞读取一个按键；无按键或 stdin 不是终端时返回 `-1` |
+| `read_key(): i32` | 非阻塞读取一个按键；方向键归一化为 `w/s/a/d`，无按键或 stdin 不是终端时返回 `-1` |
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，负数或系统错误返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |

@@ -44,19 +44,21 @@ fn main(): i32 {
     for (; game_over == 0;) {
         // Two terminal columns per cell compensate for characters being roughly twice as tall.
         clear_screen();
-        print("4yue Snake | WASD: move | q: quit | score: %d\n", score);
+        print("4yue Snake | WASD/arrows: move | q: quit | score: %d\n", score);
         for (let border_x: i32 = 0; border_x < width; border_x++) {
-            print("##");
+            // A cactus emoji fills one two-column wall cell.
+            print("🌵");
         }
         print("\n");
 
         for (let board_y: i32 = 1; board_y < (height - 1); board_y++) {
-            print("##");
+            print("🌵");
             for (let board_x: i32 = 1; board_x < (width - 1); board_x++) {
                 let drawn: i32 = 0;
                 if (board_x == snake_x[0]) {
                     if (board_y == snake_y[0]) {
-                        print("@@");
+                        // A bright green circle distinguishes the head while keeping a two-column cell.
+                        print("🟢");
                         drawn = 1;
                     }
                 }
@@ -66,7 +68,8 @@ fn main(): i32 {
                          body_index < length; body_index++) {
                         if (board_x == snake_x[body_index]) {
                             if (board_y == snake_y[body_index]) {
-                                print("oo");
+                                // Full-color Unicode blocks make the body visible without ASCII glyphs.
+                                print("🟩");
                                 drawn = 1;
                             }
                         }
@@ -76,7 +79,8 @@ fn main(): i32 {
                 if (drawn == 0) {
                     if (board_x == food_x) {
                         if (board_y == food_y) {
-                            print("**");
+                            // The mouse emoji occupies one two-column logical cell.
+                            print("🐭");
                             drawn = 1;
                         }
                     }
@@ -85,15 +89,15 @@ fn main(): i32 {
                     print("  ");
                 }
             }
-            print("##\n");
+            print("🌵\n");
         }
 
         for (let bottom_x: i32 = 0; bottom_x < width; bottom_x++) {
-            print("##");
+            print("🌵");
         }
         print("\n");
 
-        // read_key is non-blocking; ASCII codes below correspond to WASD and q.
+        // Runtime normalizes arrow keys to the same ASCII codes as WASD.
         let key: i32 = read_key();
         if (key == 113) {
             break;
