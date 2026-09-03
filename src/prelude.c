@@ -26,7 +26,7 @@ static char *copy_string(const char *value) {
     size_t size = strlen(value) + 1;
     char *copy = malloc(size);
     if (!copy) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     memcpy(copy, value, size);
@@ -37,7 +37,7 @@ static char *join_path(const char *directory, const char *suffix) {
     size_t size = strlen(directory) + strlen(suffix) + 2;
     char *path = malloc(size);
     if (!path) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     snprintf(path, size, "%s/%s", directory, suffix);
@@ -64,7 +64,7 @@ static char *compiler_directory(const char *compiler_path) {
     size_t length = (size_t)(slash - path);
     char *directory = malloc(length + 1);
     if (!directory) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     memcpy(directory, path, length);
@@ -144,7 +144,7 @@ int load_prelude(ProgramNode *program, const char *compiler_path) {
     char *path = resolve_prelude_path(compiler_path);
     if (!path) {
         fprintf(stderr,
-            "错误: 找不到标准库 prelude.tp；请从项目目录运行，或设置 4YUE_STD_PATH\n");
+            "error: standard library prelude.tp not found; run from the project directory or set 4YUE_STD_PATH\n"); // 中文：找不到标准库 prelude.tp；请从项目目录运行，或设置 4YUE_STD_PATH
         return 1;
     }
 
@@ -166,7 +166,7 @@ int load_prelude(ProgramNode *program, const char *compiler_path) {
     if (!duplicate) duplicate = find_cross_duplicate(prelude->functions, program->functions);
 
     if (duplicate) {
-        fprintf(stderr, "%s:%d:%d: 错误: 重复函数定义 '%s'\n",
+        fprintf(stderr, "%s:%d:%d: error: duplicate function definition '%s'\n", // 中文：重复函数定义
             duplicate->filename, duplicate->line, duplicate->column, duplicate->name);
         free_ast((ASTNode *)prelude);
         free_parser(parser);

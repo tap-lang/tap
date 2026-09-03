@@ -6,7 +6,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-错误：数组初始化元素数量为 1，但声明长度为 2
+error: array initializer has 1 elements, but declared length is 2
 - .exit
 1
 -- */

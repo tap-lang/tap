@@ -149,7 +149,7 @@ static int build_temp_paths(TempWorkspace *workspace, const char *separator) {
         object_length < 0 || (size_t)object_length >= sizeof(workspace->object_file) ||
         executable_length < 0 ||
             (size_t)executable_length >= sizeof(workspace->executable_file)) {
-        fprintf(stderr, "临时文件路径过长\n");
+        fprintf(stderr, "temporary file path is too long\n"); // 中文：临时文件路径过长
         return 1;
     }
     return 0;
@@ -165,7 +165,7 @@ static int create_temp_workspace(TempWorkspace *workspace) {
     if (path_length == 0 || path_length >= sizeof(temp_path) ||
         GetTempFileNameA(temp_path, "4yu", 0, temp_name) == 0 ||
         !DeleteFileA(temp_name) || !CreateDirectoryA(temp_name, NULL)) {
-        fprintf(stderr, "创建临时目录失败\n");
+        fprintf(stderr, "failed to create temporary directory\n"); // 中文：创建临时目录失败
         return 1;
     }
     snprintf(workspace->directory, sizeof(workspace->directory), "%s", temp_name);
@@ -182,7 +182,7 @@ static int create_temp_workspace(TempWorkspace *workspace) {
                                "%s%s4yue-XXXXXX", temp_root, separator);
     if (path_length < 0 || (size_t)path_length >= sizeof(workspace->directory) ||
         !mkdtemp(workspace->directory)) {
-        fprintf(stderr, "创建临时目录失败: %s\n", strerror(errno));
+        fprintf(stderr, "failed to create temporary directory: %s\n", strerror(errno)); // 中文：创建临时目录失败
         workspace->directory[0] = '\0';
         return 1;
     }
@@ -198,7 +198,7 @@ static int create_temp_workspace(TempWorkspace *workspace) {
 
 static int remove_temp_file(const char *path) {
     if (!path[0] || remove(path) == 0 || errno == ENOENT) return 0;
-    fprintf(stderr, "删除临时文件失败: %s: %s\n", path, strerror(errno));
+    fprintf(stderr, "failed to delete temporary file: %s: %s\n", path, strerror(errno)); // 中文：删除临时文件失败
     return 1;
 }
 
@@ -211,12 +211,12 @@ static int cleanup_temp_workspace(TempWorkspace *workspace) {
     if (workspace->directory[0]) {
 #ifdef _WIN32
         if (!RemoveDirectoryA(workspace->directory)) {
-            fprintf(stderr, "删除临时目录失败: %s\n", workspace->directory);
+            fprintf(stderr, "failed to delete temporary directory: %s\n", workspace->directory); // 中文：删除临时目录失败
             result = 1;
         }
 #else
         if (rmdir(workspace->directory) != 0 && errno != ENOENT) {
-            fprintf(stderr, "删除临时目录失败: %s: %s\n",
+            fprintf(stderr, "failed to delete temporary directory: %s: %s\n", // 中文：删除临时目录失败
                     workspace->directory, strerror(errno));
             result = 1;
         }
@@ -231,7 +231,7 @@ static int run_process(char *const argv[]) {
 #ifdef _WIN32
     intptr_t result = _spawnvp(_P_WAIT, argv[0], (const char *const *)argv);
     if (result == -1) {
-        fprintf(stderr, "启动程序失败: %s: %s\n", argv[0], strerror(errno));
+        fprintf(stderr, "failed to start program: %s: %s\n", argv[0], strerror(errno)); // 中文：启动程序失败
         return 1;
     }
     return (int)result;
@@ -239,7 +239,7 @@ static int run_process(char *const argv[]) {
     pid_t pid;
     int spawn_result = posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ);
     if (spawn_result != 0) {
-        fprintf(stderr, "启动程序失败: %s: %s\n", argv[0],
+        fprintf(stderr, "failed to start program: %s: %s\n", argv[0], // 中文：启动程序失败
                 strerror(spawn_result));
         return 1;
     }
@@ -247,7 +247,7 @@ static int run_process(char *const argv[]) {
     int status;
     while (waitpid(pid, &status, 0) == -1) {
         if (errno != EINTR) {
-            fprintf(stderr, "等待程序结束失败: %s\n", strerror(errno));
+            fprintf(stderr, "failed to wait for program: %s\n", strerror(errno)); // 中文：等待程序结束失败
             return 1;
         }
     }
@@ -266,14 +266,14 @@ static int link_object_file(const char *object_file, const char *exe_file) {
 #endif
     if (!runtime_static_path[0]) {
         fprintf(stderr,
-            "错误: 找不到 4yue Runtime 静态库；请设置 4YUE_RUNTIME_PATH\n");
+            "error: 4yue Runtime static library not found; set 4YUE_RUNTIME_PATH\n"); // 中文：找不到 4yue Runtime 静态库；请设置 4YUE_RUNTIME_PATH
         return 1;
     }
     char *const argv[] = {(char *)linker, (char *)object_file, runtime_static_path,
                           "-o", (char *)exe_file, NULL};
     int result = run_process(argv);
     if (result != 0) {
-        fprintf(stderr, "链接失败，链接器退出码: %d\n", result);
+        fprintf(stderr, "link failed with linker exit code: %d\n", result); // 中文：链接失败，链接器退出码
         return 1;
     }
     return 0;
@@ -283,13 +283,13 @@ static int compile_with_temp_object(CodeGenContext *context, const char *exe_fil
                                     const char *object_file) {
     if (write_object_to_file(context, object_file) != 0 ||
         link_object_file(object_file, exe_file) != 0) {
-        fprintf(stderr, "生成可执行文件失败\n");
+        fprintf(stderr, "failed to generate executable\n"); // 中文：生成可执行文件失败
         return 1;
     }
 
 #ifndef _WIN32
     if (chmod(exe_file, 0755) != 0) {
-        fprintf(stderr, "设置可执行权限失败: %s\n", exe_file);
+        fprintf(stderr, "failed to set executable permissions: %s\n", exe_file); // 中文：设置可执行权限失败
         return 1;
     }
 #endif
@@ -316,7 +316,7 @@ static int execute_file(const char *exe_file) {
         size_t path_size = strlen(exe_file) + 3;
         relative_path = malloc(path_size);
         if (!relative_path) {
-            fprintf(stderr, "内存分配失败\n");
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             return 1;
         }
         snprintf(relative_path, path_size, "./%s", exe_file);
@@ -340,7 +340,7 @@ int compile_and_run(CodeGenContext *context, const char *exe_file) {
     if (compile_result == 0) result = execute_file(run_file);
 
     if (exe_file && compile_result == 0 && remove(exe_file) != 0 && errno != ENOENT) {
-        fprintf(stderr, "删除临时可执行文件失败: %s: %s\n",
+        fprintf(stderr, "failed to delete temporary executable: %s: %s\n", // 中文：删除临时可执行文件失败
                 exe_file, strerror(errno));
         if (result == 0) result = 1;
     }
@@ -356,11 +356,11 @@ int run_with_lli(CodeGenContext *context) {
 
     int result = write_ir_to_file(context, workspace.ir_file);
     if (result != 0) {
-        fprintf(stderr, "写入临时IR文件失败\n");
+        fprintf(stderr, "failed to write temporary IR file\n"); // 中文：写入临时 IR 文件失败
         result = 1;
     } else if (!runtime_shared_path[0]) {
         fprintf(stderr,
-            "错误: 找不到 4yue Runtime 共享库；请设置 4YUE_RUNTIME_PATH\n");
+            "error: 4yue Runtime shared library not found; set 4YUE_RUNTIME_PATH\n"); // 中文：找不到 4yue Runtime 共享库；请设置 4YUE_RUNTIME_PATH
         result = 1;
     } else {
         // lli exposes symbols from the Runtime shared library to extern declarations.

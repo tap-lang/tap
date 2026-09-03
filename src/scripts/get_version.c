@@ -75,19 +75,19 @@ int main(void) {
 
     commit = get_git_commit_id();
     if (!commit) {
-        fprintf(stderr, "failed to determine git commit id\n");
+        fprintf(stderr, "failed to determine git commit id\n"); // 中文：无法确定 git 提交 ID
         return 2;
     }
 
     f = fopen(inpath, "rb");
     if (!f) {
-        fprintf(stderr, "failed to open input file '%s'\n", inpath);
+        fprintf(stderr, "failed to open input file '%s'\n", inpath); // 中文：无法打开输入文件
         free(commit);
         return 3;
     }
 
     if (fseek(f, 0, SEEK_END) != 0) {
-        fprintf(stderr, "fseek failed\n");
+        fprintf(stderr, "fseek failed\n"); // 中文：fseek 调用失败
         fclose(f);
         free(commit);
         return 4;
@@ -98,7 +98,7 @@ int main(void) {
 
     data = (char*)malloc((size_t)size + 1);
     if (!data) {
-        fprintf(stderr, "out of memory\n");
+        fprintf(stderr, "out of memory\n"); // 中文：内存不足
         fclose(f);
         free(commit);
         return 5;
@@ -106,7 +106,7 @@ int main(void) {
 
     if (size > 0) {
         if (fread(data, 1, (size_t)size, f) != (size_t)size) {
-            fprintf(stderr, "failed to read input file\n");
+            fprintf(stderr, "failed to read input file\n"); // 中文：读取输入文件失败
             free(data);
             fclose(f);
             free(commit);
@@ -128,13 +128,13 @@ int main(void) {
         /* No placeholder: just copy the file */
         FILE *outf = fopen(outpath, "wb");
         if (!outf) {
-            fprintf(stderr, "failed to open output file '%s' for writing\n", outpath);
+            fprintf(stderr, "failed to open output file '%s' for writing\n", outpath); // 中文：无法打开输出文件进行写入
             free(data);
             free(commit);
             return 7;
         }
         if (fwrite(data, 1, (size_t)size, outf) != (size_t)size) {
-            fprintf(stderr, "failed to write output file\n");
+            fprintf(stderr, "failed to write output file\n"); // 中文：写入输出文件失败
             fclose(outf);
             free(data);
             free(commit);
@@ -151,7 +151,7 @@ int main(void) {
     size_t new_size = (size_t)size + count * (commit_len - placeholder_len);
     out = (char*)malloc(new_size + 1);
     if (!out) {
-        fprintf(stderr, "out of memory (output buffer)\n");
+        fprintf(stderr, "out of memory (output buffer)\n"); // 中文：输出缓冲区内存不足
         free(data);
         free(commit);
         return 9;
@@ -173,14 +173,14 @@ int main(void) {
     /* write out */
     FILE *outf = fopen(outpath, "wb");
     if (!outf) {
-        fprintf(stderr, "failed to open output file '%s' for writing\n", outpath);
+        fprintf(stderr, "failed to open output file '%s' for writing\n", outpath); // 中文：无法打开输出文件进行写入
         free(data);
         free(out);
         free(commit);
         return 10;
     }
     if (fwrite(out, 1, new_size, outf) != new_size) {
-        fprintf(stderr, "failed to write output file\n");
+        fprintf(stderr, "failed to write output file\n"); // 中文：写入输出文件失败
         fclose(outf);
         free(data);
         free(out);

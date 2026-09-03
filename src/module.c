@@ -46,7 +46,7 @@ static char *copy_string(const char *value) {
     size_t size = strlen(value) + 1;
     char *copy = malloc(size);
     if (!copy) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     memcpy(copy, value, size);
@@ -64,7 +64,7 @@ static char *join_path(const char *directory, const char *suffix) {
     size_t size = strlen(directory) + strlen(suffix) + 2;
     char *path = malloc(size);
     if (!path) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     snprintf(path, size, "%s/%s", directory, suffix);
@@ -88,7 +88,7 @@ static char *path_directory(const char *path) {
     if (length == 0) length = 1;
     char *directory = malloc(length + 1);
     if (!directory) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     memcpy(directory, path, length);
@@ -118,7 +118,7 @@ static char *module_relative_path(const char *module_name) {
     size_t length = strlen(module_name);
     char *path = malloc(length + 4);
     if (!path) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
 
@@ -241,10 +241,10 @@ static FunctionNode *find_internal_duplicate(
 }
 
 static int report_duplicate(FunctionNode *duplicate, FunctionNode *previous) {
-    fprintf(stderr, "%s:%d:%d: 错误: 重复函数定义 '%s'\n",
+    fprintf(stderr, "%s:%d:%d: error: duplicate function definition '%s'\n", // 中文：重复函数定义
         duplicate->filename, duplicate->line, duplicate->column, duplicate->name);
     if (previous) {
-        fprintf(stderr, "%s:%d:%d: 提示: 此处已有定义\n",
+        fprintf(stderr, "%s:%d:%d: note: previous definition is here\n", // 中文：此处已有定义
             previous->filename, previous->line, previous->column);
     }
     return 1;
@@ -268,7 +268,7 @@ static ModuleExport *find_export(LoadedModule *module, const char *name) {
 static LoadedModule *create_loaded_module(ModuleContext *context, const char *path) {
     LoadedModule *module = calloc(1, sizeof(LoadedModule));
     if (!module) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
 
@@ -309,7 +309,7 @@ static char *create_symbol(const char *prefix, const char *name) {
     size_t size = strlen(prefix) + strlen(name) + 2;
     char *symbol = malloc(size);
     if (!symbol) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     snprintf(symbol, size, "%s.%s", prefix, name);
@@ -326,7 +326,7 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
         FunctionNode *function = (FunctionNode *)node;
         ModuleExport *export = calloc(1, sizeof(ModuleExport));
         if (!export) {
-            fprintf(stderr, "内存分配失败\n");
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             return 1;
         }
         export->name = copy_string(function->name);
@@ -364,10 +364,10 @@ static int add_binding(
     ImportBinding *existing = find_binding(*bindings, import_node->alias);
     if (existing) {
         if (existing->module == module) return 0;
-        fprintf(stderr, "%s:%d:%d: 错误: 名称空间 '%s' 已用于模块 '%s'\n",
+        fprintf(stderr, "%s:%d:%d: error: namespace '%s' is already used for module '%s'\n", // 中文：名称空间已用于模块
             import_node->filename, import_node->line, import_node->column,
             import_node->alias, existing->import_node->module_name);
-        fprintf(stderr, "%s:%d:%d: 提示: 名称空间首次在此导入\n",
+        fprintf(stderr, "%s:%d:%d: note: namespace was first imported here\n", // 中文：名称空间首次在此导入
             existing->import_node->filename, existing->import_node->line,
             existing->import_node->column);
         return 1;
@@ -375,7 +375,7 @@ static int add_binding(
 
     ImportBinding *binding = malloc(sizeof(ImportBinding));
     if (!binding) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return 1;
     }
     binding->import_node = import_node;
@@ -414,13 +414,13 @@ static int build_bindings(
         ImportNode *import_node = (ImportNode *)node;
         char *path = resolve_module_path(import_node, context->compiler_path);
         if (!path) {
-            fprintf(stderr, "%s:%d:%d: 错误: 找不到模块 '%s'\n",
+            fprintf(stderr, "%s:%d:%d: error: module '%s' not found\n", // 中文：找不到模块
                 import_node->filename, import_node->line, import_node->column,
                 import_node->module_name);
             return 1;
         }
         if (context->root_path && strcmp(path, context->root_path) == 0) {
-            fprintf(stderr, "%s:%d:%d: 错误: 入口文件不能导入自身\n",
+            fprintf(stderr, "%s:%d:%d: error: entry file cannot import itself\n", // 中文：入口文件不能导入自身
                 import_node->filename, import_node->line, import_node->column);
             free(path);
             return 1;
@@ -514,7 +514,7 @@ static int rewrite_call(
         size_t alias_length = (size_t)(dot - call->name);
         char *alias = malloc(alias_length + 1);
         if (!alias) {
-            fprintf(stderr, "内存分配失败\n");
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             return 1;
         }
         memcpy(alias, call->name, alias_length);
@@ -522,14 +522,14 @@ static int rewrite_call(
 
         ImportBinding *binding = find_binding(bindings, alias);
         if (!binding) {
-            fprintf(stderr, "%s:%d:%d: 错误: 未导入名称空间 '%s'\n",
+            fprintf(stderr, "%s:%d:%d: error: namespace '%s' was not imported\n", // 中文：未导入名称空间
                 call->filename, call->line, call->column, alias);
             free(alias);
             return 1;
         }
         export = find_export(binding->module, dot + 1);
         if (!export) {
-            fprintf(stderr, "%s:%d:%d: 错误: 模块 '%s' 中没有函数 '%s'\n",
+            fprintf(stderr, "%s:%d:%d: error: module '%s' has no function '%s'\n", // 中文：模块中没有函数
                 call->filename, call->line, call->column,
                 binding->import_node->module_name, dot + 1);
             free(alias);

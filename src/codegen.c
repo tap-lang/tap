@@ -93,7 +93,7 @@ static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type)
         case LITERAL_STRING:
             return LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
         default:
-            fprintf(stderr, "不支持的类型: %d\n", type);
+            fprintf(stderr, "unsupported type: %d\n", type); // 中文：不支持的类型
             return NULL;
     }
 }
@@ -118,7 +118,7 @@ static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRe
                           enum LiteralType type) {
     Symbol *symbol = malloc(sizeof(Symbol));
     if (!symbol) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     symbol->name = strdup(name);
@@ -197,11 +197,11 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
         const char *name = ((IdentifierNode *)expression)->name;
         Symbol *symbol = find_symbol(context, name);
         if (!symbol) {
-            fprintf(stderr, "错误：未定义的变量 '%s'\n", name);
+            fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
             exit(1);
         }
         if (!symbol->array_type) {
-            fprintf(stderr, "错误：变量 '%s' 不是数组\n", name);
+            fprintf(stderr, "error: variable '%s' is not an array\n", name); // 中文：变量不是数组
             exit(1);
         }
         return symbol->array_type;
@@ -211,13 +211,13 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
         IndexExpressionNode *index = (IndexExpressionNode *)expression;
         const VarTypeNode *container_type = indexed_value_type(context, index->array);
         if (!container_type->is_array) {
-            fprintf(stderr, "错误：索引目标不是数组\n");
+            fprintf(stderr, "error: index target is not an array\n"); // 中文：索引目标不是数组
             exit(1);
         }
         return container_type->element_type;
     }
 
-    fprintf(stderr, "错误：数组索引目标无效\n");
+    fprintf(stderr, "error: invalid array index target\n"); // 中文：数组索引目标无效
     exit(1);
 }
 
@@ -234,7 +234,7 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
         case NODE_INDEX_EXPRESSION: {
             const VarTypeNode *type = indexed_value_type(context, expression);
             if (type->is_array) {
-                fprintf(stderr, "错误：多维数组必须索引到标量元素\n");
+                fprintf(stderr, "error: multidimensional arrays must be indexed to a scalar element\n"); // 中文：多维数组必须索引到标量元素
                 exit(1);
             }
             return type->type;
@@ -324,11 +324,11 @@ static LLVMValueRef generate_index_address(
         const char *name = ((IdentifierNode *)index_expression->array)->name;
         Symbol *symbol = find_symbol(context, name);
         if (!symbol) {
-            fprintf(stderr, "错误：未定义的变量 '%s'\n", name);
+            fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
             exit(1);
         }
         if (!symbol->array_type) {
-            fprintf(stderr, "错误：变量 '%s' 不是数组\n", name);
+            fprintf(stderr, "error: variable '%s' is not an array\n", name); // 中文：变量不是数组
             exit(1);
         }
         array_address = symbol->value;
@@ -338,18 +338,18 @@ static LLVMValueRef generate_index_address(
         array_address = generate_index_address(
             context, (IndexExpressionNode *)index_expression->array, &array_type);
         if (!array_type->is_array) {
-            fprintf(stderr, "错误：索引目标不是数组\n");
+            fprintf(stderr, "error: index target is not an array\n"); // 中文：索引目标不是数组
             exit(1);
         }
     } else {
-        fprintf(stderr, "错误：数组索引目标无效\n");
+        fprintf(stderr, "error: invalid array index target\n"); // 中文：数组索引目标无效
         exit(1);
     }
 
     // Every dimension performs its own signed/unsigned bounds check.
     enum LiteralType index_type = expression_type(context, index_expression->index);
     if (!is_integer_type(index_type) || integer_type_bits(index_type) > 64) {
-        fprintf(stderr, "错误：数组下标必须是最多 64 位的整数\n");
+        fprintf(stderr, "error: array index must be an integer of at most 64 bits\n"); // 中文：数组下标必须是最多 64 位的整数
         exit(1);
     }
 
@@ -379,7 +379,7 @@ static LLVMValueRef generate_index_address(
     LLVMPositionBuilderAtEnd(context->builder, fail_block);
     LLVMValueRef printf_arguments[3] = {
         LLVMBuildGlobalStringPtr(context->builder,
-            "Array index out of bounds: index=%lld, length=%llu\n", "array_bounds_format"),
+            "Array index out of bounds: index=%lld, length=%llu\n", "array_bounds_format"), // 中文：数组下标越界：下标、长度
         index,
         LLVMConstInt(LLVMInt64TypeInContext(context->context), array_type->array_length, 0)
     };
@@ -436,21 +436,21 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
                 is_unsigned_type(operand_type) ? LLVMIntUGE : LLVMIntSGE,
                 left, right, "ge_result");
         default:
-            fprintf(stderr, "错误：不支持的二元操作符\n");
+            fprintf(stderr, "error: unsupported binary operator\n"); // 中文：不支持的二元操作符
             exit(1);
     }
 }
 
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call) {
     if (strcmp(call->name, "assert") == 0) {
-        fprintf(stderr, "error: assert can only be used as a statement\n");
+        fprintf(stderr, "error: assert can only be used as a statement\n"); // 中文：assert 只能作为语句使用
         exit(1);
     }
 
     LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, call->name);
     FunctionNode *function = find_function(context, call->name);
     if (!llvm_function || !function) {
-        fprintf(stderr, "错误：未定义的函数 '%s'\n", call->name);
+        fprintf(stderr, "error: undefined function '%s'\n", call->name); // 中文：未定义的函数
         exit(1);
     }
 
@@ -494,11 +494,11 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             IdentifierNode *identifier = (IdentifierNode *)expression;
             Symbol *symbol = find_symbol(context, identifier->name);
             if (!symbol) {
-                fprintf(stderr, "错误：未定义的变量 '%s'\n", identifier->name);
+                fprintf(stderr, "error: undefined variable '%s'\n", identifier->name); // 中文：未定义的变量
                 exit(1);
             }
             if (symbol->array_type) {
-                fprintf(stderr, "错误：数组 '%s' 必须通过下标访问\n", identifier->name);
+                fprintf(stderr, "error: array '%s' must be accessed with an index\n", identifier->name); // 中文：数组必须通过下标访问
                 exit(1);
             }
             return LLVMBuildLoad2(context->builder, get_llvm_type(context, symbol->type),
@@ -509,14 +509,14 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             LLVMValueRef address = generate_index_address(
                 context, (IndexExpressionNode *)expression, &element_type);
             if (element_type->is_array) {
-                fprintf(stderr, "错误：多维数组必须索引到标量元素\n");
+                fprintf(stderr, "error: multidimensional arrays must be indexed to a scalar element\n"); // 中文：多维数组必须索引到标量元素
                 exit(1);
             }
             return LLVMBuildLoad2(context->builder, get_llvm_var_type(context, element_type),
                                   address, "array_element");
         }
         case NODE_ARRAY_LITERAL:
-            fprintf(stderr, "错误：数组字面量只能用于数组变量初始化\n");
+            fprintf(stderr, "error: array literals can only be used to initialize array variables\n"); // 中文：数组字面量只能用于数组变量初始化
             exit(1);
         case NODE_FUNCTION_CALL:
             return generate_function_call(context, (FunctionCallNode *)expression);
@@ -531,7 +531,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             break;
     }
 
-    fprintf(stderr, "错误：不支持的表达式类型\n");
+    fprintf(stderr, "error: unsupported expression type\n"); // 中文：不支持的表达式类型
     exit(1);
 }
 
@@ -588,11 +588,11 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
 static void generate_assignment(CodeGenContext *context, AssignmentNode *assignment) {
     Symbol *symbol = find_symbol(context, assignment->name);
     if (!symbol) {
-        fprintf(stderr, "错误：未定义的变量 '%s'\n", assignment->name);
+        fprintf(stderr, "error: undefined variable '%s'\n", assignment->name); // 中文：未定义的变量
         exit(1);
     }
     if (symbol->array_type) {
-        fprintf(stderr, "错误：第一版数组暂不支持整个数组赋值\n");
+        fprintf(stderr, "error: assigning an entire array is not supported yet\n"); // 中文：第一版数组暂不支持整个数组赋值
         exit(1);
     }
     LLVMValueRef value = generate_expression_as(context, assignment->expression, symbol->type);
@@ -613,7 +613,7 @@ static void generate_array_initializer(
         : literal->count;
     if (initializer_count != array_type->array_length) {
         fprintf(stderr,
-            "错误：数组初始化元素数量为 %llu，但声明长度为 %llu\n",
+            "error: array initializer has %llu elements, but declared length is %llu\n", // 中文：数组初始化元素数量与声明长度不一致
             (unsigned long long)initializer_count,
             (unsigned long long)array_type->array_length);
         exit(1);
@@ -634,7 +634,7 @@ static void generate_array_initializer(
 
         if (element_type->is_array) {
             if (!current_element || current_element->type != NODE_ARRAY_LITERAL) {
-                fprintf(stderr, "错误：多维数组初始化需要嵌套数组字面量\n");
+                fprintf(stderr, "error: multidimensional array initialization requires nested array literals\n"); // 中文：多维数组初始化需要嵌套数组字面量
                 exit(1);
             }
             generate_array_initializer(
@@ -644,12 +644,12 @@ static void generate_array_initializer(
         }
 
         if (!current_element || current_element->type == NODE_ARRAY_LITERAL) {
-            fprintf(stderr, "错误：数组元素类型不匹配\n");
+            fprintf(stderr, "error: array element type mismatch\n"); // 中文：数组元素类型不匹配
             exit(1);
         }
         enum LiteralType actual_type = expression_type(context, current_element);
         if (!array_element_type_compatible(element_type->type, actual_type)) {
-            fprintf(stderr, "错误：数组元素类型不匹配\n");
+            fprintf(stderr, "error: array element type mismatch\n"); // 中文：数组元素类型不匹配
             exit(1);
         }
         LLVMValueRef value = generate_expression_as(
@@ -666,12 +666,12 @@ static void generate_index_assignment(
     LLVMValueRef address = generate_index_address(
         context, assignment->target, &element_type);
     if (element_type->is_array) {
-        fprintf(stderr, "错误：暂不支持整个子数组赋值\n");
+        fprintf(stderr, "error: assigning an entire subarray is not supported yet\n"); // 中文：暂不支持整个子数组赋值
         exit(1);
     }
     enum LiteralType actual_type = expression_type(context, assignment->expression);
     if (!array_element_type_compatible(element_type->type, actual_type)) {
-        fprintf(stderr, "错误：数组元素赋值类型不匹配\n");
+        fprintf(stderr, "error: array element assignment type mismatch\n"); // 中文：数组元素赋值类型不匹配
         exit(1);
     }
     LLVMValueRef value = generate_expression_as(
@@ -687,7 +687,7 @@ static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition)
         LLVMValueRef zero = LLVMConstInt(get_llvm_type(context, type), 0, 0);
         return LLVMBuildICmp(context->builder, LLVMIntNE, value, zero, "if_condition");
     }
-    fprintf(stderr, "错误：if 条件必须是整数或布尔表达式\n");
+    fprintf(stderr, "error: if condition must be an integer or boolean expression\n"); // 中文：if 条件必须是整数或布尔表达式
     exit(1);
 }
 
@@ -696,7 +696,7 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
 
     if (count < 1 || count > 2) {
-        fprintf(stderr, "%s:%d:%d: error: assert expects one or two arguments\n",
+        fprintf(stderr, "%s:%d:%d: error: assert expects one or two arguments\n", // 中文：assert 需要一到两个参数
                 call->filename ? call->filename : "<unknown>", call->line, call->column);
         exit(1);
     }
@@ -706,7 +706,7 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
         ASTNode *message_node = call->arguments->next;
         if (message_node->type != NODE_LITERAL ||
             ((LiteralNode *)message_node)->literal_type != LITERAL_STRING) {
-            fprintf(stderr, "%s:%d:%d: error: assert message must be a string literal\n",
+            fprintf(stderr, "%s:%d:%d: error: assert message must be a string literal\n", // 中文：assert 消息必须是字符串字面量
                     call->filename ? call->filename : "<unknown>", call->line, call->column);
             exit(1);
         }
@@ -726,7 +726,7 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
     LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
     LLVMValueRef printf_arguments[5] = {
         LLVMBuildGlobalStringPtr(context->builder,
-            "Assertion failed at %s:%d:%d: %s\n", "assert_format"),
+            "Assertion failed at %s:%d:%d: %s\n", "assert_format"), // 中文：断言失败：文件、行、列、消息
         LLVMBuildGlobalStringPtr(context->builder,
             call->filename ? call->filename : "<unknown>", "assert_filename"),
         LLVMConstInt(int32_type, (unsigned)call->line, 0),
@@ -835,7 +835,7 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 if (declaration->type && declaration->type->is_array) {
                     if (!declaration->expression ||
                         declaration->expression->type != NODE_ARRAY_LITERAL) {
-                        fprintf(stderr, "错误：数组变量必须使用数组字面量初始化\n");
+                        fprintf(stderr, "error: array variables must be initialized with an array literal\n"); // 中文：数组变量必须使用数组字面量初始化
                         exit(1);
                     }
                     ArrayLiteralNode *literal =
@@ -853,7 +853,7 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 }
                 if (declaration->expression &&
                     declaration->expression->type == NODE_ARRAY_LITERAL) {
-                    fprintf(stderr, "错误：数组声明必须显式指定 [元素类型; 长度]\n");
+                    fprintf(stderr, "error: array declarations must explicitly specify [element type; length]\n"); // 中文：数组声明必须显式指定 [元素类型; 长度]
                     exit(1);
                 }
                 enum LiteralType type = declaration->type
@@ -900,20 +900,20 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_BREAK_STATEMENT:
                 if (!context->current_loop) {
-                    fprintf(stderr, "错误：break 只能在 for 循环中使用\n");
+                    fprintf(stderr, "error: break can only be used inside a for loop\n"); // 中文：break 只能在 for 循环中使用
                     exit(1);
                 }
                 LLVMBuildBr(context->builder, context->current_loop->break_block);
                 break;
             case NODE_CONTINUE_STATEMENT:
                 if (!context->current_loop) {
-                    fprintf(stderr, "错误：continue 只能在 for 循环中使用\n");
+                    fprintf(stderr, "error: continue can only be used inside a for loop\n"); // 中文：continue 只能在 for 循环中使用
                     exit(1);
                 }
                 LLVMBuildBr(context->builder, context->current_loop->continue_block);
                 break;
             default:
-                fprintf(stderr, "错误：不支持的语句类型 %d\n", statement->type);
+                fprintf(stderr, "error: unsupported statement type %d\n", statement->type); // 中文：不支持的语句类型
                 exit(1);
         }
     }
@@ -927,12 +927,12 @@ static unsigned function_param_count(FunctionNode *function) {
 
 static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *function) {
     if (function->return_type && function->return_type->is_array) {
-        fprintf(stderr, "错误：第一版数组暂不支持作为函数返回类型\n");
+        fprintf(stderr, "error: arrays are not supported as function return types yet\n"); // 中文：第一版数组暂不支持作为函数返回类型
         exit(1);
     }
     for (ASTNode *type = function->param_types; type; type = type->next) {
         if (((VarTypeNode *)type)->is_array) {
-            fprintf(stderr, "错误：第一版数组暂不支持作为函数参数\n");
+            fprintf(stderr, "error: arrays are not supported as function parameters yet\n"); // 中文：第一版数组暂不支持作为函数参数
             exit(1);
         }
     }
@@ -967,7 +967,7 @@ static void eliminate_unreachable_functions(CodeGenContext *context) {
     LLVMDisposePassBuilderOptions(options);
     if (error) {
         char *message = LLVMGetErrorMessage(error);
-        fprintf(stderr, "LLVM GlobalDCE 执行失败: %s\n", message);
+        fprintf(stderr, "LLVM GlobalDCE failed: %s\n", message); // 中文：LLVM GlobalDCE 执行失败
         LLVMDisposeErrorMessage(message);
         exit(1);
     }
@@ -976,7 +976,7 @@ static void eliminate_unreachable_functions(CodeGenContext *context) {
 CodeGenContext *create_codegen_context(const char *module_name) {
     CodeGenContext *context = calloc(1, sizeof(CodeGenContext));
     if (!context) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
 
@@ -1057,7 +1057,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
 
     char *error = NULL;
     if (LLVMVerifyModule(context->module, LLVMReturnStatusAction, &error) != 0) {
-        fprintf(stderr, "LLVM IR 验证失败: %s\n", error);
+        fprintf(stderr, "LLVM IR verification failed: %s\n", error); // 中文：LLVM IR 验证失败
         LLVMDisposeMessage(error);
         exit(1);
     }
@@ -1069,7 +1069,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
 static int initialize_execution_engine(CodeGenContext *context) {
     char *error = NULL;
     if (LLVMCreateExecutionEngineForModule(&context->engine, context->module, &error) != 0) {
-        fprintf(stderr, "创建执行引擎失败: %s\n", error);
+        fprintf(stderr, "failed to create execution engine: %s\n", error); // 中文：创建执行引擎失败
         LLVMDisposeMessage(error);
         return -1;
     }
@@ -1093,7 +1093,7 @@ int execute_code(CodeGenContext *context, const char *function_name) {
     if (initialize_execution_engine(context) != 0) return -1;
     LLVMValueRef function = LLVMGetNamedFunction(context->module, function_name);
     if (!function) {
-        fprintf(stderr, "未找到函数: %s\n", function_name);
+        fprintf(stderr, "function not found: %s\n", function_name); // 中文：未找到函数
         return -1;
     }
     LLVMGenericValueRef result_ref = LLVMRunFunction(context->engine, function, 0, NULL);
@@ -1105,7 +1105,7 @@ int execute_code(CodeGenContext *context, const char *function_name) {
 int write_ir_to_file(CodeGenContext *context, const char *filename) {
     char *error = NULL;
     if (LLVMPrintModuleToFile(context->module, filename, &error) != 0) {
-        fprintf(stderr, "写入IR文件失败: %s\n", error);
+        fprintf(stderr, "failed to write IR file: %s\n", error); // 中文：写入 IR 文件失败
         LLVMDisposeMessage(error);
         return -1;
     }
@@ -1121,7 +1121,7 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
     LLVMTargetRef target = NULL;
     char *target_triple = LLVMGetDefaultTargetTriple();
     if (LLVMGetTargetFromTriple(target_triple, &target, &error) != 0) {
-        fprintf(stderr, "获取目标机器失败: %s\n", error);
+        fprintf(stderr, "failed to get target machine: %s\n", error); // 中文：获取目标机器失败
         LLVMDisposeMessage(error);
         LLVMDisposeMessage(target_triple);
         return -1;
@@ -1131,7 +1131,7 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
         target, target_triple, "", "", LLVMCodeGenLevelDefault,
         LLVMRelocPIC, LLVMCodeModelDefault);
     if (!target_machine) {
-        fprintf(stderr, "创建目标机器失败\n");
+        fprintf(stderr, "failed to create target machine\n"); // 中文：创建目标机器失败
         LLVMDisposeMessage(target_triple);
         return -1;
     }
@@ -1143,7 +1143,7 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
 
     char *output_path = strdup(filename);
     if (!output_path) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         LLVMDisposeMessage(data_layout);
         LLVMDisposeTargetData(target_data);
         LLVMDisposeTargetMachine(target_machine);
@@ -1154,7 +1154,7 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
     int result = LLVMTargetMachineEmitToFile(
         target_machine, context->module, output_path, LLVMObjectFile, &error);
     if (result != 0) {
-        fprintf(stderr, "写入目标文件失败: %s\n", error);
+        fprintf(stderr, "failed to write object file: %s\n", error); // 中文：写入目标文件失败
         LLVMDisposeMessage(error);
         result = -1;
     } else {

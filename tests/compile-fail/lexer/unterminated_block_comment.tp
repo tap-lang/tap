@@ -1,6 +1,6 @@
 /** -- test
 - .stderr
-tests/compile-fail/lexer/unterminated_block_comment.tp:7:1: 错误: 未闭合的多行注释
+tests/compile-fail/lexer/unterminated_block_comment.tp:7:1: error: unterminated block comment
 - .exit
 1
 -- */

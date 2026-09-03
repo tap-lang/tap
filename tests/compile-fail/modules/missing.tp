@@ -6,7 +6,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/modules/missing.tp:1:8: 错误: 找不到模块 'modules.missing'
+tests/compile-fail/modules/missing.tp:1:8: error: module 'modules.missing' not found
 - .exit
 1
 -- */

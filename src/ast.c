@@ -322,7 +322,7 @@ ProgramNode *create_program() {
     if (debug) printf("- 创建程序节点\n");
     ProgramNode *program = (ProgramNode *)malloc(sizeof(ProgramNode));
     if (!program) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     program->base.type = NODE_PROGRAM;
@@ -336,7 +336,7 @@ ImportNode *create_import(
     const char *module_name, const char *alias, const char *filename, int line, int column) {
     ImportNode *import_node = (ImportNode *)malloc(sizeof(ImportNode));
     if (!import_node) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     import_node->base.type = NODE_IMPORT;
@@ -354,7 +354,7 @@ FunctionNode *create_function(char *name) {
     if (debug) printf("  - 创建函数节点: %s\n", name);
     FunctionNode *function = (FunctionNode *)malloc(sizeof(FunctionNode));
     if (!function) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     function->base.type = NODE_FUNCTION;
@@ -375,7 +375,7 @@ FunctionNode *create_function(char *name) {
 IdentifierNode *create_identifier(char *name) {
     IdentifierNode *identifier = (IdentifierNode *)malloc(sizeof(IdentifierNode));
     if (!identifier) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     identifier->base.type = NODE_IDENTIFIER;
@@ -388,7 +388,7 @@ IdentifierNode *create_identifier(char *name) {
 LiteralNode *create_int_literal(uint64_t value) {
     LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
     if (!literal) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     literal->base.type = NODE_LITERAL;
@@ -409,7 +409,7 @@ LiteralNode *create_int_literal_text(const char *value) {
 LiteralNode *create_string_literal(char *value) {
     LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
     if (!literal) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     literal->base.type = NODE_LITERAL;
@@ -424,7 +424,7 @@ LiteralNode *create_string_literal(char *value) {
 LiteralNode *create_float_literal(double value) {
     LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
     if (!literal) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     literal->base.type = NODE_LITERAL;
@@ -439,7 +439,7 @@ LiteralNode *create_float_literal(double value) {
 LiteralNode *create_bool_literal(int value) {
     LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
     if (!literal) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     literal->base.type = NODE_LITERAL;
@@ -454,7 +454,7 @@ LiteralNode *create_bool_literal(int value) {
 ReturnNode *create_return(ASTNode *expression) {
     ReturnNode *return_node = (ReturnNode *)malloc(sizeof(ReturnNode));
     if (!return_node) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     return_node->base.type = NODE_RETURN;
@@ -467,7 +467,7 @@ ReturnNode *create_return(ASTNode *expression) {
 PrintNode *create_print() {
     PrintNode *print_node = (PrintNode *)malloc(sizeof(PrintNode));
     if (!print_node) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     print_node->base.type = NODE_PRINT;
@@ -497,7 +497,7 @@ void add_print_argument(PrintNode *print_node, ASTNode *argument) {
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right) {
     BinaryOpNode *binary_op = (BinaryOpNode *)malloc(sizeof(BinaryOpNode));
     if (!binary_op) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     binary_op->base.type = NODE_BINARY_OP;
@@ -512,7 +512,7 @@ BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode
 VarTypeNode *create_var_type(enum LiteralType type) {
     VarTypeNode *var_type = (VarTypeNode *)malloc(sizeof(VarTypeNode));
     if (!var_type) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     var_type->base.type = NODE_VAR_TYPE;
@@ -536,7 +536,7 @@ VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length) {
 VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression) {
     VarDeclNode *var_decl = (VarDeclNode *)malloc(sizeof(VarDeclNode));
     if (!var_decl) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     var_decl->base.type = NODE_VAR_DECL;
@@ -550,7 +550,7 @@ VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression)
 AssignmentNode *create_assignment(const char *name, ASTNode *expression) {
     AssignmentNode *assignment = (AssignmentNode *)malloc(sizeof(AssignmentNode));
     if (!assignment) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     assignment->base.type = NODE_ASSIGNMENT;
@@ -564,7 +564,7 @@ AssignmentNode *create_assignment(const char *name, ASTNode *expression) {
 ArrayLiteralNode *create_array_literal(void) {
     ArrayLiteralNode *array = (ArrayLiteralNode *)calloc(1, sizeof(ArrayLiteralNode));
     if (!array) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     array->base.type = NODE_ARRAY_LITERAL;
@@ -591,7 +591,7 @@ IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index) {
     IndexExpressionNode *expression =
         (IndexExpressionNode *)calloc(1, sizeof(IndexExpressionNode));
     if (!expression) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     expression->base.type = NODE_INDEX_EXPRESSION;
@@ -605,7 +605,7 @@ IndexAssignmentNode *create_index_assignment(
     IndexAssignmentNode *assignment =
         (IndexAssignmentNode *)calloc(1, sizeof(IndexAssignmentNode));
     if (!assignment) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     assignment->base.type = NODE_INDEX_ASSIGNMENT;
@@ -617,7 +617,7 @@ IndexAssignmentNode *create_index_assignment(
 FunctionCallNode *create_function_call(char *name) {
     FunctionCallNode *function_call = (FunctionCallNode *)malloc(sizeof(FunctionCallNode));
     if (!function_call) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     function_call->base.type = NODE_FUNCTION_CALL;
@@ -715,7 +715,7 @@ void add_argument(FunctionCallNode *function_call, ASTNode *argument) {
 IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, ASTNode *alternative) {
     IfStatementNode *if_node = (IfStatementNode *)malloc(sizeof(IfStatementNode));
     if (!if_node) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     if_node->base.type = NODE_IF_STATEMENT;
@@ -730,7 +730,7 @@ ForStatementNode *create_for_statement(
     ASTNode *initializer, ASTNode *condition, ASTNode *update, ASTNode *body) {
     ForStatementNode *for_node = (ForStatementNode *)malloc(sizeof(ForStatementNode));
     if (!for_node) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     for_node->base.type = NODE_FOR_STATEMENT;
@@ -745,7 +745,7 @@ ForStatementNode *create_for_statement(
 static ASTNode *create_control_statement(enum NodeType type) {
     ASTNode *node = (ASTNode *)malloc(sizeof(ASTNode));
     if (!node) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     node->type = type;

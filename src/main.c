@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
             if (i + 1 < argc) {
                 output_file = argv[++i];
             } else {
-                fprintf(stderr, "错误: -o 选项需要指定输出文件\n");
+                fprintf(stderr, "error: -o requires an output file\n"); // 中文：-o 选项需要指定输出文件
                 print_usage();
                 return 1;
             }
@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "-debug") == 0) {
             debug = 1;
         } else if (argv[i][0] == '-') {
-            fprintf(stderr, "错误: 未知选项 %s\n", argv[i]);
+            fprintf(stderr, "error: unknown option %s\n", argv[i]); // 中文：未知选项
             print_usage();
             return 1;
         } else if (strcmp(argv[i], "run") == 0 && !input_file && !run_native) {
@@ -78,7 +78,7 @@ int main(int argc, char *argv[]) {
         } else if (!input_file) {
             input_file = argv[i];
         } else {
-            fprintf(stderr, "错误: 多个输入文件\n");
+            fprintf(stderr, "error: multiple input files\n"); // 中文：多个输入文件
             print_usage();
             return 1;
         }
@@ -86,13 +86,13 @@ int main(int argc, char *argv[]) {
 
     // 检查输入文件
     if (!input_file) {
-        fprintf(stderr, "错误: 未指定输入文件\n");
+        fprintf(stderr, "error: no input file specified\n"); // 中文：未指定输入文件
         print_usage();
         return 1;
     }
 
     if (run_native && (emit_ir || emit_obj || run_lli || lex_only || parse_only)) {
-        fprintf(stderr, "错误: run 命令不能与其他输出或运行模式组合使用\n");
+        fprintf(stderr, "error: run cannot be combined with other output or execution modes\n"); // 中文：run 命令不能与其他输出或运行模式组合使用
         return 1;
     }
 
@@ -157,7 +157,7 @@ int main(int argc, char *argv[]) {
     if (emit_ir) {
         char *ir_file = output_file ? output_file : "output.ll";
         if (write_ir_to_file(codegen_context, ir_file) != 0) {
-            fprintf(stderr, "写入IR文件失败\n");
+            fprintf(stderr, "failed to write IR file\n"); // 中文：写入 IR 文件失败
             result = 1;
         } else {
             printf("IR代码已写入到 %s\n", ir_file);
@@ -165,7 +165,7 @@ int main(int argc, char *argv[]) {
     } else if (emit_obj) {
         char *obj_file = output_file ? output_file : "output.o";
         if (write_object_to_file(codegen_context, obj_file) != 0) {
-            fprintf(stderr, "写入目标文件失败\n");
+            fprintf(stderr, "failed to write object file\n"); // 中文：写入目标文件失败
             result = 1;
         } else {
             printf("目标文件已写入到 %s\n", obj_file);

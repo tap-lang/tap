@@ -7,8 +7,8 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/modules/alias_conflict.tp:2:8: 错误: 名称空间 'util' 已用于模块 'modules.math'
-tests/compile-fail/modules/alias_conflict.tp:1:8: 提示: 名称空间首次在此导入
+tests/compile-fail/modules/alias_conflict.tp:2:8: error: namespace 'util' is already used for module 'modules.math'
+tests/compile-fail/modules/alias_conflict.tp:1:8: note: namespace was first imported here
 - .exit
 1
 -- */

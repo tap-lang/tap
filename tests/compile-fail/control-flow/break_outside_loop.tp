@@ -12,7 +12,7 @@ Current token: break
    4  }
    5
 - .stderr
-Parse error: break 只能在 for 循环中使用 (file tests/compile-fail/control-flow/break_outside_loop.tp, line 2, column 5)
+Parse error: break can only be used inside a for loop (file tests/compile-fail/control-flow/break_outside_loop.tp, line 2, column 5)
 - .exit
 1
 -- */

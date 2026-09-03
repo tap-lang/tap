@@ -20,7 +20,7 @@ char *get_basename_no_ext(const char *input_file) {
 
     char *name = malloc(length + 1);
     if (!name) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
     }
     memcpy(name, filename, length);

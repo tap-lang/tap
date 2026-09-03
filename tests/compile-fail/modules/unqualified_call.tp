@@ -6,7 +6,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-错误：未定义的函数 'double'
+error: undefined function 'double'
 - .exit
 1
 -- */

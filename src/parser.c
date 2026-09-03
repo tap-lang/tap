@@ -14,7 +14,7 @@ void print_token(Token *token) {
 Parser *create_parser(Lexer *lexer) {
     Parser *parser = (Parser *)malloc(sizeof(Parser));
     if (!parser) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     parser->lexer = lexer;
@@ -75,7 +75,7 @@ void print_code_line(const char *source_code, int line, int context_lines) {
 
 // 解析错误处理
 void parser_error(Parser *parser, const char *message) {
-    fprintf(stderr, "Parse error: %s (file %s, line %d, column %d)\n", 
+    fprintf(stderr, "Parse error: %s (file %s, line %d, column %d)\n",  // 中文：解析错误：消息（文件、行、列）
             message,
             parser->lexer->filename,
             parser->current_token->line, 
@@ -98,7 +98,7 @@ static void consume(Parser *parser, enum TokenType expected_type) {
     } else {
         char message[256];
         // snprintf(message, sizeof(message), "期望 %s 类型的标记，但得到 %s 类型", TokenNames[expected_type], TokenNames[parser->current_token->type]);
-        snprintf(message, sizeof(message), "期望 标记 `%s`，但得到 `%s`", TokenNames[expected_type], TokenNames[parser->current_token->type]);
+        snprintf(message, sizeof(message), "expected token `%s`, but got `%s`", TokenNames[expected_type], TokenNames[parser->current_token->type]); // 中文：期望指定标记，但得到当前标记
         parser_error(parser, message);
     }
 }
@@ -132,7 +132,7 @@ static char *append_name_component(char *name, const char *component) {
     char *expanded = realloc(name, size);
     if (!expanded) {
         free(name);
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     strcat(expanded, ".");
@@ -143,7 +143,7 @@ static char *append_name_component(char *name, const char *component) {
 static ImportNode *parse_import(Parser *parser) {
     consume(parser, TOKEN_IMPORT);
     if (!is_module_component(parser->current_token)) {
-        parser_error(parser, "期望模块名");
+        parser_error(parser, "expected module name"); // 中文：期望模块名
     }
 
     int line = parser->current_token->line;
@@ -155,7 +155,7 @@ static ImportNode *parse_import(Parser *parser) {
         consume(parser, TOKEN_DOT);
         if (!is_module_component(parser->current_token)) {
             free(module_name);
-            parser_error(parser, "期望模块路径标识符");
+            parser_error(parser, "expected module path identifier"); // 中文：期望模块路径标识符
         }
 
         module_name = append_name_component(module_name, parser->current_token->lexeme);
@@ -169,7 +169,7 @@ static ImportNode *parse_import(Parser *parser) {
         if (!is_module_component(parser->current_token)) {
             free(alias);
             free(module_name);
-            parser_error(parser, "期望模块别名");
+            parser_error(parser, "expected module alias"); // 中文：期望模块别名
         }
         free(alias);
         alias = strdup(parser->current_token->lexeme);
@@ -192,12 +192,12 @@ static VarTypeNode *parse_type(Parser *parser) {
         if (parser->current_token->type != TOKEN_I32 ||
             !isdigit((unsigned char)parser->current_token->lexeme[0])) {
             free_ast((ASTNode *)element_type);
-            parser_error(parser, "数组长度必须是正整数字面量");
+            parser_error(parser, "array length must be a positive integer literal"); // 中文：数组长度必须是正整数字面量
         }
         uint64_t length = strtoull(parser->current_token->lexeme, NULL, 10);
         if (length == 0 || length > INT64_MAX) {
             free_ast((ASTNode *)element_type);
-            parser_error(parser, "数组长度必须在 1 到 INT64_MAX 之间");
+            parser_error(parser, "array length must be between 1 and INT64_MAX"); // 中文：数组长度必须在 1 到 INT64_MAX 之间
         }
         consume(parser, TOKEN_I32);
         consume(parser, TOKEN_RBRACKET);
@@ -227,7 +227,7 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_BOOL: type = LITERAL_BOOL; break;
         case TOKEN_STRING: type = LITERAL_STRING; break;
         default:
-            parser_error(parser, "期望类型");
+            parser_error(parser, "expected type"); // 中文：期望类型
             return NULL;
     }
 
@@ -277,7 +277,7 @@ static ASTNode *parse_block(Parser *parser) {
             
             // 解析变量名
             if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "期望变量名");
+                parser_error(parser, "expected variable name"); // 中文：期望变量名
             }
             char *var_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
@@ -326,7 +326,7 @@ static ASTNode *parse_block(Parser *parser) {
             ASTNode *statement = parse_expression_statement(parser);
             add_statement(block, statement);
         } else {
-            parser_error(parser, "期望语句");
+            parser_error(parser, "expected statement"); // 中文：期望语句
         }
     }
     
@@ -346,7 +346,7 @@ static ASTNode *parse_if_statement(Parser *parser) {
     } else if (parser->current_token->type == TOKEN_ELSEIF) {
         consume(parser, TOKEN_ELSEIF);
     } else {
-        parser_error(parser, "期望 if 或 elseif 关键字");
+        parser_error(parser, "expected if or elseif keyword"); // 中文：期望 if 或 elseif 关键字
         return NULL;
     }
     
@@ -389,7 +389,7 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     
     // 解析函数名
     if (parser->current_token->type != TOKEN_IDENTIFIER) {
-        parser_error(parser, "期望函数名");
+        parser_error(parser, "expected function name"); // 中文：期望函数名
     }
     char *function_name = strdup(parser->current_token->lexeme);
     int function_line = parser->current_token->line;
@@ -433,7 +433,7 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
             consume(parser, TOKEN_COMMA);
             
             if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "期望参数名");
+                parser_error(parser, "expected parameter name"); // 中文：期望参数名
             }
             
             param_name = strdup(parser->current_token->lexeme);
@@ -518,7 +518,7 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
             
             // 解析变量名
             if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "期望变量名");
+                parser_error(parser, "expected variable name"); // 中文：期望变量名
             }
             char *var_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
@@ -567,7 +567,7 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
             ASTNode *statement = parse_expression_statement(parser);
             add_statement(function, statement);
         } else {
-            parser_error(parser, "期望语句");
+            parser_error(parser, "expected statement"); // 中文：期望语句
         }
     }
     
@@ -634,7 +634,7 @@ static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
         ASTNode *updated = (ASTNode *)create_binary_op(operation, expression, one);
         statement = (ASTNode *)create_assignment(name, updated);
     } else if (!expression || expression->type != NODE_FUNCTION_CALL) {
-        parser_error(parser, "期望赋值、自增、自减或函数调用");
+        parser_error(parser, "expected assignment, increment, decrement, or function call"); // 中文：期望赋值、自增、自减或函数调用
     }
 
     if (consume_semicolon) consume(parser, TOKEN_SEMICOLON);
@@ -644,7 +644,7 @@ static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
 static VarDeclNode *parse_for_initializer(Parser *parser) {
     consume(parser, TOKEN_LET);
     if (parser->current_token->type != TOKEN_IDENTIFIER) {
-        parser_error(parser, "期望变量名");
+        parser_error(parser, "expected variable name"); // 中文：期望变量名
     }
 
     char *name = strdup(parser->current_token->lexeme);
@@ -700,8 +700,8 @@ static ASTNode *parse_loop_control_statement(Parser *parser) {
     enum TokenType type = parser->current_token->type;
     if (parser->loop_depth == 0) {
         parser_error(parser, type == TOKEN_BREAK
-            ? "break 只能在 for 循环中使用"
-            : "continue 只能在 for 循环中使用");
+            ? "break can only be used inside a for loop" // 中文：break 只能在 for 循环中使用
+            : "continue can only be used inside a for loop"); // 中文：continue 只能在 for 循环中使用
     }
 
     consume(parser, type);
@@ -722,12 +722,12 @@ static ASTNode *parse_array_literal(Parser *parser) {
             if (parser->current_token->type != TOKEN_I32 ||
                 !isdigit((unsigned char)parser->current_token->lexeme[0])) {
                 free_ast((ASTNode *)array);
-                parser_error(parser, "数组重复初始化长度必须是正整数数字面量");
+                parser_error(parser, "array repeat initializer length must be a positive integer literal"); // 中文：数组重复初始化长度必须是正整数数字面量
             }
             uint64_t repeat_count = strtoull(parser->current_token->lexeme, NULL, 10);
             if (repeat_count == 0 || repeat_count > INT64_MAX) {
                 free_ast((ASTNode *)array);
-                parser_error(parser, "数组重复初始化长度必须在 1 到 INT64_MAX 之间");
+                parser_error(parser, "array repeat initializer length must be between 1 and INT64_MAX"); // 中文：数组重复初始化长度必须在 1 到 INT64_MAX 之间
             }
             consume(parser, TOKEN_I32);
             set_array_repeat(array, repeat_count);
@@ -769,7 +769,7 @@ static ASTNode *parse_primary(Parser *parser) {
             consume(parser, TOKEN_DOT);
             if (!is_module_component(parser->current_token)) {
                 free(name);
-                parser_error(parser, "期望名称空间成员");
+                parser_error(parser, "expected namespace member"); // 中文：期望名称空间成员
             }
             name = append_name_component(name, parser->current_token->lexeme);
             consume(parser, parser->current_token->type);
@@ -787,7 +787,7 @@ static ASTNode *parse_primary(Parser *parser) {
 
         if (strchr(name, '.')) {
             free(name);
-            parser_error(parser, "名称空间成员必须作为函数调用使用");
+            parser_error(parser, "namespace members must be used as function calls"); // 中文：名称空间成员必须作为函数调用使用
         }
 
         IdentifierNode *identifier = create_identifier(name);
@@ -801,7 +801,7 @@ static ASTNode *parse_primary(Parser *parser) {
         return expression;
     }
 
-    parser_error(parser, "期望因子（整数、字符串、数组、标识符或括号表达式）");
+    parser_error(parser, "expected factor (integer, string, array, identifier, or parenthesized expression)"); // 中文：期望因子（整数、字符串、数组、标识符或括号表达式）
     return NULL;
 }
 
@@ -874,7 +874,7 @@ static ASTNode *parse_comparison(Parser *parser) {
                 op_type = OP_GREATER_THAN_OR_EQUAL;
                 break;
             default:
-                parser_error(parser, "期望比较操作符");
+                parser_error(parser, "expected comparison operator"); // 中文：期望比较操作符
                 return NULL;
         }
         
@@ -915,14 +915,14 @@ ProgramNode *parse_program(Parser *parser) {
             // Only functions are supported by the first external ABI version.
             consume(parser, TOKEN_EXTERN);
             if (parser->current_token->type != TOKEN_FN) {
-                parser_error(parser, "extern 后必须是函数声明");
+                parser_error(parser, "extern must be followed by a function declaration"); // 中文：extern 后必须是函数声明
             }
             add_function(program, parse_function(parser, 1));
         } else if (parser->current_token->type == TOKEN_FN) {
             FunctionNode *function = parse_function(parser, 0);
             add_function(program, function);
         } else {
-            parser_error(parser, "期望模块导入或函数定义");
+            parser_error(parser, "expected module import or function definition"); // 中文：期望模块导入或函数定义
         }
     }
     

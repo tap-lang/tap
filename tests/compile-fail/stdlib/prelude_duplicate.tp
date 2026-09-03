@@ -8,7 +8,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/stdlib/prelude_duplicate.tp:1:4: 错误: 重复函数定义 'min'
+tests/compile-fail/stdlib/prelude_duplicate.tp:1:4: error: duplicate function definition 'min'
 - .exit
 1
 -- */

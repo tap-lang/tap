@@ -9,7 +9,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-错误：未定义的变量 'missing'
+error: undefined variable 'missing'
 - .exit
 1
 -- */

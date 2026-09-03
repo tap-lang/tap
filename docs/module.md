@@ -130,20 +130,20 @@ Module Loader 使用规范化绝对路径标识模块，并在解析模块前记
 找不到模块时，错误指向导入声明中的模块名：
 
 ```text
-tests/compile-fail/modules/missing.tp:1:8: 错误: 找不到模块 'modules.missing'
+tests/compile-fail/modules/missing.tp:1:8: error: module 'modules.missing' not found
 ```
 
 两个模块使用同一名称空间时，错误包含两条导入的位置：
 
 ```text
-tests/compile-fail/modules/alias_conflict.tp:2:8: 错误: 名称空间 'util' 已用于模块 'modules.math'
-tests/compile-fail/modules/alias_conflict.tp:1:8: 提示: 名称空间首次在此导入
+tests/compile-fail/modules/alias_conflict.tp:2:8: error: namespace 'util' is already used for module 'modules.math'
+tests/compile-fail/modules/alias_conflict.tp:1:8: note: namespace was first imported here
 ```
 
 省略名称空间调用且当前文件、Prelude 中均不存在该函数时，会按普通未定义函数报错：
 
 ```text
-错误：未定义的函数 'double'
+error: undefined function 'double'
 ```
 
 ## 调试与测试

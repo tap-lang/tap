@@ -5,7 +5,7 @@ extern int debug;
 static char *read_source_file(const char *filename) {
     FILE *file = fopen(filename, "r");
     if (!file) {
-        fprintf(stderr, "无法打开文件: %s\n", filename);
+        fprintf(stderr, "failed to open file: %s\n", filename); // 中文：无法打开文件
         return NULL;
     }
 
@@ -15,7 +15,7 @@ static char *read_source_file(const char *filename) {
 
     char *buffer = (char *)malloc((size_t)file_size + 1);
     if (!buffer) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         fclose(file);
         return NULL;
     }
@@ -36,7 +36,7 @@ Lexer *create_lexer(const char *filename) {
     Lexer *lexer = (Lexer *)malloc(sizeof(Lexer));
     if (!lexer) {
         free(source);
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     lexer->filename = filename;
@@ -111,7 +111,7 @@ static void skip_block_comment(Lexer *lexer) {
         }
     }
 
-    fprintf(stderr, "%s:%d:%d: 错误: 未闭合的多行注释\n",
+    fprintf(stderr, "%s:%d:%d: error: unterminated block comment\n", // 中文：未闭合的多行注释
             lexer->filename, start_line, start_column);
     exit(1);
 }
@@ -153,14 +153,14 @@ static void skip_whitespace(Lexer *lexer) {
 static Token *create_token(Lexer *lexer, enum TokenType type, const char *start, const char *end) {
     Token *token = (Token *)malloc(sizeof(Token));
     if (!token) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     
     int length = end - start;
     token->lexeme = (char *)malloc(length + 1);
     if (!token->lexeme) {
-        fprintf(stderr, "内存分配失败\n");
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
     }
     
@@ -301,7 +301,7 @@ static Token *string(Lexer *lexer) {
                 buffer_size = 128;
                 buffer = (char *)malloc(buffer_size);
                 if (!buffer) {
-                    fprintf(stderr, "内存分配失败\n");
+                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
                     exit(1);
                 }
                 // 复制之前的字符，注意这里的偏移量是lexer->current - start - 1
@@ -315,7 +315,7 @@ static Token *string(Lexer *lexer) {
                 buffer_size *= 2;
                 buffer = (char *)realloc(buffer, buffer_size);
                 if (!buffer) {
-                    fprintf(stderr, "内存分配失败\n");
+                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
                     exit(1);
                 }
             }
@@ -352,7 +352,7 @@ static Token *string(Lexer *lexer) {
     }
     
     if (is_at_end(lexer)) {
-        fprintf(stderr, "错误：未闭合的字符串 (行 %d, 列 %d)\n", lexer->line, lexer->column);
+        fprintf(stderr, "error: unterminated string (line %d, column %d)\n", lexer->line, lexer->column); // 中文：未闭合的字符串
         exit(1);
     }
     
@@ -373,7 +373,7 @@ static Token *string(Lexer *lexer) {
         buffer_size = 128;
         buffer = (char *)malloc(buffer_size);
         if (!buffer) {
-            fprintf(stderr, "内存分配失败\n");
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             exit(1);
         }
         
@@ -522,7 +522,7 @@ Token *get_next_token(Lexer *lexer) {
     }
     
     // 未识别的字符
-    fprintf(stderr, "错误：未识别的字符 '%c' (文件 %s, 行 %d, 列 %d)\n", c, 
+    fprintf(stderr, "error: unrecognized character '%c' (file %s, line %d, column %d)\n", c, // 中文：未识别的字符 
         lexer->filename, lexer->line, lexer->column - 1
     );
     exit(1);

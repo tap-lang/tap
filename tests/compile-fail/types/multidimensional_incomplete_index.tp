@@ -7,7 +7,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-错误：多维数组必须索引到标量元素
+error: multidimensional arrays must be indexed to a scalar element
 - .exit
 1
 -- */
