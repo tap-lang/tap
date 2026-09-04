@@ -1,14 +1,13 @@
 fn main(): i32 {
     let minimum: i32 = min(7, 3);
     let maximum: i32 = max(7, 3);
-    let absolute: i32 = abs(-9);
-    print("%d %d %d\n", minimum, maximum, absolute);
+    print("%d %d\n", minimum, maximum);
     return 0;
 }
 
 /** -- test
 - .stdout
-3 7 9
+3 7
 - .exit
 0
 -- */

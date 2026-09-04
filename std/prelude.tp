@@ -37,10 +37,3 @@ fn max(a: i32, b: i32): i32 {
     }
 }
 
-fn abs(value: i32): i32 {
-    if (value < 0) {
-        return -value;
-    } else {
-        return value;
-    }
-}

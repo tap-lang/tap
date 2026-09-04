@@ -1,3 +1,13 @@
+// 平方
 fn square(value: i32): i32 {
     return value * value;
+}
+
+// 绝对值
+fn abs(value: i32): i32 {
+    if (value < 0) {
+        return -value;
+    } else {
+        return value;
+    }
 }

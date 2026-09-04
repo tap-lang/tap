@@ -132,8 +132,9 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (load_modules(program, input_file, argv[0]) != 0 ||
-        load_prelude(program, argv[0]) != 0) {
+    if (load_modules(program, input_file, argv[0]) != 0 
+        || load_prelude(program, argv[0]) != 0
+    ) {
         free_ast((ASTNode *)program);
         free_parser(parser);
         free_lexer(lexer);
