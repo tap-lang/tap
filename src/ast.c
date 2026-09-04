@@ -170,7 +170,7 @@ static void dump_stmt(ASTNode *n, int depth) {
     case NODE_VAR_DECL: {
         VarDeclNode *v = (VarDeclNode *)n;
         print_indent(depth);
-        printf("VarDecl: %s", v->name);
+        printf("%s: %s", v->is_const ? "ConstDecl" : "VarDecl", v->name);
         if (v->type) {
             printf(" : ");
             print_var_type(v->type);
@@ -533,7 +533,8 @@ VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length) {
     return type;
 }
 
-VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression) {
+VarDeclNode *create_var_decl(
+    char *name, VarTypeNode *type, ASTNode *expression, int is_const) {
     VarDeclNode *var_decl = (VarDeclNode *)malloc(sizeof(VarDeclNode));
     if (!var_decl) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -544,6 +545,7 @@ VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression)
     var_decl->name = strdup(name);
     var_decl->type = type;
     var_decl->expression = expression;
+    var_decl->is_const = is_const;
     return var_decl;
 }
 

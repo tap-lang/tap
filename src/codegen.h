@@ -22,6 +22,7 @@ typedef struct Symbol {
     LLVMValueRef value;
     enum LiteralType type;
     const VarTypeNode *array_type; // 数组符号借用 AST 中的递归类型
+    int is_const;
     struct Symbol *next;
 } Symbol;
 

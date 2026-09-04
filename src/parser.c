@@ -235,6 +235,38 @@ static VarTypeNode *parse_type(Parser *parser) {
     return create_var_type(type);
 }
 
+static VarDeclNode *parse_var_decl(Parser *parser, int consume_semicolon) {
+    enum TokenType declaration_type = parser->current_token->type;
+    int is_const = declaration_type == TOKEN_CONST;
+    if (declaration_type != TOKEN_LET && declaration_type != TOKEN_CONST) {
+        parser_error(parser, "expected let or const declaration"); // 中文：期望 let 或 const 声明
+    }
+    consume(parser, declaration_type);
+
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, is_const ? "expected constant name" : "expected variable name"); // 中文：期望常量名或变量名
+    }
+    char *name = strdup(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    VarTypeNode *type = NULL;
+    if (parser->current_token->type == TOKEN_COLON) {
+        consume(parser, TOKEN_COLON);
+        type = parse_type(parser);
+    } else if (is_const) {
+        free(name);
+        parser_error(parser, "constant declarations require an explicit type"); // 中文：常量声明必须显式指定类型
+    }
+
+    consume(parser, TOKEN_ASSIGN);
+    ASTNode *expression = parse_expression(parser);
+    if (consume_semicolon) consume(parser, TOKEN_SEMICOLON);
+
+    VarDeclNode *declaration = create_var_decl(name, type, expression, is_const);
+    free(name);
+    return declaration;
+}
+
 // 解析代码块（由花括号包围的语句序列）
 static ASTNode *parse_block(Parser *parser) {
     // 创建一个临时的函数节点来存储代码块中的语句
@@ -271,35 +303,9 @@ static ASTNode *parse_block(Parser *parser) {
             
             // 添加到代码块
             add_statement(block, (ASTNode *)print_node);
-        } else if (parser->current_token->type == TOKEN_LET) {
-            // 解析let语句
-            consume(parser, TOKEN_LET);
-            
-            // 解析变量名
-            if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "expected variable name"); // 中文：期望变量名
-            }
-            char *var_name = strdup(parser->current_token->lexeme);
-            consume(parser, TOKEN_IDENTIFIER);
-            
-            // 解析可选的类型注解
-            VarTypeNode *type = NULL;
-            if (parser->current_token->type == TOKEN_COLON) {
-                consume(parser, TOKEN_COLON);
-                type = parse_type(parser);
-            }
-            
-            // 解析等号
-            consume(parser, TOKEN_ASSIGN);
-            
-            // 解析表达式作为变量的初始值
-            ASTNode *expression = parse_expression(parser);
-            
-            consume(parser, TOKEN_SEMICOLON);
-            
-            // 创建变量声明节点并添加到代码块
-            VarDeclNode *var_decl = create_var_decl(var_name, type, expression);
-            free(var_name);
+        } else if (parser->current_token->type == TOKEN_LET ||
+                   parser->current_token->type == TOKEN_CONST) {
+            VarDeclNode *var_decl = parse_var_decl(parser, 1);
             add_statement(block, (ASTNode *)var_decl);
         } else if (parser->current_token->type == TOKEN_RETURN) {
             // 解析返回语句
@@ -512,35 +518,9 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
             
             // 添加到函数体
             add_statement(function, (ASTNode *)print_node);
-        } else if (parser->current_token->type == TOKEN_LET) {
-            // 解析let语句
-            consume(parser, TOKEN_LET);
-            
-            // 解析变量名
-            if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "expected variable name"); // 中文：期望变量名
-            }
-            char *var_name = strdup(parser->current_token->lexeme);
-            consume(parser, TOKEN_IDENTIFIER);
-            
-            // 解析可选的类型注解
-            VarTypeNode *type = NULL;
-            if (parser->current_token->type == TOKEN_COLON) {
-                consume(parser, TOKEN_COLON);
-                type = parse_type(parser);
-            }
-            
-            // 解析等号
-            consume(parser, TOKEN_ASSIGN);
-            
-            // 解析表达式作为变量的初始值
-            ASTNode *expression = parse_expression(parser);
-            
-            consume(parser, TOKEN_SEMICOLON);
-            
-            // 创建变量声明节点并添加到函数体
-            VarDeclNode *var_decl = create_var_decl(var_name, type, expression);
-            free(var_name);
+        } else if (parser->current_token->type == TOKEN_LET ||
+                   parser->current_token->type == TOKEN_CONST) {
+            VarDeclNode *var_decl = parse_var_decl(parser, 1);
             add_statement(function, (ASTNode *)var_decl);
         } else if (parser->current_token->type == TOKEN_RETURN) {
             // 解析返回语句
@@ -642,25 +622,7 @@ static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
 }
 
 static VarDeclNode *parse_for_initializer(Parser *parser) {
-    consume(parser, TOKEN_LET);
-    if (parser->current_token->type != TOKEN_IDENTIFIER) {
-        parser_error(parser, "expected variable name"); // 中文：期望变量名
-    }
-
-    char *name = strdup(parser->current_token->lexeme);
-    consume(parser, TOKEN_IDENTIFIER);
-
-    VarTypeNode *type = NULL;
-    if (parser->current_token->type == TOKEN_COLON) {
-        consume(parser, TOKEN_COLON);
-        type = parse_type(parser);
-    }
-
-    consume(parser, TOKEN_ASSIGN);
-    ASTNode *expression = parse_expression(parser);
-    VarDeclNode *declaration = create_var_decl(name, type, expression);
-    free(name);
-    return declaration;
+    return parse_var_decl(parser, 0);
 }
 
 static ASTNode *parse_for_statement(Parser *parser) {
@@ -668,7 +630,8 @@ static ASTNode *parse_for_statement(Parser *parser) {
     consume(parser, TOKEN_LPAREN);
 
     ASTNode *initializer = NULL;
-    if (parser->current_token->type == TOKEN_LET) {
+    if (parser->current_token->type == TOKEN_LET ||
+        parser->current_token->type == TOKEN_CONST) {
         initializer = (ASTNode *)parse_for_initializer(parser);
     } else if (parser->current_token->type != TOKEN_SEMICOLON) {
         initializer = parse_simple_statement(parser, 0);

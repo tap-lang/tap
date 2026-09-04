@@ -47,7 +47,7 @@ typedef struct ASTNode {
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
 | `NODE_PRINT` | `PrintNode` | `arguments` 指向打印参数链表 |
 | `NODE_BINARY_OP` | `BinaryOpNode` | 操作符、左操作数和右操作数 |
-| `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型和初始化表达式 |
+| `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型、初始化表达式，以及 `is_const` 声明标记 |
 | `NODE_ASSIGNMENT` | `AssignmentNode` | 被赋值变量名和新的值表达式 |
 | `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
 | `NODE_INDEX_EXPRESSION` | `IndexExpressionNode` | 数组表达式和下标表达式 |

@@ -115,7 +115,7 @@ static Symbol *find_symbol(CodeGenContext *context, const char *name) {
 }
 
 static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRef value,
-                          enum LiteralType type) {
+                          enum LiteralType type, int is_const) {
     Symbol *symbol = malloc(sizeof(Symbol));
     if (!symbol) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -125,13 +125,15 @@ static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRe
     symbol->value = value;
     symbol->type = type;
     symbol->array_type = NULL;
+    symbol->is_const = is_const;
     symbol->next = context->symbols;
     context->symbols = symbol;
 }
 
 static void insert_array_symbol(CodeGenContext *context, const char *name,
-                                LLVMValueRef value, const VarTypeNode *array_type) {
-    insert_symbol(context, name, value, array_type->type);
+                                LLVMValueRef value, const VarTypeNode *array_type,
+                                int is_const) {
+    insert_symbol(context, name, value, array_type->type, is_const);
     // The declaration AST outlives Codegen, so no type copy is required here.
     context->symbols->array_type = array_type;
 }
@@ -591,6 +593,10 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
         fprintf(stderr, "error: undefined variable '%s'\n", assignment->name); // 中文：未定义的变量
         exit(1);
     }
+    if (symbol->is_const) {
+        fprintf(stderr, "error: cannot assign to constant '%s'\n", assignment->name); // 中文：不能给常量赋值
+        exit(1);
+    }
     if (symbol->array_type) {
         fprintf(stderr, "error: assigning an entire array is not supported yet\n"); // 中文：第一版数组暂不支持整个数组赋值
         exit(1);
@@ -660,8 +666,26 @@ static void generate_array_initializer(
 }
 
 
+static const char *index_base_name(ASTNode *expression) {
+    if (!expression) return NULL;
+    if (expression->type == NODE_IDENTIFIER) {
+        return ((IdentifierNode *)expression)->name;
+    }
+    if (expression->type == NODE_INDEX_EXPRESSION) {
+        return index_base_name(((IndexExpressionNode *)expression)->array);
+    }
+    return NULL;
+}
+
 static void generate_index_assignment(
     CodeGenContext *context, IndexAssignmentNode *assignment) {
+    const char *base_name = index_base_name((ASTNode *)assignment->target);
+    Symbol *symbol = base_name ? find_symbol(context, base_name) : NULL;
+    if (symbol && symbol->is_const) {
+        fprintf(stderr, "error: cannot assign to constant '%s'\n", base_name); // 中文：不能给常量赋值
+        exit(1);
+    }
+
     const VarTypeNode *element_type = NULL;
     LLVMValueRef address = generate_index_address(
         context, assignment->target, &element_type);
@@ -845,7 +869,8 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     LLVMValueRef storage = create_entry_alloca(
                         context, array_type, declaration->name);
                     insert_array_symbol(
-                        context, declaration->name, storage, declaration->type);
+                        context, declaration->name, storage, declaration->type,
+                        declaration->is_const);
                     // Initialization follows the same recursive shape as the declared type.
                     generate_array_initializer(
                         context, storage, declaration->type, literal);
@@ -862,7 +887,7 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 LLVMTypeRef llvm_type = get_llvm_type(context, type);
                 LLVMValueRef storage = create_entry_alloca(
                     context, llvm_type, declaration->name);
-                insert_symbol(context, declaration->name, storage, type);
+                insert_symbol(context, declaration->name, storage, type, declaration->is_const);
                 if (declaration->expression) {
                     LLVMValueRef value = generate_expression_as(
                         context, declaration->expression, type);
@@ -1043,7 +1068,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
             LLVMValueRef value = LLVMGetParam(llvm_function, param_index);
             LLVMSetValueName2(value, identifier->name, strlen(identifier->name));
             LLVMBuildStore(context->builder, value, storage);
-            insert_symbol(context, identifier->name, storage, type);
+            insert_symbol(context, identifier->name, storage, type, 0);
             param = param->next;
             param_index++;
         }

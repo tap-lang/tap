@@ -160,6 +160,7 @@ typedef struct {
     char *name;            // 变量名
     VarTypeNode *type;     // 变量类型
     ASTNode *expression;   // 初始化表达式
+    int is_const;          // 是否为 const 常量声明
 } VarDeclNode;
 
 // 赋值语句节点
@@ -218,7 +219,8 @@ ReturnNode *create_return(ASTNode *expression);
 PrintNode *create_print();
 void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
-VarDeclNode *create_var_decl(char *name, VarTypeNode *type, ASTNode *expression);
+VarDeclNode *create_var_decl(
+    char *name, VarTypeNode *type, ASTNode *expression, int is_const);
 AssignmentNode *create_assignment(const char *name, ASTNode *expression);
 ArrayLiteralNode *create_array_literal(void);
 void add_array_element(ArrayLiteralNode *array, ASTNode *element);
