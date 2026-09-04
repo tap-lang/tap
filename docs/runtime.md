@@ -3,18 +3,20 @@
 4yue Runtime 使用稳定的 C ABI 提供需要操作系统的能力。编译器支持无函数体的外部声明：
 
 ```text
-extern fn yue_sleep_ms(milliseconds: i32): i32;
+extern fn __4yue_sleep_ms(milliseconds: i32): i32;
 ```
 
-普通程序不应直接使用 `yue_` 前缀符号。[`std/prelude.tp`](../std/prelude.tp)
+普通程序不应直接使用 `__4yue_` 前缀符号。[`std/prelude.tp`](../std/prelude.tp)
 将它们封装为以下公共函数：
 
 | 函数 | 行为 |
 |---|---|
-| `read_key(): i32` | 非阻塞读取一个按键；方向键归一化为 `w/s/a/d`，无按键或 stdin 不是终端时返回 `-1` |
+| `read_key(): i32` | 非阻塞读取一个真实键值；无按键或 stdin 不是终端时返回 `-1` |
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，负数或系统错误返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
+
+说明：POSIX 终端方向键按原始 ANSI 序列逐字节返回，通常是 `27`、`91`、`65/66/67/68`；Windows 扩展方向键返回第二个 scan code，通常是 `72/80/77/75`。
 
 ## 构建与加载
 

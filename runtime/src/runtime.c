@@ -20,7 +20,6 @@
 // POSIX terminals stay in raw mode between polls and are restored at process exit.
 static struct termios original_terminal;
 static int terminal_is_raw = 0;
-static int ansi_escape_state = 0;
 
 static void restore_terminal(void) {
     if (terminal_is_raw) {
@@ -74,58 +73,25 @@ static int read_terminal_byte(void) {
     unsigned char key = 0;
     return read(STDIN_FILENO, &key, 1) == 1 ? (int)key : -1;
 }
-
-static int32_t decode_ansi_key(int key) {
-    // POSIX arrow keys arrive as ESC, '[', and one direction byte.
-    if (ansi_escape_state == 0) {
-        if (key == 27) {
-            ansi_escape_state = 1;
-            return -1;
-        }
-        return (int32_t)key;
-    }
-    if (ansi_escape_state == 1) {
-        ansi_escape_state = key == '[' ? 2 : 0;
-        return -1;
-    }
-
-    ansi_escape_state = 0;
-    if (key == 'A') return 'w';
-    if (key == 'B') return 's';
-    if (key == 'C') return 'd';
-    if (key == 'D') return 'a';
-    return -1;
-}
 #endif
 
-int32_t yue_read_key(void) {
+int32_t __4yue_read_key(void) {
 #ifdef _WIN32
-    // Windows arrow keys use a prefix byte followed by a direction scan code.
+    // Windows arrow and function keys use a prefix byte followed by a scan code.
     if (!_kbhit()) return -1;
     int key = _getch();
     if (key != 0 && key != 224) return (int32_t)key;
 
-    int direction = _getch();
-    if (direction == 72) return 'w';
-    if (direction == 80) return 's';
-    if (direction == 77) return 'd';
-    if (direction == 75) return 'a';
-    return -1;
+    return (int32_t)_getch();
 #else
     // Non-interactive stdin has no terminal state and therefore no key event.
     if (configure_terminal() != 0) return -1;
 
-    // Consume all currently available sequence bytes in one frame when possible.
-    for (;;) {
-        int key = read_terminal_byte();
-        if (key < 0) return -1;
-        int32_t decoded = decode_ansi_key(key);
-        if (decoded >= 0) return decoded;
-    }
+    return (int32_t)read_terminal_byte();
 #endif
 }
 
-int32_t yue_sleep_ms(int32_t milliseconds) {
+int32_t __4yue_sleep_ms(int32_t milliseconds) {
     if (milliseconds < 0) return -1;
 
 #ifdef _WIN32
@@ -144,7 +110,7 @@ int32_t yue_sleep_ms(int32_t milliseconds) {
     return 0;
 }
 
-int32_t yue_clear_screen(void) {
+int32_t __4yue_clear_screen(void) {
 #ifdef _WIN32
     // Enable ANSI escape processing for modern Windows terminals when possible.
     HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -159,7 +125,7 @@ int32_t yue_clear_screen(void) {
     return fflush(stdout) == 0 ? 0 : -1;
 }
 
-int32_t yue_random(int32_t maximum) {
+int32_t __4yue_random(int32_t maximum) {
     static uint32_t state = 0;
     if (maximum <= 0) return 0;
 

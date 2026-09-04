@@ -94,11 +94,22 @@ fn main(): i32 {
         }
         print("\n");
 
-        // Runtime normalizes arrow keys to the same ASCII codes as WASD.
+        // read_key returns raw key values: WASD ASCII, POSIX arrow bytes A/B/C/D,
+        // and Windows arrow scan codes 72/80/77/75.
         let key: i32 = read_key();
         if (key == 113) {
             break;
         } elseif (key == 119) {
+            if (direction_y != 1) {
+                direction_x = 0;
+                direction_y = -1;
+            }
+        } elseif (key == 65) {
+            if (direction_y != 1) {
+                direction_x = 0;
+                direction_y = -1;
+            }
+        } elseif (key == 72) {
             if (direction_y != 1) {
                 direction_x = 0;
                 direction_y = -1;
@@ -108,7 +119,27 @@ fn main(): i32 {
                 direction_x = 0;
                 direction_y = 1;
             }
+        } elseif (key == 66) {
+            if (direction_y != -1) {
+                direction_x = 0;
+                direction_y = 1;
+            }
+        } elseif (key == 80) {
+            if (direction_y != -1) {
+                direction_x = 0;
+                direction_y = 1;
+            }
         } elseif (key == 97) {
+            if (direction_x != 1) {
+                direction_x = -1;
+                direction_y = 0;
+            }
+        } elseif (key == 68) {
+            if (direction_x != 1) {
+                direction_x = -1;
+                direction_y = 0;
+            }
+        } elseif (key == 75) {
             if (direction_x != 1) {
                 direction_x = -1;
                 direction_y = 0;
@@ -118,8 +149,17 @@ fn main(): i32 {
                 direction_x = 1;
                 direction_y = 0;
             }
+        } elseif (key == 67) {
+            if (direction_x != -1) {
+                direction_x = 1;
+                direction_y = 0;
+            }
+        } elseif (key == 77) {
+            if (direction_x != -1) {
+                direction_x = 1;
+                direction_y = 0;
+            }
         }
-
         // A 160 ms frame interval reduces the original 120 ms update rate to 75%.
         sleep_ms(160);
         let next_x: i32 = snake_x[0] + direction_x;

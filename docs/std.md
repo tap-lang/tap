@@ -19,10 +19,12 @@
 | --- | --- |
 | `min(a: i32, b: i32): i32` | 返回两个 `i32` 中较小的值 |
 | `max(a: i32, b: i32): i32` | 返回两个 `i32` 中较大的值 |
-| `read_key(): i32` | 非阻塞读取按键；方向键归一化为 `w/s/a/d`，无按键时返回 `-1` |
+| `read_key(): i32` | 非阻塞读取真实键值；无按键时返回 `-1` |
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，失败返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | 当 `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
+
+说明：`read_key()` 返回 Runtime 读到的真实键值，不会把方向键映射为 WASD。POSIX 方向键通常依次返回 `27`、`91`、`65/66/67/68`；Windows 方向键通常返回 `72/80/77/75`。
 
 `-lex` 和 `-parse` 只处理传入的源文件，不加载 Prelude。
 
@@ -53,18 +55,18 @@ fn main(): i32 {
 
 ## Runtime ABI
 
-Runtime 提供 Prelude 无法用纯 4yue 表达的能力。Runtime 函数使用 `yue_`
+Runtime 提供 Prelude 无法用纯 4yue 表达的能力。Runtime 函数使用 `__4yue_`
 前缀，避免和用户函数或 libc 符号冲突：
 
 ```text
-extern fn yue_read_key(): i32;
-extern fn yue_sleep_ms(milliseconds: i32): i32;
-extern fn yue_clear_screen(): i32;
-extern fn yue_random(maximum: i32): i32;
+extern fn __4yue_read_key(): i32;
+extern fn __4yue_sleep_ms(milliseconds: i32): i32;
+extern fn __4yue_clear_screen(): i32;
+extern fn __4yue_random(maximum: i32): i32;
 ```
 
 普通程序应调用 Prelude 封装后的 `read_key`、`sleep_ms`、`clear_screen`
-和 `random`，不要直接调用 `yue_` 前缀函数。
+和 `random`，不要直接调用 `__4yue_` 前缀函数。
 
 Runtime 的 C ABI 声明位于
 [`runtime/include/4yue_runtime.h`](../runtime/include/4yue_runtime.h)，实现位于
@@ -89,7 +91,7 @@ Runtime 的 C ABI 声明位于
 1. 如果函数可以用现有语言能力表达，放入 `std/*.tp`。
 2. 如果函数应默认可用，放入 `std/prelude.tp`。
 3. 如果函数需要操作系统、终端、时间、随机数、文件、内存等底层能力，先在
-   Runtime 中增加 `yue_` 前缀 C ABI，再在 Prelude 或模块中提供公共包装。
+   Runtime 中增加 `__4yue_` 前缀 C ABI，再在 Prelude 或模块中提供公共包装。
 
 新增或修改标准库函数后，需要同步：
 
