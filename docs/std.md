@@ -24,7 +24,7 @@
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | 当 `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
 
-说明：`read_key()` 返回 Runtime 读到的真实键值，不会把方向键映射为 WASD。POSIX 方向键通常依次返回 `27`、`91`、`65/66/67/68`；Windows 方向键通常返回 `72/80/77/75`。
+说明：`read_key()` 返回 Runtime 读到的真实键值，不会把方向键映射为 WASD。POSIX 方向键会在一次调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 方向键通常返回 `72/80/77/75`。
 
 `-lex` 和 `-parse` 只处理传入的源文件，不加载 Prelude。
 

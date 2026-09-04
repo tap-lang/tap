@@ -62,16 +62,31 @@ static int configure_terminal(void) {
     return 0;
 }
 
-static int read_terminal_byte(void) {
-    // Poll one byte without blocking so a partial ANSI sequence can continue next frame.
+static int read_terminal_byte_with_timeout(int timeout_ms) {
     fd_set input;
     FD_ZERO(&input);
     FD_SET(STDIN_FILENO, &input);
-    struct timeval timeout = {0, 0};
+    struct timeval timeout = {
+        .tv_sec = timeout_ms / 1000,
+        .tv_usec = (long)(timeout_ms % 1000) * 1000L
+    };
     if (select(STDIN_FILENO + 1, &input, NULL, NULL, &timeout) <= 0) return -1;
 
     unsigned char key = 0;
     return read(STDIN_FILENO, &key, 1) == 1 ? (int)key : -1;
+}
+
+static int read_terminal_byte(void) {
+    return read_terminal_byte_with_timeout(0);
+}
+
+static int read_escape_sequence_key(void) {
+    int marker = read_terminal_byte_with_timeout(10);
+    if (marker != '[' && marker != 'O') return 27;
+
+    int key = read_terminal_byte_with_timeout(10);
+    if (key == 'A' || key == 'B' || key == 'C' || key == 'D') return key;
+    return 27;
 }
 #endif
 
@@ -87,7 +102,9 @@ int32_t __4yue_read_key(void) {
     // Non-interactive stdin has no terminal state and therefore no key event.
     if (configure_terminal() != 0) return -1;
 
-    return (int32_t)read_terminal_byte();
+    int key = read_terminal_byte();
+    if (key != 27) return (int32_t)key;
+    return (int32_t)read_escape_sequence_key();
 #endif
 }
 

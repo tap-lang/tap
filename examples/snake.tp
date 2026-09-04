@@ -94,7 +94,7 @@ fn main(): i32 {
         }
         print("\n");
 
-        // read_key returns raw key values: WASD ASCII, POSIX arrow bytes A/B/C/D,
+        // read_key returns real key values: WASD ASCII, POSIX arrow final bytes A/B/C/D,
         // and Windows arrow scan codes 72/80/77/75.
         let key: i32 = read_key();
         if (key == 113) {

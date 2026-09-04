@@ -16,7 +16,7 @@ extern fn __4yue_sleep_ms(milliseconds: i32): i32;
 | `clear_screen(): i32` | 清空终端并将光标移到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
 
-说明：POSIX 终端方向键按原始 ANSI 序列逐字节返回，通常是 `27`、`91`、`65/66/67/68`；Windows 扩展方向键返回第二个 scan code，通常是 `72/80/77/75`。
+说明：POSIX 终端方向键会在一次 read_key 调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 扩展方向键返回第二个 scan code，通常是 `72/80/77/75`。
 
 ## 构建与加载
 
