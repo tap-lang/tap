@@ -1,0 +1,13 @@
+fn main(): i32 {
+    const ANSWER: i32 = 42;
+    const VALUES: [i32; 3] = [7; 3];
+    print("%d %d\n", ANSWER, VALUES[2]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+42 7
+- .exit
+0
+-- */
