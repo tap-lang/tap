@@ -2,7 +2,8 @@ fn main(): i32 {
     // The board keeps a one-cell border, so playable coordinates start at one.
     let width: i32 = 44;
     let height: i32 = 24;
-    let maximum_length: i32 = 40;
+    // let maximum_length: i32 = 40;
+    const MAXIMUM_LENGTH: u64 = 40;
 
     // Parallel fixed arrays store snake coordinates because arrays are not function parameters yet.
     let snake_x: [i32; 40] = [0; 40];
@@ -202,7 +203,7 @@ fn main(): i32 {
             if (next_y == food_y) {
                 ate_food = 1;
                 score = score + 10;
-                if (length < maximum_length) {
+                if (length < MAXIMUM_LENGTH) {
                     length = length + 1;
                 }
             }
