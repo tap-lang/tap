@@ -1,30 +1,9 @@
 #include "lexer.h"
+#include "helpers.h"
 
 extern int debug;
 
-static char *read_source_file(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        fprintf(stderr, "failed to open file: %s\n", filename); // 中文：无法打开文件
-        return NULL;
-    }
 
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char *buffer = (char *)malloc((size_t)file_size + 1);
-    if (!buffer) {
-        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-        fclose(file);
-        return NULL;
-    }
-
-    size_t bytes_read = fread(buffer, 1, (size_t)file_size, file);
-    buffer[bytes_read] = '\0';
-    fclose(file);
-    return buffer;
-}
 
 // 创建词法分析器（读入 filename 指向的源文件）
 Lexer *create_lexer(const char *filename) {
