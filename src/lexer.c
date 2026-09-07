@@ -330,6 +330,7 @@ static Token *string(Lexer *lexer) {
             }
         }
     }
+    free(buffer);
     
     if (is_at_end(lexer)) {
         fprintf(stderr, "error: unterminated string (line %d, column %d)\n", lexer->line, lexer->column); // 中文：未闭合的字符串
@@ -360,6 +361,16 @@ static Token *string(Lexer *lexer) {
         length = 0;
         const char *str = token->lexeme;
         while (*str) {
+            if (length + 1 >= buffer_size) {
+                buffer_size *= 2;
+                char *expanded = (char *)realloc(buffer, buffer_size);
+                if (!expanded) {
+                    free(buffer);
+                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                    exit(1);
+                }
+                buffer = expanded;
+            }
             if (*str == '\\' && *(str + 1)) {
                 str++;
                 switch (*str) {

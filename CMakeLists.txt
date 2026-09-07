@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(4yue)
+project(4yue C)
 
 # Homebrew GCC uses its own fixed macOS headers; CMake's SDK sysroot mixes in
 # incompatible CommandLineTools headers and breaks standard includes.
@@ -67,26 +67,7 @@ message(STATUS "LLVM Definitions: ${LLVM_DEFINITIONS}")
 
 
 # 获取LLVM库列表
-if(EXISTS "/etc/arch-release") 
-    # on Archlinux
-    set(llvm_libs LLVM)
-else()
-    llvm_map_components_to_libnames(llvm_libs
-        Core
-        ExecutionEngine
-        MC
-        MCJIT
-        Object
-        Support
-        Target
-        TargetParser
-        Analysis
-        BitWriter
-        IRReader
-        Passes
-        native
-    )
-endif()
+set(llvm_libs LLVM)
 
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})

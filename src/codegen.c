@@ -284,6 +284,7 @@ static LLVMValueRef cast_integer(CodeGenContext *context, LLVMValueRef value,
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type);
+static unsigned function_param_count(FunctionNode *function);
 
 static LLVMValueRef integer_constant(CodeGenContext *context, LiteralNode *literal,
                                      enum LiteralType type) {
@@ -458,6 +459,13 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
 
     unsigned count = 0;
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
+    unsigned expected_count = function_param_count(function);
+    if (count != expected_count) {
+        fprintf(stderr, "%s:%d:%d: error: function '%s' expects %u arguments, but got %u\n",
+                call->filename ? call->filename : "<unknown>",
+                call->line, call->column, call->name, expected_count, count);
+        exit(1);
+    }
 
     LLVMValueRef *arguments = count ? malloc(sizeof(LLVMValueRef) * count) : NULL;
     ASTNode *argument = call->arguments;
@@ -1014,11 +1022,9 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     context->builder = LLVMCreateBuilderInContext(context->context);
     context->current_return_type = default_integer_type();
 
-#if defined(_WIN32) || defined(_WIN64) || defined(__CYGWIN__)
-    LLVMSetTarget(context->module, "x86_64-pc-windows-cygnus");
-#elif defined(__APPLE__) && defined(__MACH__)
-    LLVMSetTarget(context->module, "arm64-apple-macosx15.0.0");
-#endif
+    char *target_triple = LLVMGetDefaultTargetTriple();
+    LLVMSetTarget(context->module, target_triple);
+    LLVMDisposeMessage(target_triple);
 
     return context;
 }

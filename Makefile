@@ -3,7 +3,6 @@
 # 编译器和编译选项
 # CC = clang
 CC = gcc
-# CXX = clang++
 LIBS = -lLLVM-21 -lm
 
 # Sanitizers are opt-in because their VM reservation conflicts with macOS nano malloc.
@@ -120,7 +119,6 @@ endif
 # 链接目标文件
 $(TARGET): $(OBJECTS) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS) $(LDFLAGS) $(LIBS)
-#	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJECTS) $(LDFLAGS) $(LIBS)
 
 # 清理生成的文件
 clean:

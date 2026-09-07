@@ -105,6 +105,7 @@ static void consume(Parser *parser, enum TokenType expected_type) {
 
 // 前置声明
 static ASTNode *parse_expression(Parser *parser); // 解析表达式（支持加法和减法）
+static ASTNode *parse_addition(Parser *parser);
 static ASTNode *parse_term(Parser *parser); // 解析项（乘法和除法）
 static ASTNode *parse_factor(Parser *parser); // 解析因子（基本表达式）
 static ASTNode *parse_function_call(Parser *parser, char *function_name); // 解析函数调用
@@ -713,6 +714,19 @@ static ASTNode *parse_primary(Parser *parser) {
         consume(parser, TOKEN_I32);
         return (ASTNode *)int_literal;
     }
+    if (token->type == TOKEN_F32 && isdigit((unsigned char)token->lexeme[0])) {
+        LiteralNode *float_literal = create_float_literal(token->value.float_value);
+        float_literal->literal_type = LITERAL_F32;
+        consume(parser, TOKEN_F32);
+        return (ASTNode *)float_literal;
+    }
+    if (token->type == TOKEN_BOOL &&
+        (strcmp(token->lexeme, "true") == 0 ||
+         strcmp(token->lexeme, "false") == 0)) {
+        LiteralNode *bool_literal = create_bool_literal(token->value.bool_value);
+        consume(parser, TOKEN_BOOL);
+        return (ASTNode *)bool_literal;
+    }
     if (token->type == TOKEN_STRING && token->value.string_value) {
         LiteralNode *string_literal = create_string_literal(token->value.string_value);
         consume(parser, TOKEN_STRING);
@@ -806,7 +820,7 @@ static ASTNode *parse_term(Parser *parser) {
 
 // 解析比较表达式（==, !=, <, >, <=, >=）
 static ASTNode *parse_comparison(Parser *parser) {
-    ASTNode *left = parse_term(parser);
+    ASTNode *left = parse_addition(parser);
     
     while (parser->current_token->type == TOKEN_EQUAL || 
            parser->current_token->type == TOKEN_NOT_EQUAL || 
@@ -842,28 +856,32 @@ static ASTNode *parse_comparison(Parser *parser) {
         }
         
         consume(parser, token->type);
-        left = (ASTNode *)create_binary_op(op_type, left, parse_term(parser));
+        left = (ASTNode *)create_binary_op(op_type, left, parse_addition(parser));
     }
     
     return left;
 }
 
 // 解析表达式（加减）
-static ASTNode *parse_expression(Parser *parser) {
-    ASTNode *left = parse_comparison(parser);
+static ASTNode *parse_addition(Parser *parser) {
+    ASTNode *left = parse_term(parser);
     
     while (parser->current_token->type == TOKEN_PLUS || parser->current_token->type == TOKEN_MINUS) {
         Token *token = parser->current_token;
         if (token->type == TOKEN_PLUS) {
             consume(parser, TOKEN_PLUS);
-            left = (ASTNode *)create_binary_op(OP_ADD, left, parse_comparison(parser));
+            left = (ASTNode *)create_binary_op(OP_ADD, left, parse_term(parser));
         } else if (token->type == TOKEN_MINUS) {
             consume(parser, TOKEN_MINUS);
-            left = (ASTNode *)create_binary_op(OP_SUBTRACT, left, parse_comparison(parser));
+            left = (ASTNode *)create_binary_op(OP_SUBTRACT, left, parse_term(parser));
         }
     }
     
     return left;
+}
+
+static ASTNode *parse_expression(Parser *parser) {
+    return parse_comparison(parser);
 }
 
 // 解析程序

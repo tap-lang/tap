@@ -35,19 +35,40 @@ char *read_source_file(const char *filename) {
         return NULL;
     }
 
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char *buffer = (char *)malloc((size_t)file_size + 1);
+    size_t capacity = 4096;
+    size_t length = 0;
+    char *buffer = (char *)malloc(capacity + 1);
     if (!buffer) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         fclose(file);
         return NULL;
     }
 
-    size_t bytes_read = fread(buffer, 1, (size_t)file_size, file);
-    buffer[bytes_read] = '\0';
+    for (;;) {
+        size_t bytes_read = fread(buffer + length, 1, capacity - length, file);
+        length += bytes_read;
+
+        if (length < capacity) break;
+
+        capacity *= 2;
+        char *expanded = (char *)realloc(buffer, capacity + 1);
+        if (!expanded) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            free(buffer);
+            fclose(file);
+            return NULL;
+        }
+        buffer = expanded;
+    }
+
+    if (ferror(file)) {
+        fprintf(stderr, "failed to read file: %s\n", filename); // 中文：无法读取文件
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+
+    buffer[length] = '\0';
     fclose(file);
     return buffer;
 }
