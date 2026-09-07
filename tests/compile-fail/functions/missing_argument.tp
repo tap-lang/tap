@@ -1,0 +1,14 @@
+fn value(a: i32): i32 {
+    return a;
+}
+
+fn main(): i32 {
+    return value();
+}
+
+/** -- test
+- .stderr
+error: function 'value' expects 1 arguments, but got 0
+- .exit
+1
+-- */
