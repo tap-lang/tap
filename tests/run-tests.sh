@@ -86,7 +86,9 @@ load_expectation() {
     source_file=$2
     output_file=$3
 
-    if extract_expectation "$section" "$source_file" > "$output_file"; then
+    embedded_output_file="$output_file.embedded"
+    if extract_expectation "$section" "$source_file" > "$embedded_output_file"; then
+        read_text_file "$embedded_output_file" > "$output_file"
         return 0
     fi
 
