@@ -113,6 +113,7 @@ static ASTNode *parse_expression_statement(Parser *parser);
 static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon);
 static ASTNode *parse_if_statement(Parser *parser); // 解析条件语句
 static ASTNode *parse_for_statement(Parser *parser);
+static ASTNode *parse_while_statement(Parser *parser);
 static ASTNode *parse_loop_control_statement(Parser *parser);
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
@@ -326,6 +327,8 @@ static ASTNode *parse_block(Parser *parser) {
             add_statement(block, if_statement);
         } else if (parser->current_token->type == TOKEN_FOR) {
             add_statement(block, parse_for_statement(parser));
+        } else if (parser->current_token->type == TOKEN_WHILE) {
+            add_statement(block, parse_while_statement(parser));
         } else if (parser->current_token->type == TOKEN_BREAK ||
                    parser->current_token->type == TOKEN_CONTINUE) {
             add_statement(block, parse_loop_control_statement(parser));
@@ -541,6 +544,8 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
             add_statement(function, if_statement);
         } else if (parser->current_token->type == TOKEN_FOR) {
             add_statement(function, parse_for_statement(parser));
+        } else if (parser->current_token->type == TOKEN_WHILE) {
+            add_statement(function, parse_while_statement(parser));
         } else if (parser->current_token->type == TOKEN_BREAK ||
                    parser->current_token->type == TOKEN_CONTINUE) {
             add_statement(function, parse_loop_control_statement(parser));
@@ -660,12 +665,27 @@ static ASTNode *parse_for_statement(Parser *parser) {
     return (ASTNode *)create_for_statement(initializer, condition, update, body);
 }
 
+static ASTNode *parse_while_statement(Parser *parser) {
+    consume(parser, TOKEN_WHILE);
+    consume(parser, TOKEN_LPAREN);
+    ASTNode *condition = parse_expression(parser);
+    consume(parser, TOKEN_RPAREN);
+
+    consume(parser, TOKEN_LBRACE);
+    parser->loop_depth++;
+    ASTNode *body = parse_block(parser);
+    parser->loop_depth--;
+    consume(parser, TOKEN_RBRACE);
+
+    return (ASTNode *)create_for_statement(NULL, condition, NULL, body);
+}
+
 static ASTNode *parse_loop_control_statement(Parser *parser) {
     enum TokenType type = parser->current_token->type;
     if (parser->loop_depth == 0) {
         parser_error(parser, type == TOKEN_BREAK
-            ? "break can only be used inside a for loop" // 中文：break 只能在 for 循环中使用
-            : "continue can only be used inside a for loop"); // 中文：continue 只能在 for 循环中使用
+            ? "break can only be used inside a loop" // 中文：break 只能在循环中使用
+            : "continue can only be used inside a loop"); // 中文：continue 只能在循环中使用
     }
 
     consume(parser, type);
