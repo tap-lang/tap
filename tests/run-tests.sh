@@ -92,12 +92,6 @@ load_expectation() {
         return 0
     fi
 
-    external_file="$source_file.$section"
-    if [ -f "$external_file" ]; then
-        read_text_file "$external_file" > "$output_file"
-        return 0
-    fi
-
     external_file="${source_file%.*}.$section"
     if [ -f "$external_file" ]; then
         read_text_file "$external_file" > "$output_file"

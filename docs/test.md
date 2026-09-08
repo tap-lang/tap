@@ -8,7 +8,7 @@
 - `fixtures/`：模块等测试依赖，不会作为测试用例直接执行。
 - `llvm/`：LLVM C API 实验代码，不属于语言回归测试。
 
-测试期望直接写在 `.tp` 文件的多行注释中：
+测试期望可以直接写在 `.tp` 文件的多行注释中：
 
 ```text
 /** -- test
@@ -24,7 +24,21 @@
 - 每个用例必须提供 `.exit`。
 - `.stdout` 和 `.stderr` 可省略；省略时对应输出必须为空。
 - `compile-fail` 必须提供 `.stderr`，其中每个非空行都必须出现在诊断中。
-- 文本比较忽略 CRLF 差异和每行尾部空白，保留行首缩进。
+- 文本比较忽略 CRLF 差异和每行尾部空白，保留行首缩进。内嵌期望和外部期望文件都会使用相同规则归一化。
+
+如果错误输出较长，也可以把期望写到同名外部文件中：
+
+```text
+tests/compile-fail/lexer/unterminated_block_comment.tp
+tests/compile-fail/lexer/unterminated_block_comment.stderr
+```
+
+测试脚本读取期望的优先级为：
+
+1. `.tp` 文件中内嵌的 `- .stdout` / `- .stderr` / `- .exit`。
+2. 去掉源文件扩展名后的外部文件，例如 `case.stderr`。
+
+当前 `.exit` 仍必须写在 `.tp` 文件的内嵌测试块中。
 
 ```sh
 make test
