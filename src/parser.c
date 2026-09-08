@@ -59,7 +59,7 @@ void print_code_line(const char *source_code, int line, int context_lines) {
             : strlen(line_start);
 
         if (current_line >= start_line && current_line <= end_line) {
-            printf("%s %*d  %.*s\n",
+            fprintf(stderr, "%s %*d  %.*s\n",
                    current_line == line ? "->" : "  ",
                    line_number_width,
                    current_line,
@@ -75,13 +75,13 @@ void print_code_line(const char *source_code, int line, int context_lines) {
 
 // 解析错误处理
 void parser_error(Parser *parser, const char *message) {
-    fprintf(stderr, "Parse error: %s (file %s, line %d, column %d)\n",  // 中文：解析错误：消息（文件、行、列）
+    fprintf(stderr, "Parse error: %s \n--> %s:%d:%d\n",  // 中文：解析错误：消息 --> 文件:行:列
             message,
             parser->lexer->filename,
             parser->current_token->line, 
             parser->current_token->column
     );
-    printf("Current token: %s\n", parser->current_token->lexeme);
+    //printf("Current token: %s\n", parser->current_token->lexeme);
     // 打印当前代码行的上下3行
     print_code_line(parser->lexer->source, parser->current_token->line, 3);
   

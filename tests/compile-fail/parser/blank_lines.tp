@@ -8,17 +8,9 @@ fn main() {
 }
 
 /** -- test
-- .stdout
-Current token: print
-    4
-    5  fn main() {
-    6      let n = 10
-->  7      print(n);
-    8  }
-    9
-   10  /** -- test
 - .stderr
-Parse error: expected token `;`, but got `print` (file tests/compile-fail/parser/blank_lines.tp, line 7, column 5)
+Parse error: expected token `;`, but got `print`
+--> tests/compile-fail/parser/blank_lines.tp:7:5
 - .exit
 1
 -- */
