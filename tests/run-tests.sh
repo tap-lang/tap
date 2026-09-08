@@ -81,12 +81,36 @@ extract_expectation() {
     ' "$source_file"
 }
 
+load_expectation() {
+    section=$1
+    source_file=$2
+    output_file=$3
+
+    if extract_expectation "$section" "$source_file" > "$output_file"; then
+        return 0
+    fi
+
+    external_file="$source_file.$section"
+    if [ -f "$external_file" ]; then
+        read_text_file "$external_file" > "$output_file"
+        return 0
+    fi
+
+    external_file="${source_file%.*}.$section"
+    if [ -f "$external_file" ]; then
+        read_text_file "$external_file" > "$output_file"
+        return 0
+    fi
+
+    return 1
+}
+
 check_stdout() {
     if [ "$has_expected_stdout" -eq 1 ]; then
         expected_output=$(read_text_file "$expected_stdout_file")
         actual_output=$(read_text_file "$stdout_file")
         if [ "$actual_output" != "$expected_output" ]; then
-            mark_failure "stdout does not match embedded .stdout expectation"
+            mark_failure "stdout does not match .stdout expectation"
             diff -u --strip-trailing-cr "$expected_stdout_file" "$stdout_file" >&2 || true
         fi
     elif [ -s "$stdout_file" ]; then
@@ -98,7 +122,7 @@ check_stdout() {
 check_stderr() {
     if [ "$case_mode" = "compile-fail" ]; then
         if [ "$has_expected_stderr" -ne 1 ]; then
-            mark_failure "missing embedded .stderr expectation"
+            mark_failure "missing .stderr expectation"
             return
         fi
 
@@ -113,7 +137,7 @@ check_stderr() {
         expected_output=$(read_text_file "$expected_stderr_file")
         actual_output=$(read_text_file "$stderr_file")
         if [ "$actual_output" != "$expected_output" ]; then
-            mark_failure "stderr does not match embedded .stderr expectation"
+            mark_failure "stderr does not match .stderr expectation"
             diff -u --strip-trailing-cr "$expected_stderr_file" "$stderr_file" >&2 || true
         fi
     elif [ -s "$stderr_file" ]; then
@@ -142,12 +166,12 @@ run_case() {
     expected_exit_file="$TEMP_ROOT/$total.expected.exit"
     case_failed=0
 
-    if extract_expectation stdout "$case_file" > "$expected_stdout_file"; then
+    if load_expectation stdout "$case_file" "$expected_stdout_file"; then
         has_expected_stdout=1
     else
         has_expected_stdout=0
     fi
-    if extract_expectation stderr "$case_file" > "$expected_stderr_file"; then
+    if load_expectation stderr "$case_file" "$expected_stderr_file"; then
         has_expected_stderr=1
     else
         has_expected_stderr=0

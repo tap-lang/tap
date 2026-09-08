@@ -2,6 +2,7 @@
 #include "parser.h"
 #include "ast.h"
 #include "lexer.h"
+#include "helpers.h"
 
 extern int debug;
 
@@ -33,46 +34,6 @@ void free_parser(Parser *parser) {
     }
 }
  
-static int decimal_width(int value) {
-    int width = 1;
-    while (value >= 10) {
-        value /= 10;
-        width++;
-    }
-    return width;
-}
-
-// 打印代码当前行以及上下各context_lines行
-void print_code_line(const char *source_code, int line, int context_lines) {
-    if (!source_code || line < 1 || context_lines < 0) return;
-
-    int start_line = line > context_lines ? line - context_lines : 1;
-    int end_line = line + context_lines;
-    int line_number_width = decimal_width(end_line);
-    int current_line = 1;
-    const char *line_start = source_code;
-
-    while (*line_start != '\0' && current_line <= end_line) {
-        const char *line_end = strchr(line_start, '\n');
-        size_t line_length = line_end
-            ? (size_t)(line_end - line_start)
-            : strlen(line_start);
-
-        if (current_line >= start_line && current_line <= end_line) {
-            fprintf(stderr, "%s %*d  %.*s\n",
-                   current_line == line ? "->" : "  ",
-                   line_number_width,
-                   current_line,
-                   (int)line_length,
-                   line_start);
-        }
-
-        if (!line_end) break;
-        line_start = line_end + 1;
-        current_line++;
-    }
-}
-
 // 解析错误处理
 void parser_error(Parser *parser, const char *message) {
     fprintf(stderr, "Parse error: %s \n--> %s:%d:%d\n",  // 中文：解析错误：消息 --> 文件:行:列
@@ -83,7 +44,7 @@ void parser_error(Parser *parser, const char *message) {
     );
     //printf("Current token: %s\n", parser->current_token->lexeme);
     // 打印当前代码行的上下3行
-    print_code_line(parser->lexer->source, parser->current_token->line, 3);
+    print_code_line(stderr, parser->lexer->source, parser->current_token->line, 3);
   
     exit(1);
 }
