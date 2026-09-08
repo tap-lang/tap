@@ -1,0 +1,24 @@
+fn echo(value: string): string {
+    return value;
+}
+
+fn main(): i32 {
+    let greeting: string = "Hello";
+    let name = echo("4yue");
+    print("%s, %s!\n", greeting, name);
+
+    greeting = "line 1\nline 2";
+    print("%s\n", greeting);
+    print("tab:\tquote:\" slash:\\\n");
+    return 0;
+}
+
+/** -- test
+- .stdout
+Hello, 4yue!
+line 1
+line 2
+tab:	quote:" slash:\
+- .exit
+0
+-- */

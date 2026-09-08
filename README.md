@@ -135,6 +135,8 @@ Prelude 中的函数名不能在用户源码中重复定义。编译器依次从
 ## 开发文档
 
 - [源码结构](docs/src.md)
+- [数据类型](docs/data-types.md)
+- [字符串](docs/data-type-string.md)
 - [AST](docs/ast.md)
 - [Runtime](docs/runtime.md)
 - [模块导入](docs/module.md)
