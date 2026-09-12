@@ -21,6 +21,7 @@ static void print_usage() {
     printf("  -o <文件>         指定输出文件\n");
     printf("  -ir               生成LLVM IR代码\n");
     printf("  -emit-obj         生成目标文件\n");
+    printf("  -emit-wasm        生成WebAssembly目标文件\n");
     printf("  -lex              只输出词法分析结果\n");
     printf("  -parse            只输出语法分析结果\n");
     printf("  -run-lli          生成LLVM IR并使用lli运行程序\n");
@@ -36,6 +37,7 @@ int main(int argc, char *argv[]) {
     char *output_file = NULL;   
     int emit_ir = 0;        
     int emit_obj = 0;
+    int emit_wasm = 0;
     int run_lli = 0;
     int run_native = 0;
     int lex_only = 0;
@@ -67,6 +69,8 @@ int main(int argc, char *argv[]) {
             emit_ir = 1;
         } else if (strcmp(argv[i], "-emit-obj") == 0) {
             emit_obj = 1;
+        } else if (strcmp(argv[i], "-emit-wasm") == 0) {
+            emit_wasm = 1;
         } else if (strcmp(argv[i], "-run-lli") == 0) {
             run_lli = 1;
         } else if (strcmp(argv[i], "-lex") == 0) {
@@ -97,7 +101,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (run_native && (emit_ir || emit_obj || run_lli || lex_only || parse_only)) {
+    if (run_native && (emit_ir || emit_obj || emit_wasm || run_lli || lex_only || parse_only)) {
         fprintf(stderr, "error: run cannot be combined with other output or execution modes\n"); // 中文：run 命令不能与其他输出或运行模式组合使用
         return 1;
     }
@@ -180,6 +184,14 @@ int main(int argc, char *argv[]) {
             result = 1;
         } else {
             printf("目标文件已写入到 %s\n", obj_file);
+        }
+    } else if (emit_wasm) {
+        char *wasm_file = output_file ? output_file : "output.wasm";
+        if (write_wasm_to_file(codegen_context, wasm_file) != 0) {
+            fprintf(stderr, "failed to write WebAssembly file\n"); // 中文：写入 WebAssembly 文件失败
+            result = 1;
+        } else {
+            printf("WebAssembly目标文件已写入到 %s\n", wasm_file);
         }
     } else if (run_lli) {
         result = run_with_lli(codegen_context);

@@ -55,6 +55,7 @@ cmake --build .
 | `-o <文件>` | 指定输出（IR / 目标文件 / 可执行文件名，视模式而定） |
 | `-ir` | 完整编译后写出 LLVM IR（默认 `output.ll`，可用 `-o` 覆盖） |
 | `-emit-obj` | 写出目标文件（默认 `output.o`，可用 `-o` 覆盖） |
+| `-emit-wasm` | 写出 WebAssembly 目标文件（默认 `output.wasm`，可用 `-o` 覆盖） |
 | `-lex` | 仅词法分析：逐 token 输出（文件、行列、类型、词素） |
 | `-parse` | 词法 + 语法分析：将 AST 打印到 stdout，不生成代码 |
 | `-run-lli` | 生成临时 IR 并用 `lli` 执行 |
@@ -62,7 +63,7 @@ cmake --build .
 
 说明：
 
-- **默认**（无 `run` / `-ir` / `-emit-obj` / `-run-lli`）：直接生成目标文件并链接为可执行文件（默认使用源文件的基础名称，可用 `-o` 指定）。
+- **默认**（无 `run` / `-ir` / `-emit-obj` / `-emit-wasm` / `-run-lli`）：直接生成目标文件并链接为可执行文件（默认使用源文件的基础名称，可用 `-o` 指定）。
 - **`run`**：执行与默认模式相同的本地编译流程，编译成功后运行可执行文件，返回程序的退出码并删除生成的可执行文件。
 - **`-lex`** 与 **`-parse`** 互斥于后续流水线：若同时传 `-lex`，只执行词法阶段。
 
@@ -73,6 +74,7 @@ cmake --build .
 ./build/4yue run tests/run-pass/basics/hello.tp
 ./build/4yue -o hello.bin tests/run-pass/basics/hello.tp
 ./build/4yue -ir -o out.ll tests/run-pass/functions/fibonacci.tp
+./build/4yue -emit-wasm -o out.wasm tests/run-pass/functions/fibonacci.tp
 ./build/4yue -run-lli tests/run-pass/basics/print.tp
 ./build/4yue -lex tests/run-pass/functions/fibonacci.tp
 ./build/4yue -parse tests/run-pass/functions/fibonacci.tp

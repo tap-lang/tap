@@ -1488,18 +1488,32 @@ int write_ir_to_file(CodeGenContext *context, const char *filename) {
     return 0;
 }
 
-int write_object_to_file(CodeGenContext *context, const char *filename) {
-    LLVMInitializeNativeTarget();
-    LLVMInitializeNativeAsmPrinter();
-    LLVMInitializeNativeAsmParser();
+static int write_object_for_triple(
+    CodeGenContext *context, const char *filename,
+    const char *target_triple_override, const char *output_kind) {
+    LLVMInitializeAllTargetInfos();
+    LLVMInitializeAllTargets();
+    LLVMInitializeAllTargetMCs();
+    LLVMInitializeAllAsmPrinters();
+    LLVMInitializeAllAsmParsers();
 
     char *error = NULL;
     LLVMTargetRef target = NULL;
-    char *target_triple = LLVMGetDefaultTargetTriple();
+    char *target_triple = target_triple_override
+        ? strdup(target_triple_override)
+        : LLVMGetDefaultTargetTriple();
+    if (!target_triple) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return -1;
+    }
     if (LLVMGetTargetFromTriple(target_triple, &target, &error) != 0) {
         fprintf(stderr, "failed to get target machine: %s\n", error); // 中文：获取目标机器失败
-        LLVMDisposeMessage(error);
-        LLVMDisposeMessage(target_triple);
+        if (error) LLVMDisposeMessage(error);
+        if (target_triple_override) {
+            free(target_triple);
+        } else {
+            LLVMDisposeMessage(target_triple);
+        }
         return -1;
     }
 
@@ -1508,7 +1522,11 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
         LLVMRelocPIC, LLVMCodeModelDefault);
     if (!target_machine) {
         fprintf(stderr, "failed to create target machine\n"); // 中文：创建目标机器失败
-        LLVMDisposeMessage(target_triple);
+        if (target_triple_override) {
+            free(target_triple);
+        } else {
+            LLVMDisposeMessage(target_triple);
+        }
         return -1;
     }
 
@@ -1523,15 +1541,19 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
         LLVMDisposeMessage(data_layout);
         LLVMDisposeTargetData(target_data);
         LLVMDisposeTargetMachine(target_machine);
-        LLVMDisposeMessage(target_triple);
+        if (target_triple_override) {
+            free(target_triple);
+        } else {
+            LLVMDisposeMessage(target_triple);
+        }
         return -1;
     }
 
     int result = LLVMTargetMachineEmitToFile(
         target_machine, context->module, output_path, LLVMObjectFile, &error);
     if (result != 0) {
-        fprintf(stderr, "failed to write object file: %s\n", error); // 中文：写入目标文件失败
-        LLVMDisposeMessage(error);
+        fprintf(stderr, "failed to write %s file: %s\n", output_kind, error); // 中文：写入输出文件失败
+        if (error) LLVMDisposeMessage(error);
         result = -1;
     } else {
         result = 0;
@@ -1541,6 +1563,19 @@ int write_object_to_file(CodeGenContext *context, const char *filename) {
     LLVMDisposeMessage(data_layout);
     LLVMDisposeTargetData(target_data);
     LLVMDisposeTargetMachine(target_machine);
-    LLVMDisposeMessage(target_triple);
+    if (target_triple_override) {
+        free(target_triple);
+    } else {
+        LLVMDisposeMessage(target_triple);
+    }
     return result;
+}
+
+int write_object_to_file(CodeGenContext *context, const char *filename) {
+    return write_object_for_triple(context, filename, NULL, "object");
+}
+
+int write_wasm_to_file(CodeGenContext *context, const char *filename) {
+    return write_object_for_triple(
+        context, filename, "wasm32-unknown-unknown", "WebAssembly");
 }

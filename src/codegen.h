@@ -64,5 +64,6 @@ int write_ir_to_file(CodeGenContext *context, const char *filename);
 
 // 写入目标代码到文件
 int write_object_to_file(CodeGenContext *context, const char *filename);
+int write_wasm_to_file(CodeGenContext *context, const char *filename);
 
 #endif // CODEGEN_H
