@@ -7,7 +7,7 @@ fn main(): i32 {
 - .stdout
 
 - .stderr
-Parse error: break can only be used inside a loop 
+error: break can only be used inside a loop
 --> tests/compile-fail/control-flow/break_outside_loop.tp:2:5
    1  fn main(): i32 {
 -> 2      break;

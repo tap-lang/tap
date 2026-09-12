@@ -9,6 +9,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: function 'value' expects 1 arguments, but got 2
+--> tests/compile-fail/functions/too_many_arguments.tp:6:12
 - .exit
 1
 -- */

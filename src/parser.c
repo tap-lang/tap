@@ -36,16 +36,10 @@ void free_parser(Parser *parser) {
  
 // 解析错误处理
 void parser_error(Parser *parser, const char *message) {
-    fprintf(stderr, "Parse error: %s \n--> %s:%d:%d\n",  // 中文：解析错误：消息 --> 文件:行:列
-            message,
-            parser->lexer->filename,
-            parser->current_token->line, 
-            parser->current_token->column
-    );
+    print_diagnostic(stderr, "error", parser->lexer->filename,
+                     parser->current_token->line, parser->current_token->column,
+                     "%s", message);
     //printf("Current token: %s\n", parser->current_token->lexeme);
-    // 打印当前代码行的上下3行
-    print_code_line(stderr, parser->lexer->source, parser->current_token->line, 3);
-  
     exit(1);
 }
 

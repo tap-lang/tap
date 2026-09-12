@@ -6,7 +6,8 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/modules/missing_export.tp:4:12: error: module 'modules.math' has no function 'triple'
+error: module 'modules.math' has no function 'triple'
+--> tests/compile-fail/modules/missing_export.tp:4:12
 - .exit
 1
 -- */

@@ -7,6 +7,8 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: method 'len' expects 0 arguments, but got 1
+--> tests/compile-fail/types/string_length_arguments.tp:3:18
+-> 3      let length = value.len(1);
 - .exit
 1
 -- */

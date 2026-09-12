@@ -5,7 +5,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-Parse error: constant declarations require an explicit type
+error: constant declarations require an explicit type
 --> tests/compile-fail/types/constant_requires_type.tp:2:17
 - .exit
 1

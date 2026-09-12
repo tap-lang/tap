@@ -7,6 +7,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: undefined function 'double'
+--> tests/compile-fail/modules/unqualified_call.tp:4:12
 - .exit
 1
 -- */

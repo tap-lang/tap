@@ -6,7 +6,8 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/modules/self_import.tp:1:8: error: entry file cannot import itself
+error: entry file cannot import itself
+--> tests/compile-fail/modules/self_import.tp:1:8
 - .exit
 1
 -- */

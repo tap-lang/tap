@@ -7,8 +7,10 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/modules/alias_conflict.tp:2:8: error: namespace 'util' is already used for module 'modules.math'
-tests/compile-fail/modules/alias_conflict.tp:1:8: note: namespace was first imported here
+error: namespace 'util' is already used for module 'modules.math'
+--> tests/compile-fail/modules/alias_conflict.tp:2:8
+note: namespace was first imported here
+--> tests/compile-fail/modules/alias_conflict.tp:1:8
 - .exit
 1
 -- */

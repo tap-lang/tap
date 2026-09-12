@@ -14,6 +14,7 @@
 
 #include "lexer.h"
 #include "parser.h"
+#include "helpers.h"
 
 typedef struct ModuleExport {
     char *name;
@@ -241,11 +242,11 @@ static FunctionNode *find_internal_duplicate(
 }
 
 static int report_duplicate(FunctionNode *duplicate, FunctionNode *previous) {
-    fprintf(stderr, "%s:%d:%d: error: duplicate function definition '%s'\n", // 中文：重复函数定义
-        duplicate->filename, duplicate->line, duplicate->column, duplicate->name);
+    print_diagnostic(stderr, "error", duplicate->filename, duplicate->line, duplicate->column,
+                     "duplicate function definition '%s'", duplicate->name); // 中文：重复函数定义
     if (previous) {
-        fprintf(stderr, "%s:%d:%d: note: previous definition is here\n", // 中文：此处已有定义
-            previous->filename, previous->line, previous->column);
+        print_diagnostic(stderr, "note", previous->filename, previous->line, previous->column,
+                         "previous definition is here"); // 中文：此处已有定义
     }
     return 1;
 }
@@ -364,12 +365,13 @@ static int add_binding(
     ImportBinding *existing = find_binding(*bindings, import_node->alias);
     if (existing) {
         if (existing->module == module) return 0;
-        fprintf(stderr, "%s:%d:%d: error: namespace '%s' is already used for module '%s'\n", // 中文：名称空间已用于模块
-            import_node->filename, import_node->line, import_node->column,
-            import_node->alias, existing->import_node->module_name);
-        fprintf(stderr, "%s:%d:%d: note: namespace was first imported here\n", // 中文：名称空间首次在此导入
-            existing->import_node->filename, existing->import_node->line,
-            existing->import_node->column);
+        print_diagnostic(stderr, "error", import_node->filename,
+                         import_node->line, import_node->column,
+                         "namespace '%s' is already used for module '%s'",
+                         import_node->alias, existing->import_node->module_name); // 中文：名称空间已用于模块
+        print_diagnostic(stderr, "note", existing->import_node->filename,
+                         existing->import_node->line, existing->import_node->column,
+                         "namespace was first imported here"); // 中文：名称空间首次在此导入
         return 1;
     }
 
@@ -414,14 +416,15 @@ static int build_bindings(
         ImportNode *import_node = (ImportNode *)node;
         char *path = resolve_module_path(import_node, context->compiler_path);
         if (!path) {
-            fprintf(stderr, "%s:%d:%d: error: module '%s' not found\n", // 中文：找不到模块
-                import_node->filename, import_node->line, import_node->column,
-                import_node->module_name);
+            print_diagnostic(stderr, "error", import_node->filename,
+                             import_node->line, import_node->column,
+                             "module '%s' not found", import_node->module_name); // 中文：找不到模块
             return 1;
         }
         if (context->root_path && strcmp(path, context->root_path) == 0) {
-            fprintf(stderr, "%s:%d:%d: error: entry file cannot import itself\n", // 中文：入口文件不能导入自身
-                import_node->filename, import_node->line, import_node->column);
+            print_diagnostic(stderr, "error", import_node->filename,
+                             import_node->line, import_node->column,
+                             "entry file cannot import itself"); // 中文：入口文件不能导入自身
             free(path);
             return 1;
         }
@@ -530,16 +533,16 @@ static int rewrite_call(
                 free(alias);
                 return 0;
             }
-            fprintf(stderr, "%s:%d:%d: error: namespace '%s' was not imported\n", // 中文：未导入名称空间
-                call->filename, call->line, call->column, alias);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "namespace '%s' was not imported", alias); // 中文：未导入名称空间
             free(alias);
             return 1;
         }
         export = find_export(binding->module, dot + 1);
         if (!export) {
-            fprintf(stderr, "%s:%d:%d: error: module '%s' has no function '%s'\n", // 中文：模块中没有函数
-                call->filename, call->line, call->column,
-                binding->import_node->module_name, dot + 1);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "module '%s' has no function '%s'",
+                             binding->import_node->module_name, dot + 1); // 中文：模块中没有函数
             free(alias);
             return 1;
         }

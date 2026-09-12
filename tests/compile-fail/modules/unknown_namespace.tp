@@ -6,7 +6,8 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/modules/unknown_namespace.tp:4:12: error: namespace 'calc' was not imported
+error: namespace 'calc' was not imported
+--> tests/compile-fail/modules/unknown_namespace.tp:4:12
 - .exit
 1
 -- */

@@ -90,9 +90,8 @@ static void skip_block_comment(Lexer *lexer) {
         }
     }
 
-    fprintf(stderr, "error: unterminated block comment\n--> %s:%d:%d\n", // 中文：未闭合的多行注释
-            lexer->filename, start_line, start_column);
-    print_code_line(stderr, lexer->source, start_line, 3);
+    print_diagnostic(stderr, "error", lexer->filename, start_line, start_column,
+                     "unterminated block comment"); // 中文：未闭合的多行注释
     exit(1);
 }
 
@@ -335,9 +334,8 @@ static Token *string(Lexer *lexer) {
     free(buffer);
     
     if (is_at_end(lexer)) {
-        fprintf(stderr, "error: unterminated string\n--> %s:%d:%d\n", // 中文：未闭合的字符串
-                lexer->filename, lexer->line, lexer->column);
-        print_code_line(stderr, lexer->source, lexer->line, 0);
+        print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+                         "unterminated string"); // 中文：未闭合的字符串
         exit(1);
     }
     
@@ -517,9 +515,8 @@ Token *get_next_token(Lexer *lexer) {
     }
     
     // 未识别的字符
-    fprintf(stderr, "error: unrecognized character '%c'\n--> %s:%d:%d\n", c, // 中文：未识别的字符
-            lexer->filename, lexer->line, lexer->column - 1);
-    print_code_line(stderr, lexer->source, lexer->line, 0);
+    print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column - 1,
+                     "unrecognized character '%c'", c); // 中文：未识别的字符
     exit(1);
     return NULL; // 不会执行到这里
 }

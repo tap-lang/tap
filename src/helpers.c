@@ -1,5 +1,6 @@
 #include "helpers.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +81,25 @@ static int decimal_width(int value) {
         width++;
     }
     return width;
+}
+
+// 统一输出诊断消息、源码位置，以及错误行上下各三行的代码上下文。
+void print_diagnostic(FILE *output, const char *level, const char *filename,
+                      int line, int column, const char *format, ...) {
+    fprintf(output, "%s: ", level);
+    va_list arguments;
+    va_start(arguments, format);
+    vfprintf(output, format, arguments);
+    va_end(arguments);
+    fprintf(output, "\n--> %s:%d:%d\n", filename ? filename : "<unknown>", line, column);
+
+    if (filename && line > 0) {
+        char *source_code = read_source_file(filename);
+        if (source_code) {
+            print_code_line(output, source_code, line, 3);
+            free(source_code);
+        }
+    }
 }
 
 // 打印代码当前行以及上下各context_lines行

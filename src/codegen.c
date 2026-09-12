@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "helpers.h"
 
 #include <limits.h>
 
@@ -491,23 +492,21 @@ static LLVMValueRef generate_string_length(
     if (receiver_name) {
         // name.len() 的接收者保存在限定调用名称中，实参数量必须为零。
         if (argument_count != 0) {
-            fprintf(stderr,
-                "%s:%d:%d: error: method 'len' expects 0 arguments, but got %u\n",
-                call->filename ? call->filename : "<unknown>",
-                call->line, call->column, argument_count);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "method 'len' expects 0 arguments, but got %u",
+                             argument_count);
             exit(1);
         }
         Symbol *symbol = find_symbol_with_length(context, receiver_name, receiver_length);
         if (!symbol) {
-            fprintf(stderr, "%s:%d:%d: error: undefined variable '%.*s'\n",
-                call->filename ? call->filename : "<unknown>", call->line, call->column,
-                (int)receiver_length, receiver_name);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "undefined variable '%.*s'",
+                             (int)receiver_length, receiver_name);
             exit(1);
         }
         if (symbol->array_type || symbol->type != LITERAL_STRING) {
-            fprintf(stderr,
-                "%s:%d:%d: error: method 'len' is only available on string values\n",
-                call->filename ? call->filename : "<unknown>", call->line, call->column);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "method 'len' is only available on string values");
             exit(1);
         }
         string_value = LLVMBuildLoad2(
@@ -517,17 +516,15 @@ static LLVMValueRef generate_string_length(
         // 其他后缀形式把接收者放在内部调用的第一个参数中。
         unsigned user_argument_count = argument_count > 0 ? argument_count - 1 : 0;
         if (argument_count != 1) {
-            fprintf(stderr,
-                "%s:%d:%d: error: method 'len' expects 0 arguments, but got %u\n",
-                call->filename ? call->filename : "<unknown>",
-                call->line, call->column, user_argument_count);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "method 'len' expects 0 arguments, but got %u",
+                             user_argument_count);
             exit(1);
         }
         ASTNode *receiver_expression = call->arguments;
         if (expression_type(context, receiver_expression) != LITERAL_STRING) {
-            fprintf(stderr,
-                "%s:%d:%d: error: method 'len' is only available on string values\n",
-                call->filename ? call->filename : "<unknown>", call->line, call->column);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "method 'len' is only available on string values");
             exit(1);
         }
         string_value = generate_expression(context, receiver_expression);
@@ -579,14 +576,16 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     }
 
     if (strcmp(call->name, "assert") == 0) {
-        fprintf(stderr, "error: assert can only be used as a statement\n"); // 中文：assert 只能作为语句使用
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "assert can only be used as a statement"); // 中文：assert 只能作为语句使用
         exit(1);
     }
 
     LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, call->name);
     FunctionNode *function = find_function(context, call->name);
     if (!llvm_function || !function) {
-        fprintf(stderr, "error: undefined function '%s'\n", call->name); // 中文：未定义的函数
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "undefined function '%s'", call->name); // 中文：未定义的函数
         exit(1);
     }
 
@@ -594,9 +593,9 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
     unsigned expected_count = function_param_count(function);
     if (count != expected_count) {
-        fprintf(stderr, "%s:%d:%d: error: function '%s' expects %u arguments, but got %u\n",
-                call->filename ? call->filename : "<unknown>",
-                call->line, call->column, call->name, expected_count, count);
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "function '%s' expects %u arguments, but got %u",
+                         call->name, expected_count, count);
         exit(1);
     }
 
@@ -861,8 +860,8 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
 
     if (count < 1 || count > 2) {
-        fprintf(stderr, "%s:%d:%d: error: assert expects one or two arguments\n", // 中文：assert 需要一到两个参数
-                call->filename ? call->filename : "<unknown>", call->line, call->column);
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "assert expects one or two arguments"); // 中文：assert 需要一到两个参数
         exit(1);
     }
 
@@ -871,8 +870,8 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
         ASTNode *message_node = call->arguments->next;
         if (message_node->type != NODE_LITERAL ||
             ((LiteralNode *)message_node)->literal_type != LITERAL_STRING) {
-            fprintf(stderr, "%s:%d:%d: error: assert message must be a string literal\n", // 中文：assert 消息必须是字符串字面量
-                    call->filename ? call->filename : "<unknown>", call->line, call->column);
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "assert message must be a string literal"); // 中文：assert 消息必须是字符串字面量
             exit(1);
         }
         message = ((LiteralNode *)message_node)->value.string_value;

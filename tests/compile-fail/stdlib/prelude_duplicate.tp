@@ -8,7 +8,8 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/stdlib/prelude_duplicate.tp:1:4: error: duplicate function definition 'min'
+error: duplicate function definition 'min'
+--> tests/compile-fail/stdlib/prelude_duplicate.tp:1:4
 - .exit
 1
 -- */

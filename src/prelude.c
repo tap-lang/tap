@@ -14,6 +14,7 @@
 
 #include "lexer.h"
 #include "parser.h"
+#include "helpers.h"
 
 static int file_exists(const char *path) {
     FILE *file = fopen(path, "r");
@@ -166,8 +167,9 @@ int load_prelude(ProgramNode *program, const char *compiler_path) {
     if (!duplicate) duplicate = find_cross_duplicate(prelude->functions, program->functions);
 
     if (duplicate) {
-        fprintf(stderr, "%s:%d:%d: error: duplicate function definition '%s'\n", // 中文：重复函数定义
-            duplicate->filename, duplicate->line, duplicate->column, duplicate->name);
+        print_diagnostic(stderr, "error", duplicate->filename,
+                         duplicate->line, duplicate->column,
+                         "duplicate function definition '%s'", duplicate->name); // 中文：重复函数定义
         free_ast((ASTNode *)prelude);
         free_parser(parser);
         free_lexer(lexer);

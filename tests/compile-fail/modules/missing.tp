@@ -6,7 +6,8 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-tests/compile-fail/modules/missing.tp:1:8: error: module 'modules.missing' not found
+error: module 'modules.missing' not found
+--> tests/compile-fail/modules/missing.tp:1:8
 - .exit
 1
 -- */
