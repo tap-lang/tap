@@ -178,6 +178,33 @@ static FunctionNode *find_function(CodeGenContext *context, const char *name) {
     return NULL;
 }
 
+// 非标识符接收者由 Parser 降低为保留的内部调用名称。
+static int is_internal_string_len_call(const FunctionCallNode *call) {
+    return strcmp(call->name, "__4yue_builtin_string_len") == 0;
+}
+
+// 标识符接收者沿用限定调用表示，此函数取出点号前的变量名范围。
+static const char *named_string_len_receiver(
+    const FunctionCallNode *call, size_t *receiver_length) {
+    const char *dot = strchr(call->name, '.');
+    if (!dot || dot == call->name || strchr(dot + 1, '.') || strcmp(dot + 1, "len") != 0) {
+        return NULL;
+    }
+    *receiver_length = (size_t)(dot - call->name);
+    return call->name;
+}
+
+// 接收者名称不是独立的零结尾字符串，因此按指定长度查询局部符号。
+static Symbol *find_symbol_with_length(
+    CodeGenContext *context, const char *name, size_t length) {
+    for (Symbol *symbol = context->symbols; symbol; symbol = symbol->next) {
+        if (strlen(symbol->name) == length && strncmp(symbol->name, name, length) == 0) {
+            return symbol;
+        }
+    }
+    return NULL;
+}
+
 static enum LiteralType function_return_type(FunctionNode *function) {
     return function && function->return_type ? function->return_type->type : default_integer_type();
 }
@@ -242,7 +269,15 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             return type->type;
         }
         case NODE_FUNCTION_CALL: {
-            FunctionNode *function = find_function(context, ((FunctionCallNode *)expression)->name);
+            FunctionCallNode *call = (FunctionCallNode *)expression;
+            size_t receiver_length = 0;
+            // len() 返回与目标架构指针同宽的无符号整数。
+            if (is_internal_string_len_call(call) ||
+                (named_string_len_receiver(call, &receiver_length) &&
+                 !find_function(context, call->name))) {
+                return LITERAL_UINT;
+            }
+            FunctionNode *function = find_function(context, call->name);
             return function_return_type(function);
         }
         case NODE_BINARY_OP: {
@@ -444,7 +479,105 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
     }
 }
 
+static LLVMValueRef generate_string_length(
+    CodeGenContext *context, FunctionCallNode *call,
+    const char *receiver_name, size_t receiver_length) {
+    LLVMValueRef string_value = NULL;
+    unsigned argument_count = 0;
+    for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
+        argument_count++;
+    }
+
+    if (receiver_name) {
+        // name.len() 的接收者保存在限定调用名称中，实参数量必须为零。
+        if (argument_count != 0) {
+            fprintf(stderr,
+                "%s:%d:%d: error: method 'len' expects 0 arguments, but got %u\n",
+                call->filename ? call->filename : "<unknown>",
+                call->line, call->column, argument_count);
+            exit(1);
+        }
+        Symbol *symbol = find_symbol_with_length(context, receiver_name, receiver_length);
+        if (!symbol) {
+            fprintf(stderr, "%s:%d:%d: error: undefined variable '%.*s'\n",
+                call->filename ? call->filename : "<unknown>", call->line, call->column,
+                (int)receiver_length, receiver_name);
+            exit(1);
+        }
+        if (symbol->array_type || symbol->type != LITERAL_STRING) {
+            fprintf(stderr,
+                "%s:%d:%d: error: method 'len' is only available on string values\n",
+                call->filename ? call->filename : "<unknown>", call->line, call->column);
+            exit(1);
+        }
+        string_value = LLVMBuildLoad2(
+            context->builder, get_llvm_type(context, LITERAL_STRING),
+            symbol->value, "string_len_receiver");
+    } else {
+        // 其他后缀形式把接收者放在内部调用的第一个参数中。
+        unsigned user_argument_count = argument_count > 0 ? argument_count - 1 : 0;
+        if (argument_count != 1) {
+            fprintf(stderr,
+                "%s:%d:%d: error: method 'len' expects 0 arguments, but got %u\n",
+                call->filename ? call->filename : "<unknown>",
+                call->line, call->column, user_argument_count);
+            exit(1);
+        }
+        ASTNode *receiver_expression = call->arguments;
+        if (expression_type(context, receiver_expression) != LITERAL_STRING) {
+            fprintf(stderr,
+                "%s:%d:%d: error: method 'len' is only available on string values\n",
+                call->filename ? call->filename : "<unknown>", call->line, call->column);
+            exit(1);
+        }
+        string_value = generate_expression(context, receiver_expression);
+    }
+
+    // 从零开始逐字节扫描，以第一个结尾空字节的位置作为 UTF-8 字节长度。
+    LLVMTypeRef index_type = get_llvm_type(context, LITERAL_UINT);
+    LLVMTypeRef byte_type = LLVMInt8TypeInContext(context->context);
+    LLVMBasicBlockRef initial_block = LLVMGetInsertBlock(context->builder);
+    LLVMValueRef function = LLVMGetBasicBlockParent(initial_block);
+    LLVMBasicBlockRef condition_block = LLVMAppendBasicBlockInContext(
+        context->context, function, "string_len_condition");
+    LLVMBasicBlockRef increment_block = LLVMAppendBasicBlockInContext(
+        context->context, function, "string_len_increment");
+    LLVMBasicBlockRef end_block = LLVMAppendBasicBlockInContext(
+        context->context, function, "string_len_end");
+
+    LLVMBuildBr(context->builder, condition_block);
+    LLVMPositionBuilderAtEnd(context->builder, condition_block);
+    LLVMValueRef index = LLVMBuildPhi(context->builder, index_type, "string_length");
+    LLVMValueRef zero_index = LLVMConstInt(index_type, 0, 0);
+    LLVMAddIncoming(index, &zero_index, &initial_block, 1);
+    LLVMValueRef byte_address = LLVMBuildGEP2(
+        context->builder, byte_type, string_value, &index, 1, "string_byte_address");
+    LLVMValueRef byte = LLVMBuildLoad2(
+        context->builder, byte_type, byte_address, "string_byte");
+    LLVMValueRef at_end = LLVMBuildICmp(
+        context->builder, LLVMIntEQ, byte, LLVMConstInt(byte_type, 0, 0),
+        "string_len_at_end");
+    LLVMBuildCondBr(context->builder, at_end, end_block, increment_block);
+
+    LLVMPositionBuilderAtEnd(context->builder, increment_block);
+    LLVMValueRef next_index = LLVMBuildAdd(
+        context->builder, index, LLVMConstInt(index_type, 1, 0), "string_len_next");
+    LLVMBuildBr(context->builder, condition_block);
+    LLVMAddIncoming(index, &next_index, &increment_block, 1);
+
+    LLVMPositionBuilderAtEnd(context->builder, end_block);
+    return index;
+}
+
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call) {
+    size_t receiver_length = 0;
+    const char *receiver_name = named_string_len_receiver(call, &receiver_length);
+    // 已解析到真实函数的 module.len() 优先按模块调用处理。
+    if (receiver_name && find_function(context, call->name)) receiver_name = NULL;
+    if (is_internal_string_len_call(call) || receiver_name) {
+        return generate_string_length(context, call, receiver_name, receiver_length);
+    }
+
     if (strcmp(call->name, "assert") == 0) {
         fprintf(stderr, "error: assert can only be used as a statement\n"); // 中文：assert 只能作为语句使用
         exit(1);

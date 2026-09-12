@@ -772,11 +772,48 @@ static ASTNode *parse_factor(Parser *parser) {
     }
 
     ASTNode *expression = parse_primary(parser);
-    while (parser->current_token->type == TOKEN_LBRACKET) {
-        consume(parser, TOKEN_LBRACKET);
-        ASTNode *index = parse_expression(parser);
-        consume(parser, TOKEN_RBRACKET);
-        expression = (ASTNode *)create_index_expression(expression, index);
+    for (;;) {
+        if (parser->current_token->type == TOKEN_LBRACKET) {
+            consume(parser, TOKEN_LBRACKET);
+            ASTNode *index = parse_expression(parser);
+            consume(parser, TOKEN_RBRACKET);
+            expression = (ASTNode *)create_index_expression(expression, index);
+            continue;
+        }
+
+        // 标识符接收者会在 parse_primary 中解析为限定调用（例如 s.len()）。
+        // 此处处理字符串字面量、数组元素和函数返回值后面的 len()。
+        if (parser->current_token->type == TOKEN_DOT) {
+            int line = parser->current_token->line;
+            int column = parser->current_token->column;
+            consume(parser, TOKEN_DOT);
+            if (parser->current_token->type != TOKEN_IDENTIFIER ||
+                strcmp(parser->current_token->lexeme, "len") != 0) {
+                free_ast(expression);
+                parser_error(parser, "only the string method 'len' is supported");
+            }
+            consume(parser, TOKEN_IDENTIFIER);
+            consume(parser, TOKEN_LPAREN);
+
+            // 将接收者作为第一个内部参数保存，后端据此生成字符串长度计算。
+            FunctionCallNode *call = create_function_call("__4yue_builtin_string_len");
+            call->filename = strdup(parser->lexer->filename);
+            call->line = line;
+            call->column = column;
+            add_argument(call, expression);
+            if (parser->current_token->type != TOKEN_RPAREN) {
+                add_argument(call, parse_expression(parser));
+            }
+            while (parser->current_token->type == TOKEN_COMMA) {
+                consume(parser, TOKEN_COMMA);
+                add_argument(call, parse_expression(parser));
+            }
+            consume(parser, TOKEN_RPAREN);
+            expression = (ASTNode *)call;
+            continue;
+        }
+
+        break;
     }
     return expression;
 }

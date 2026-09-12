@@ -507,6 +507,9 @@ static int rewrite_statement_list(
 
 static int rewrite_call(
     FunctionCallNode *call, LoadedModule *current_module, ImportBinding *bindings) {
+    // 内建字符串方法不是模块函数，不参与模块导出名称重写。
+    if (strcmp(call->name, "__4yue_builtin_string_len") == 0) return 0;
+
     char *dot = strchr(call->name, '.');
     ModuleExport *export = NULL;
 
@@ -522,6 +525,11 @@ static int rewrite_call(
 
         ImportBinding *binding = find_binding(bindings, alias);
         if (!binding) {
+            // 没有同名导入时，将 name.len() 留给后端按字符串方法解析。
+            if (!strchr(dot + 1, '.') && strcmp(dot + 1, "len") == 0) {
+                free(alias);
+                return 0;
+            }
             fprintf(stderr, "%s:%d:%d: error: namespace '%s' was not imported\n", // 中文：未导入名称空间
                 call->filename, call->line, call->column, alias);
             free(alias);

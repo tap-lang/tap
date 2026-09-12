@@ -1,0 +1,12 @@
+fn main(): i32 {
+    let value: string = "hello";
+    let length = value.len(1);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'len' expects 0 arguments, but got 1
+- .exit
+1
+-- */

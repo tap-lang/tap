@@ -72,6 +72,36 @@ fn main(): i32 {
 
 参数传递、返回和赋值传递的是字符串引用，不会复制字符串内容。
 
+## 获取长度
+
+使用 `.len()` 获取字符串在 UTF-8 编码下的字节长度。该方法不接收参数，返回类型为
+架构宽度的无符号整数 `uint`：
+
+```text
+let s: string = "hello";
+let length = s.len();
+print(length);
+```
+
+空字符串的长度为 `0`，结尾的空字节不计入长度：
+
+```text
+let empty: string = "";
+let length: uint = empty.len();
+```
+
+`.len()` 可以用于字符串变量、字符串字面量、返回字符串的函数调用和字符串数组元素：
+
+```text
+let values: [string; 2] = ["one", "four"];
+print(values[1].len());
+print("hello".len());
+```
+
+长度按字节计算，不按 Unicode 字符或用户感知字符计算。例如 UTF-8 源文件中的
+`"你好".len()` 返回 `6`，而不是 `2`。当前实现从字符串开头扫描到结尾空字节，因此
+时间复杂度为 O(n)。
+
 ## 输出字符串
 
 `print` 的第一个参数是字符串字面量时，该参数会作为格式字符串处理。使用 `%s` 输出
@@ -97,9 +127,9 @@ assert(result == 0, "result must be zero");
 
 ## 与标准库的关系
 
-`string` 是内建语言类型，无需导入模块即可使用。当前标准库尚未提供字符串长度、拼接、
-比较、查找或转换函数；语言层面的字符串支持不依赖这些标准库 API。标准库的现状见
-[标准库文档](std.md#current-limits)。
+`string` 是内建语言类型，无需导入模块即可使用。`.len()` 也是内建方法，不属于标准库
+函数。当前标准库尚未提供字符串拼接、比较、查找或转换函数；语言层面的字符串支持
+不依赖这些标准库 API。标准库的现状见[标准库文档](std.md#current-limits)。
 
 ## 字符串数组
 
@@ -150,7 +180,7 @@ let values: [string; 3] = ["empty"; 3];
 
 - 字符串拼接与插值。
 - 具有明确内容语义的字符串相等、大小或字典序比较；不要依赖指针比较结果。
-- 长度查询、字符串下标和切片。
+- Unicode 字符数量查询、字符串下标和切片。
 - 可变字符串及字符替换。
 - 动态创建、复制或释放字符串的标准库 API。
 - 字符与 Unicode 码点级别的处理 API。
@@ -163,10 +193,13 @@ let values: [string; 3] = ["empty"; 3];
   赋值、函数参数、返回值和转义序列。
 - [`tests/run-pass/types/string_arrays.tp`](../tests/run-pass/types/string_arrays.tp)：数组
   初始化、下标读取、元素替换和重复初始化。
+- [`tests/run-pass/types/string_length.tp`](../tests/run-pass/types/string_length.tp)：字节长度、
+  返回类型、空字符串、UTF-8 字符串和不同形式的接收者。
 
-可以只运行这两组测试：
+可以只运行这些测试：
 
 ```bash
 TEST_FILTER=types/strings.tp sh tests/run-tests.sh build/4yue
 TEST_FILTER=types/string_arrays.tp sh tests/run-tests.sh build/4yue
+TEST_FILTER=types/string_length.tp sh tests/run-tests.sh build/4yue
 ```

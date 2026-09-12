@@ -1,0 +1,39 @@
+fn measured_length(value: string): uint {
+    return value.len();
+}
+
+fn returned_string(): string {
+    return "returned";
+}
+
+fn main(): i32 {
+    let value: string = "hello";
+    let length = value.len();
+    print(length);
+    print("\n");
+
+    print("".len());
+    print("\n");
+
+    let values: [string; 2] = ["one", "four"];
+    print(values[1].len());
+    print("\n");
+
+    print(returned_string().len());
+    print("\n");
+
+    print(measured_length("你好"));
+    print("\n");
+    return 0;
+}
+
+/** -- test
+- .stdout
+5
+0
+4
+8
+6
+- .exit
+0
+-- */
