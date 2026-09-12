@@ -7,7 +7,7 @@ extern fn __4yue_sleep_ms(milliseconds: i32): i32;
 ```
 
 普通程序不应直接使用 `__4yue_` 前缀符号。[`std/prelude.tp`](../std/prelude.tp)
-将它们封装为以下公共函数：
+和 [`std/env.tp`](../std/env.tp) 将它们封装为以下公共函数：
 
 | 函数 | 行为 |
 |---|---|
@@ -15,6 +15,9 @@ extern fn __4yue_sleep_ms(milliseconds: i32): i32;
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，负数或系统错误返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
+| `argc(): i32` | 返回命令行参数数量，包含程序路径自身 |
+| `arg(index: i32): string` | 返回指定命令行参数；越界时返回空字符串 |
+| `args(): [string; 64]` | 返回最多 64 个命令行参数组成的固定长度字符串数组 |
 
 说明：POSIX 终端方向键会在一次 read_key 调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 扩展方向键返回第二个 scan code，通常是 `72/80/77/75`。
 

@@ -63,7 +63,7 @@ extract_expectation() {
             current = ""
             next
         }
-        in_test && $0 ~ /^- \.(stdout|stderr|exit)$/ {
+        in_test && $0 ~ /^- \.(stdout|stderr|exit|args)$/ {
             current = substr($0, 3)
             if (current == target) found = 1
             next
@@ -160,6 +160,7 @@ run_case() {
     expected_stdout_file="$TEMP_ROOT/$total.expected.stdout"
     expected_stderr_file="$TEMP_ROOT/$total.expected.stderr"
     expected_exit_file="$TEMP_ROOT/$total.expected.exit"
+    expected_args_file="$TEMP_ROOT/$total.expected.args"
     case_failed=0
 
     if load_expectation stdout "$case_file" "$expected_stdout_file"; then
@@ -184,6 +185,11 @@ run_case() {
         mark_failure "missing embedded .exit expectation"
         expected_status=
     fi
+    if extract_expectation args "$case_file" > "$expected_args_file"; then
+        has_program_args=1
+    else
+        has_program_args=0
+    fi
 
     if [ "$case_mode" = "compile-fail" ]; then
         env "4YUE_MODULE_PATH=$MODULE_PATH" "4YUE_STD_PATH=$STD_PATH" \
@@ -191,8 +197,15 @@ run_case() {
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?
     else
+        set -- "$COMPILER" run -o "$TEMP_ROOT/$total-program$EXE_SUFFIX" "$relative_file"
+        if [ "$has_program_args" -eq 1 ]; then
+            set -- "$@" --
+            while IFS= read -r program_arg || [ -n "$program_arg" ]; do
+                set -- "$@" "$program_arg"
+            done < "$expected_args_file"
+        fi
         env "4YUE_MODULE_PATH=$MODULE_PATH" "4YUE_STD_PATH=$STD_PATH" \
-            "$COMPILER" run -o "$TEMP_ROOT/$total-program$EXE_SUFFIX" "$relative_file" \
+            "$@" \
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?
     fi

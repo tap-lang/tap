@@ -210,6 +210,10 @@ static enum LiteralType function_return_type(FunctionNode *function) {
     return function && function->return_type ? function->return_type->type : default_integer_type();
 }
 
+static const VarTypeNode *function_return_var_type(FunctionNode *function) {
+    return function ? function->return_type : NULL;
+}
+
 static enum LiteralType function_param_type(FunctionNode *function, unsigned index) {
     ASTNode *type = function ? function->param_types : NULL;
     while (type && index > 0) {
@@ -219,6 +223,33 @@ static enum LiteralType function_param_type(FunctionNode *function, unsigned ind
     return type && type->type == NODE_VAR_TYPE
         ? ((VarTypeNode *)type)->type
         : default_integer_type();
+}
+
+static const VarTypeNode *function_param_var_type(FunctionNode *function, unsigned index) {
+    ASTNode *type = function ? function->param_types : NULL;
+    while (type && index > 0) {
+        type = type->next;
+        index--;
+    }
+    return type && type->type == NODE_VAR_TYPE ? (VarTypeNode *)type : NULL;
+}
+
+static const char *llvm_function_name(const FunctionNode *function) {
+    return function && !function->is_extern && strcmp(function->name, "main") == 0
+        ? "__4yue_user_main"
+        : function->name;
+}
+
+static const char *llvm_call_name(const char *name) {
+    return strcmp(name, "main") == 0 ? "__4yue_user_main" : name;
+}
+
+static int var_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
+    if (!left || !right) return left == right;
+    if (left->is_array != right->is_array) return 0;
+    if (!left->is_array) return left->type == right->type;
+    return left->array_length == right->array_length &&
+           var_type_equal(left->element_type, right->element_type);
 }
 
 // Resolve the recursive type produced by an identifier or a chain of indexes.
@@ -245,6 +276,17 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
             exit(1);
         }
         return container_type->element_type;
+    }
+
+    if (expression && expression->type == NODE_FUNCTION_CALL) {
+        FunctionCallNode *call = (FunctionCallNode *)expression;
+        FunctionNode *function = find_function(context, call->name);
+        const VarTypeNode *return_type = function_return_var_type(function);
+        if (!return_type || !return_type->is_array) {
+            fprintf(stderr, "error: function '%s' does not return an array\n", call->name); // 中文：函数不返回数组
+            exit(1);
+        }
+        return return_type;
     }
 
     fprintf(stderr, "error: invalid array index target\n"); // 中文：数组索引目标无效
@@ -318,6 +360,7 @@ static LLVMValueRef cast_integer(CodeGenContext *context, LLVMValueRef value,
 }
 
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
+static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call);
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type);
 static unsigned function_param_count(FunctionNode *function);
@@ -380,6 +423,18 @@ static LLVMValueRef generate_index_address(
             fprintf(stderr, "error: index target is not an array\n"); // 中文：索引目标不是数组
             exit(1);
         }
+    } else if (index_expression->array &&
+               index_expression->array->type == NODE_FUNCTION_CALL) {
+        FunctionCallNode *call = (FunctionCallNode *)index_expression->array;
+        FunctionNode *function = find_function(context, call->name);
+        array_type = function_return_var_type(function);
+        if (!array_type || !array_type->is_array) {
+            fprintf(stderr, "error: function '%s' does not return an array\n", call->name); // 中文：函数不返回数组
+            exit(1);
+        }
+        LLVMTypeRef llvm_array_type = get_llvm_var_type(context, array_type);
+        array_address = create_entry_alloca(context, llvm_array_type, "array_return_tmp");
+        LLVMBuildStore(context->builder, generate_function_call(context, call), array_address);
     } else {
         fprintf(stderr, "error: invalid array index target\n"); // 中文：数组索引目标无效
         exit(1);
@@ -581,8 +636,9 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         exit(1);
     }
 
-    LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, call->name);
     FunctionNode *function = find_function(context, call->name);
+    const char *callee_name = function ? llvm_call_name(call->name) : call->name;
+    LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, callee_name);
     if (!llvm_function || !function) {
         print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                          "undefined function '%s'", call->name); // 中文：未定义的函数
@@ -661,6 +717,16 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             fprintf(stderr, "error: array literals can only be used to initialize array variables\n"); // 中文：数组字面量只能用于数组变量初始化
             exit(1);
         case NODE_FUNCTION_CALL:
+            {
+                FunctionCallNode *call = (FunctionCallNode *)expression;
+                FunctionNode *function = find_function(context, call->name);
+                const VarTypeNode *return_type = function_return_var_type(function);
+                if (return_type && return_type->is_array) {
+                    fprintf(stderr, "error: array-returning function '%s' must be used as an array value\n",
+                            call->name); // 中文：返回数组的函数必须作为数组值使用
+                    exit(1);
+                }
+            }
             return generate_function_call(context, (FunctionCallNode *)expression);
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
@@ -803,6 +869,58 @@ static void generate_array_initializer(
         LLVMBuildStore(context->builder, value, element_address);
         if (!literal->is_repeat) element = element->next;
     }
+}
+
+static LLVMValueRef generate_array_value(
+    CodeGenContext *context, ASTNode *expression, const VarTypeNode *expected_type) {
+    if (!expected_type || !expected_type->is_array) {
+        fprintf(stderr, "error: expected array type\n"); // 中文：期望数组类型
+        exit(1);
+    }
+
+    LLVMTypeRef llvm_array_type = get_llvm_var_type(context, expected_type);
+    if (expression && expression->type == NODE_IDENTIFIER) {
+        IdentifierNode *identifier = (IdentifierNode *)expression;
+        Symbol *symbol = find_symbol(context, identifier->name);
+        if (!symbol) {
+            fprintf(stderr, "error: undefined variable '%s'\n", identifier->name); // 中文：未定义的变量
+            exit(1);
+        }
+        if (!symbol->array_type || !var_type_equal(symbol->array_type, expected_type)) {
+            fprintf(stderr, "error: array type mismatch\n"); // 中文：数组类型不匹配
+            exit(1);
+        }
+        return LLVMBuildLoad2(context->builder, llvm_array_type,
+                              symbol->value, "array_value");
+    }
+
+    if (expression && expression->type == NODE_FUNCTION_CALL) {
+        FunctionCallNode *call = (FunctionCallNode *)expression;
+        FunctionNode *function = find_function(context, call->name);
+        const VarTypeNode *return_type = function_return_var_type(function);
+        if (!return_type || !return_type->is_array ||
+            !var_type_equal(return_type, expected_type)) {
+            fprintf(stderr, "error: array return type mismatch\n"); // 中文：数组返回类型不匹配
+            exit(1);
+        }
+        return generate_function_call(context, call);
+    }
+
+    if (expression && expression->type == NODE_INDEX_EXPRESSION) {
+        const VarTypeNode *element_type = NULL;
+        LLVMValueRef address = generate_index_address(
+            context, (IndexExpressionNode *)expression, &element_type);
+        if (!element_type || !element_type->is_array ||
+            !var_type_equal(element_type, expected_type)) {
+            fprintf(stderr, "error: array type mismatch\n"); // 中文：数组类型不匹配
+            exit(1);
+        }
+        return LLVMBuildLoad2(context->builder, llvm_array_type,
+                              address, "array_slice_value");
+    }
+
+    fprintf(stderr, "error: expression does not produce an array value\n"); // 中文：表达式不产生数组值
+    exit(1);
 }
 
 
@@ -997,13 +1115,10 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
             case NODE_VAR_DECL: {
                 VarDeclNode *declaration = (VarDeclNode *)statement;
                 if (declaration->type && declaration->type->is_array) {
-                    if (!declaration->expression ||
-                        declaration->expression->type != NODE_ARRAY_LITERAL) {
-                        fprintf(stderr, "error: array variables must be initialized with an array literal\n"); // 中文：数组变量必须使用数组字面量初始化
+                    if (!declaration->expression) {
+                        fprintf(stderr, "error: array variables must be initialized\n"); // 中文：数组变量必须初始化
                         exit(1);
                     }
-                    ArrayLiteralNode *literal =
-                        (ArrayLiteralNode *)declaration->expression;
                     LLVMTypeRef array_type = get_llvm_var_type(
                         context, declaration->type);
                     LLVMValueRef storage = create_entry_alloca(
@@ -1011,9 +1126,17 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     insert_array_symbol(
                         context, declaration->name, storage, declaration->type,
                         declaration->is_const);
-                    // Initialization follows the same recursive shape as the declared type.
-                    generate_array_initializer(
-                        context, storage, declaration->type, literal);
+                    if (declaration->expression->type == NODE_ARRAY_LITERAL) {
+                        ArrayLiteralNode *literal =
+                            (ArrayLiteralNode *)declaration->expression;
+                        // Initialization follows the same recursive shape as the declared type.
+                        generate_array_initializer(
+                            context, storage, declaration->type, literal);
+                    } else {
+                        LLVMValueRef value = generate_array_value(
+                            context, declaration->expression, declaration->type);
+                        LLVMBuildStore(context->builder, value, storage);
+                    }
                     break;
                 }
                 if (declaration->expression &&
@@ -1043,8 +1166,12 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
-                LLVMValueRef value = generate_expression_as(context, return_node->expression,
-                                                             context->current_return_type);
+                LLVMValueRef value = context->current_return_var_type &&
+                                     context->current_return_var_type->is_array
+                    ? generate_array_value(context, return_node->expression,
+                                           context->current_return_var_type)
+                    : generate_expression_as(context, return_node->expression,
+                                             context->current_return_type);
                 LLVMBuildRet(context->builder, value);
                 break;
             }
@@ -1091,10 +1218,6 @@ static unsigned function_param_count(FunctionNode *function) {
 }
 
 static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *function) {
-    if (function->return_type && function->return_type->is_array) {
-        fprintf(stderr, "error: arrays are not supported as function return types yet\n"); // 中文：第一版数组暂不支持作为函数返回类型
-        exit(1);
-    }
     for (ASTNode *type = function->param_types; type; type = type->next) {
         if (((VarTypeNode *)type)->is_array) {
             fprintf(stderr, "error: arrays are not supported as function parameters yet\n"); // 中文：第一版数组暂不支持作为函数参数
@@ -1106,8 +1229,10 @@ static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *f
     for (unsigned i = 0; i < count; i++) {
         params[i] = get_llvm_type(context, function_param_type(function, i));
     }
-    LLVMTypeRef type = LLVMFunctionType(get_llvm_type(context, function_return_type(function)),
-                                        params, count, 0);
+    LLVMTypeRef return_type = function->return_type && function->return_type->is_array
+        ? get_llvm_var_type(context, function->return_type)
+        : get_llvm_type(context, function_return_type(function));
+    LLVMTypeRef type = LLVMFunctionType(return_type, params, count, 0);
     free(params);
     return type;
 }
@@ -1119,6 +1244,12 @@ static LLVMValueRef zero_value(CodeGenContext *context, enum LiteralType type) {
         return LLVMConstReal(llvm_type, 0.0);
     }
     return LLVMConstNull(llvm_type);
+}
+
+static LLVMValueRef zero_var_value(
+    CodeGenContext *context, const VarTypeNode *type, enum LiteralType scalar_type) {
+    if (type && type->is_array) return LLVMConstNull(get_llvm_var_type(context, type));
+    return zero_value(context, type ? type->type : scalar_type);
 }
 
 // Remove internal functions that cannot be reached from externally visible entry points.
@@ -1161,8 +1292,74 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     return context;
 }
 
+static FunctionNode *find_user_main(ProgramNode *program) {
+    for (ASTNode *node = program->functions; node; node = node->next) {
+        if (node->type == NODE_FUNCTION) {
+            FunctionNode *function = (FunctionNode *)node;
+            if (!function->is_extern && strcmp(function->name, "main") == 0) {
+                return function;
+            }
+        }
+    }
+    return NULL;
+}
+
+static void generate_entry_point(CodeGenContext *context, FunctionNode *user_main) {
+    if (!user_main) return;
+
+    if (function_param_count(user_main) != 0) {
+        fprintf(stderr, "error: main function cannot declare parameters; use std.env.args() instead\n"); // 中文：main 不能声明参数，请使用 std.env.args()
+        exit(1);
+    }
+    if (user_main->return_type && user_main->return_type->is_array) {
+        fprintf(stderr, "error: main function cannot return an array\n"); // 中文：main 不能返回数组
+        exit(1);
+    }
+
+    LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
+    LLVMTypeRef char_ptr_type = LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
+    LLVMTypeRef argv_type = LLVMPointerType(char_ptr_type, 0);
+    LLVMTypeRef init_args_params[2] = {int32_type, argv_type};
+    LLVMTypeRef init_args_type = LLVMFunctionType(
+        LLVMVoidTypeInContext(context->context), init_args_params, 2, 0);
+    LLVMValueRef init_args = LLVMGetNamedFunction(context->module, "__4yue_init_args");
+    if (!init_args) {
+        init_args = LLVMAddFunction(context->module, "__4yue_init_args", init_args_type);
+    }
+
+    LLVMTypeRef main_params[2] = {int32_type, argv_type};
+    LLVMTypeRef main_type = LLVMFunctionType(int32_type, main_params, 2, 0);
+    LLVMValueRef main_function = LLVMAddFunction(context->module, "main", main_type);
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(
+        context->context, main_function, "entry");
+    LLVMPositionBuilderAtEnd(context->builder, entry);
+
+    LLVMValueRef init_args_values[2] = {
+        LLVMGetParam(main_function, 0),
+        LLVMGetParam(main_function, 1)
+    };
+    LLVMBuildCall2(context->builder, init_args_type, init_args,
+                   init_args_values, 2, "");
+
+    LLVMValueRef user_main_function = LLVMGetNamedFunction(
+        context->module, llvm_function_name(user_main));
+    LLVMTypeRef user_main_type = LLVMGlobalGetValueType(user_main_function);
+    LLVMValueRef result = LLVMBuildCall2(
+        context->builder, user_main_type, user_main_function, NULL, 0,
+        "user_main_result");
+
+    enum LiteralType return_type = function_return_type(user_main);
+    if (is_integer_type(return_type)) {
+        result = cast_integer(context, result, return_type, LITERAL_I32);
+        LLVMBuildRet(context->builder, result);
+    } else {
+        LLVMBuildRet(context->builder, LLVMConstInt(int32_type, 0, 0));
+    }
+}
+
 void generate_code(CodeGenContext *context, ProgramNode *program) {
     context->program = program;
+    FunctionNode *user_main = find_user_main(program);
 
     LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
     LLVMTypeRef char_ptr_type = LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
@@ -1174,24 +1371,29 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
+        const char *name = llvm_function_name(function);
         LLVMValueRef llvm_function = LLVMAddFunction(
-            context->module, function->name, create_function_type(context, function));
+            context->module, name, create_function_type(context, function));
         // Executables expose only main; GlobalDCE may remove every unreachable helper.
-        if (!function->is_extern && strcmp(function->name, "main") != 0) {
+        if (!function->is_extern) {
             LLVMSetLinkage(llvm_function, LLVMInternalLinkage);
         }
     }
+
+    generate_entry_point(context, user_main);
 
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
         // Runtime functions already have native implementations and need no LLVM body.
         if (function->is_extern) continue;
-        LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, function->name);
+        LLVMValueRef llvm_function = LLVMGetNamedFunction(
+            context->module, llvm_function_name(function));
 
         free_symbols(context->symbols);
         context->symbols = NULL;
         context->current_return_type = function_return_type(function);
+        context->current_return_var_type = function_return_var_type(function);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(context->context, llvm_function, "entry");
         LLVMPositionBuilderAtEnd(context->builder, entry);
@@ -1201,12 +1403,21 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         while (param) {
             IdentifierNode *identifier = (IdentifierNode *)param;
             enum LiteralType type = function_param_type(function, param_index);
+            const VarTypeNode *var_type = function_param_var_type(function, param_index);
             LLVMValueRef storage = create_entry_alloca(
-                context, get_llvm_type(context, type), identifier->name);
+                context,
+                var_type && var_type->is_array
+                    ? get_llvm_var_type(context, var_type)
+                    : get_llvm_type(context, type),
+                identifier->name);
             LLVMValueRef value = LLVMGetParam(llvm_function, param_index);
             LLVMSetValueName2(value, identifier->name, strlen(identifier->name));
             LLVMBuildStore(context->builder, value, storage);
-            insert_symbol(context, identifier->name, storage, type, 0);
+            if (var_type && var_type->is_array) {
+                insert_array_symbol(context, identifier->name, storage, var_type, 0);
+            } else {
+                insert_symbol(context, identifier->name, storage, type, 0);
+            }
             param = param->next;
             param_index++;
         }
@@ -1214,7 +1425,9 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         generate_statement_list(context, function->body);
         LLVMBasicBlockRef current = LLVMGetInsertBlock(context->builder);
         if (current && !LLVMGetBasicBlockTerminator(current)) {
-            LLVMBuildRet(context->builder, zero_value(context, context->current_return_type));
+            LLVMBuildRet(context->builder,
+                         zero_var_value(context, context->current_return_var_type,
+                                        context->current_return_type));
         }
     }
 

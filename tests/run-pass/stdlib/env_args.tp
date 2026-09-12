@@ -1,0 +1,21 @@
+import std.env as env;
+
+fn main(): i32 {
+    let values: [string; 64] = env.args();
+    print("%d\n", env.argc());
+    print("%s %s %s\n", values[0], values[2], env.arg(2));
+    print("%s\n", env.args()[1]);
+    return 0;
+}
+
+/** -- test
+- .args
+alpha
+beta value
+- .stdout
+3
+alpha beta value beta value
+alpha
+- .exit
+0
+-- */

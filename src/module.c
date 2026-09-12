@@ -325,6 +325,7 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
     ModuleExport **tail = &module->exports;
     for (ASTNode *node = program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
+        if (function->is_extern) continue;
         ModuleExport *export = calloc(1, sizeof(ModuleExport));
         if (!export) {
             fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -454,6 +455,16 @@ static int rewrite_statement_list(
                 result = rewrite_expression(
                     ((AssignmentNode *)statement)->expression, current_module, bindings);
                 break;
+            case NODE_INDEX_ASSIGNMENT:
+                result = rewrite_expression(
+                    (ASTNode *)((IndexAssignmentNode *)statement)->target,
+                    current_module, bindings);
+                if (result == 0) {
+                    result = rewrite_expression(
+                        ((IndexAssignmentNode *)statement)->expression,
+                        current_module, bindings);
+                }
+                break;
             case NODE_RETURN:
                 result = rewrite_expression(
                     ((ReturnNode *)statement)->expression, current_module, bindings);
@@ -579,6 +590,13 @@ static int rewrite_expression(
                 if (result != 0) return result;
             }
             return rewrite_call(call, current_module, bindings);
+        }
+        case NODE_INDEX_EXPRESSION: {
+            IndexExpressionNode *index = (IndexExpressionNode *)expression;
+            int result = rewrite_expression(index->array, current_module, bindings);
+            return result == 0
+                ? rewrite_expression(index->index, current_module, bindings)
+                : result;
         }
         default:
             return 0;

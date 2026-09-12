@@ -13,7 +13,7 @@
 // 打印用法
 static void print_usage() {
     printf("用法: 4yue [选项] <源文件>\n");
-    printf("      4yue run [选项] <源文件>\n");
+    printf("      4yue run [选项] <源文件> [-- 程序参数...]\n");
     printf("命令:\n");
     printf("  run               编译为本地可执行文件并运行\n");
     printf("选项:\n");
@@ -40,10 +40,16 @@ int main(int argc, char *argv[]) {
     int run_native = 0;
     int lex_only = 0;
     int parse_only = 0;
+    int program_argc = 0;
+    char **program_argv = NULL;
 
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+        if (strcmp(argv[i], "--") == 0) {
+            program_argc = argc - i - 1;
+            program_argv = &argv[i + 1];
+            break;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage();
             return 0;
         } else if (strcmp(argv[i], "-V") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -93,6 +99,10 @@ int main(int argc, char *argv[]) {
 
     if (run_native && (emit_ir || emit_obj || run_lli || lex_only || parse_only)) {
         fprintf(stderr, "error: run cannot be combined with other output or execution modes\n"); // 中文：run 命令不能与其他输出或运行模式组合使用
+        return 1;
+    }
+    if (!run_native && program_argc > 0) {
+        fprintf(stderr, "error: program arguments can only be used with run\n"); // 中文：程序参数只能与 run 命令一起使用
         return 1;
     }
 
@@ -188,7 +198,7 @@ int main(int argc, char *argv[]) {
             if (debug) printf("生成可执行文件...\n");
 
             result = run_native
-                ? compile_and_run(codegen_context, exe_file)
+                ? compile_and_run(codegen_context, exe_file, program_argc, program_argv)
                 : compile_to_executable(codegen_context, exe_file);
         }
         free(default_exe_file);

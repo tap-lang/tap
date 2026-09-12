@@ -45,6 +45,7 @@ typedef struct {
     LLVMTypeRef exit_type;
     ProgramNode *program;           // 当前正在生成的AST，不拥有其内存
     enum LiteralType current_return_type;
+    const VarTypeNode *current_return_var_type;
     LoopContext *current_loop;
     // LLVMValueRef puts_func;         // puts函数引用
     // LLVMTypeRef puts_type;          // puts函数类型

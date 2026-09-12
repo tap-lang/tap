@@ -90,6 +90,25 @@ static int read_escape_sequence_key(void) {
 }
 #endif
 
+static int32_t saved_argc = 0;
+static char **saved_argv = NULL;
+
+void __4yue_init_args(int32_t argc, char **argv) {
+    saved_argc = argc;
+    saved_argv = argv;
+}
+
+int32_t __4yue_argc(void) {
+    return saved_argc;
+}
+
+const char *__4yue_arg(int32_t index) {
+    if (index < 0 || index >= saved_argc || !saved_argv || !saved_argv[index]) {
+        return "";
+    }
+    return saved_argv[index];
+}
+
 int32_t __4yue_read_key(void) {
 #ifdef _WIN32
     // Windows arrow and function keys use a prefix byte followed by a scan code.

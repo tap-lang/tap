@@ -307,7 +307,7 @@ int compile_to_executable(CodeGenContext *context, const char *exe_file) {
     return result;
 }
 
-static int execute_file(const char *exe_file) {
+static int execute_file(const char *exe_file, int program_argc, char **program_argv) {
     char *relative_path = NULL;
     const char *exec_path = exe_file;
 
@@ -324,20 +324,34 @@ static int execute_file(const char *exe_file) {
     }
 #endif
 
-    char *const argv[] = {(char *)exec_path, NULL};
+    char **argv = malloc(sizeof(char *) * ((size_t)program_argc + 2));
+    if (!argv) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        free(relative_path);
+        return 1;
+    }
+    argv[0] = (char *)exec_path;
+    for (int i = 0; i < program_argc; i++) {
+        argv[i + 1] = program_argv[i];
+    }
+    argv[program_argc + 1] = NULL;
     int result = run_process(argv);
+    free(argv);
     free(relative_path);
     return result;
 }
 
-int compile_and_run(CodeGenContext *context, const char *exe_file) {
+int compile_and_run(CodeGenContext *context, const char *exe_file,
+                    int program_argc, char **program_argv) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
 
     const char *run_file = exe_file ? exe_file : workspace.executable_file;
     int compile_result = compile_with_temp_object(context, run_file, workspace.object_file);
     int result = compile_result;
-    if (compile_result == 0) result = execute_file(run_file);
+    if (compile_result == 0) {
+        result = execute_file(run_file, program_argc, program_argv);
+    }
 
     if (exe_file && compile_result == 0 && remove(exe_file) != 0 && errno != ENOENT) {
         fprintf(stderr, "failed to delete temporary executable: %s: %s\n", // 中文：删除临时可执行文件失败
