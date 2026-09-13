@@ -35,6 +35,8 @@ static void print_var_type(const VarTypeNode *type) {
         printf("[");
         print_var_type(type->element_type);
         printf("; %" PRIu64 "]", type->array_length);
+    } else if (type->enum_name) {
+        printf("%s", type->enum_name);
     } else {
         printf("%s", literal_type_str(type->type));
     }
@@ -278,6 +280,18 @@ void print_ast(const ProgramNode *program) {
             printf("  Import: %s as %s\n", import_node->module_name, import_node->alias);
         }
     }
+    for (ASTNode *node = program->enums; node; node = node->next) {
+        if (node->type == NODE_ENUM) {
+            EnumNode *enum_node = (EnumNode *)node;
+            printf("  Enum: %s\n", enum_node->name);
+            for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
+                if (variant->type == NODE_IDENTIFIER) {
+                    print_indent(4);
+                    printf("Variant: %s\n", ((IdentifierNode *)variant)->name);
+                }
+            }
+        }
+    }
     for (ASTNode *fn = program->functions; fn; fn = fn->next) {
         if (fn->type != NODE_FUNCTION) {
             continue;
@@ -325,6 +339,7 @@ ProgramNode *create_program() {
     program->base.type = NODE_PROGRAM;
     program->base.next = NULL;
     program->imports = NULL;
+    program->enums = NULL;
     program->constants = NULL;
     program->functions = NULL;
     return program;
@@ -366,6 +381,20 @@ FunctionNode *create_function(char *name) {
     function->body = NULL;
     function->return_type = NULL;
     return function;
+}
+
+// 创建枚举声明节点，成员稍后通过 add_enum_variant 追加。
+EnumNode *create_enum(char *name) {
+    EnumNode *enum_node = (EnumNode *)malloc(sizeof(EnumNode));
+    if (!enum_node) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    enum_node->base.type = NODE_ENUM;
+    enum_node->base.next = NULL;
+    enum_node->name = strdup(name);
+    enum_node->variants = NULL;
+    return enum_node;
 }
 
 // 创建标识符节点
@@ -515,15 +544,34 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->base.type = NODE_VAR_TYPE;
     var_type->base.next = NULL;
     var_type->type = type;
+    var_type->enum_name = NULL;
     var_type->is_array = 0;
     var_type->array_length = 0;
     var_type->element_type = NULL;
     return var_type;
 }
 
+// 创建枚举类型节点；枚举在 LLVM 中以 i32 形式存储。
+VarTypeNode *create_enum_type(const char *name) {
+    VarTypeNode *type = create_var_type(LITERAL_I32);
+    type->enum_name = strdup(name);
+    if (!type->enum_name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    return type;
+}
+
 // 创建可递归嵌套的数组类型节点。
 VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length) {
     VarTypeNode *type = create_var_type(element_type->type);
+    if (element_type->enum_name) {
+        type->enum_name = strdup(element_type->enum_name);
+        if (!type->enum_name) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+    }
     type->is_array = 1;
     type->array_length = length;
     type->element_type = element_type;
@@ -654,6 +702,30 @@ void add_constant(ProgramNode *program, VarDeclNode *constant) {
     current->next = (ASTNode *)constant;
 }
 
+// 添加枚举到程序，保持源码声明顺序。
+void add_enum(ProgramNode *program, EnumNode *enum_node) {
+    if (!program->enums) {
+        program->enums = (ASTNode *)enum_node;
+        return;
+    }
+
+    ASTNode *current = program->enums;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)enum_node;
+}
+
+// 添加枚举成员到枚举声明，保持源码中的成员顺序。
+void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant) {
+    if (!enum_node->variants) {
+        enum_node->variants = (ASTNode *)variant;
+        return;
+    }
+
+    ASTNode *current = enum_node->variants;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)variant;
+}
+
 void add_import(ProgramNode *program, ImportNode *import_node) {
     if (!program->imports) {
         program->imports = (ASTNode *)import_node;
@@ -779,6 +851,7 @@ void free_ast(ASTNode *node) {
         case NODE_PROGRAM: {
             ProgramNode *program = (ProgramNode *)node;
             free_ast(program->imports);
+            free_ast(program->enums);
             free_ast(program->constants);
             free_ast(program->functions);
             break;
@@ -798,6 +871,12 @@ void free_ast(ASTNode *node) {
             free_ast(function->param_types);
             free_ast(function->body);
             free_ast((ASTNode *)function->return_type);
+            break;
+        }
+        case NODE_ENUM: {
+            EnumNode *enum_node = (EnumNode *)node;
+            free(enum_node->name);
+            free_ast(enum_node->variants);
             break;
         }
         case NODE_IDENTIFIER: {
@@ -833,6 +912,7 @@ void free_ast(ASTNode *node) {
         case NODE_VAR_TYPE: {
             // 数组类型递归拥有它的元素类型。
             VarTypeNode *var_type = (VarTypeNode *)node;
+            free(var_type->enum_name);
             free_ast((ASTNode *)var_type->element_type);
             break;
         }

@@ -181,6 +181,13 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_F64: type = LITERAL_F64; break;
         case TOKEN_BOOL: type = LITERAL_BOOL; break;
         case TOKEN_STRING: type = LITERAL_STRING; break;
+        case TOKEN_IDENTIFIER: {
+            char *enum_name = strdup(parser->current_token->lexeme);
+            consume(parser, TOKEN_IDENTIFIER);
+            VarTypeNode *enum_type = create_enum_type(enum_name);
+            free(enum_name);
+            return enum_type;
+        }
         default:
             parser_error(parser, "expected type"); // 中文：期望类型
             return NULL;
@@ -188,6 +195,46 @@ static VarTypeNode *parse_type(Parser *parser) {
 
     consume(parser, token_type);
     return create_var_type(type);
+}
+
+// 解析顶层枚举声明，枚举成员可用可选尾逗号结束。
+static EnumNode *parse_enum(Parser *parser) {
+    consume(parser, TOKEN_ENUM);
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "expected enum name"); // 中文：期望枚举名称
+    }
+
+    char *enum_name = strdup(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+    EnumNode *enum_node = create_enum(enum_name);
+    free(enum_name);
+
+    consume(parser, TOKEN_LBRACE);
+    if (parser->current_token->type == TOKEN_RBRACE) {
+        parser_error(parser, "enum must declare at least one variant"); // 中文：枚举必须至少声明一个成员
+    }
+
+    while (parser->current_token->type != TOKEN_RBRACE &&
+           parser->current_token->type != TOKEN_EOF) {
+        if (parser->current_token->type != TOKEN_IDENTIFIER) {
+            parser_error(parser, "expected enum variant name"); // 中文：期望枚举成员名称
+        }
+        char *variant_name = strdup(parser->current_token->lexeme);
+        consume(parser, TOKEN_IDENTIFIER);
+        IdentifierNode *variant = create_identifier(variant_name);
+        free(variant_name);
+        add_enum_variant(enum_node, variant);
+
+        if (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            if (parser->current_token->type == TOKEN_RBRACE) break;
+            continue;
+        }
+        break;
+    }
+
+    consume(parser, TOKEN_RBRACE);
+    return enum_node;
 }
 
 static VarDeclNode *parse_var_decl(Parser *parser, int consume_semicolon) {
@@ -879,6 +926,8 @@ ProgramNode *parse_program(Parser *parser) {
     while (parser->current_token->type != TOKEN_EOF) {
         if (parser->current_token->type == TOKEN_IMPORT) {
             add_import(program, parse_import(parser));
+        } else if (parser->current_token->type == TOKEN_ENUM) {
+            add_enum(program, parse_enum(parser));
         } else if (parser->current_token->type == TOKEN_CONST) {
             add_constant(program, parse_var_decl(parser, 1));
         } else if (parser->current_token->type == TOKEN_EXTERN) {
@@ -892,7 +941,7 @@ ProgramNode *parse_program(Parser *parser) {
             FunctionNode *function = parse_function(parser, 0);
             add_function(program, function);
         } else {
-            parser_error(parser, "expected module import, constant declaration, or function definition"); // 中文：期望模块导入、常量声明或函数定义
+            parser_error(parser, "expected module import, enum declaration, constant declaration, or function definition"); // 中文：期望模块导入、枚举声明、常量声明或函数定义
         }
     }
     

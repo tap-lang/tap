@@ -1,0 +1,30 @@
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+fn turn(value: Direction): Direction {
+    if (value == Direction.Left) {
+        return Direction.Right;
+    }
+    return Direction.Up;
+}
+
+fn main(): i32 {
+    let direction: Direction = Direction.Left;
+    if (turn(direction) == Direction.Right) {
+        print("%d %d\n", Direction.Up, Direction.Right);
+        print("%s %s\n", Direction.Up, Direction.Right);
+        return 0;
+    }
+    return 1;
+}
+
+/** -- test
+- .stdout
+0 3
+- .exit
+0
+-- */

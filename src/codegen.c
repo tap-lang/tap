@@ -128,18 +128,27 @@ static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRe
     symbol->name = strdup(name);
     symbol->value = value;
     symbol->type = type;
+    symbol->declared_type = NULL;
     symbol->array_type = NULL;
     symbol->is_const = is_const;
     symbol->next = context->symbols;
     context->symbols = symbol;
 }
 
+// 按完整声明类型登记符号，保留枚举和数组等高层类型信息。
+static void insert_typed_symbol(CodeGenContext *context, const char *name,
+                                LLVMValueRef value, const VarTypeNode *type,
+                                int is_const) {
+    insert_symbol(context, name, value, type->type, is_const);
+    // The declaration AST outlives Codegen, so no type copy is required here.
+    context->symbols->declared_type = type;
+    if (type->is_array) context->symbols->array_type = type;
+}
+
 static void insert_array_symbol(CodeGenContext *context, const char *name,
                                 LLVMValueRef value, const VarTypeNode *array_type,
                                 int is_const) {
-    insert_symbol(context, name, value, array_type->type, is_const);
-    // The declaration AST outlives Codegen, so no type copy is required here.
-    context->symbols->array_type = array_type;
+    insert_typed_symbol(context, name, value, array_type, is_const);
 }
 
 static void free_symbols(Symbol *symbols) {
@@ -180,6 +189,48 @@ static FunctionNode *find_function(CodeGenContext *context, const char *name) {
         }
     }
     return NULL;
+}
+
+// 在当前程序中按名称查找枚举声明。
+static EnumNode *find_enum(CodeGenContext *context, const char *name) {
+    if (!context->program) return NULL;
+    for (ASTNode *node = context->program->enums; node; node = node->next) {
+        if (node->type == NODE_ENUM) {
+            EnumNode *enum_node = (EnumNode *)node;
+            if (strcmp(enum_node->name, name) == 0) return enum_node;
+        }
+    }
+    return NULL;
+}
+
+// 解析 Enum.Member 形式的枚举成员，并返回成员从 0 开始的序号。
+static int enum_variant_value(CodeGenContext *context, const char *name, uint64_t *value_out) {
+    const char *dot = strchr(name, '.');
+    if (!dot || dot == name || strchr(dot + 1, '.')) return 0;
+
+    size_t enum_name_length = (size_t)(dot - name);
+    char *enum_name = malloc(enum_name_length + 1);
+    if (!enum_name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(enum_name, name, enum_name_length);
+    enum_name[enum_name_length] = '\0';
+
+    EnumNode *enum_node = find_enum(context, enum_name);
+    free(enum_name);
+    if (!enum_node) return 0;
+
+    uint64_t index = 0;
+    const char *variant_name = dot + 1;
+    for (ASTNode *variant = enum_node->variants; variant; variant = variant->next, index++) {
+        if (variant->type == NODE_IDENTIFIER &&
+            strcmp(((IdentifierNode *)variant)->name, variant_name) == 0) {
+            if (value_out) *value_out = index;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 // 在程序的顶层常量列表中查找已经解析出的全局常量。
@@ -259,12 +310,59 @@ static const char *llvm_call_name(const char *name) {
     return strcmp(name, "main") == 0 ? "__4yue_user_main" : name;
 }
 
+static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression);
+
 static int var_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     if (!left || !right) return left == right;
     if (left->is_array != right->is_array) return 0;
-    if (!left->is_array) return left->type == right->type;
+    if (!left->is_array) {
+        if (left->enum_name || right->enum_name) {
+            return left->enum_name && right->enum_name &&
+                   strcmp(left->enum_name, right->enum_name) == 0;
+        }
+        return left->type == right->type;
+    }
+    if (left->enum_name || right->enum_name) {
+        if (!left->enum_name || !right->enum_name ||
+            strcmp(left->enum_name, right->enum_name) != 0) {
+            return 0;
+        }
+    }
     return left->array_length == right->array_length &&
            var_type_equal(left->element_type, right->element_type);
+}
+
+// 判断源表达式是否可以写入目标声明类型。
+static int expression_assignable_to(CodeGenContext *context, ASTNode *expression,
+                                    const VarTypeNode *target_type) {
+    if (!target_type || target_type->is_array) return 0;
+    enum LiteralType actual_type = expression_type(context, expression);
+    if (target_type->enum_name) {
+        if (expression && expression->type == NODE_IDENTIFIER) {
+            IdentifierNode *identifier = (IdentifierNode *)expression;
+            uint64_t ignored = 0;
+            if (enum_variant_value(context, identifier->name, &ignored)) {
+                const char *dot = strchr(identifier->name, '.');
+                return dot && strlen(target_type->enum_name) == (size_t)(dot - identifier->name) &&
+                       strncmp(identifier->name, target_type->enum_name,
+                               (size_t)(dot - identifier->name)) == 0;
+            }
+            Symbol *symbol = find_symbol(context, identifier->name);
+            if (symbol && symbol->declared_type && symbol->declared_type->enum_name) {
+                return strcmp(symbol->declared_type->enum_name, target_type->enum_name) == 0;
+            }
+        }
+        if (expression && expression->type == NODE_FUNCTION_CALL) {
+            FunctionNode *function =
+                find_function(context, ((FunctionCallNode *)expression)->name);
+            const VarTypeNode *return_type = function_return_var_type(function);
+            return return_type && return_type->enum_name &&
+                   strcmp(return_type->enum_name, target_type->enum_name) == 0;
+        }
+        return 0;
+    }
+    return target_type->type == actual_type ||
+           (is_integer_type(target_type->type) && is_integer_type(actual_type));
 }
 
 // Resolve the recursive type produced by an identifier or a chain of indexes.
@@ -315,10 +413,12 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
         case NODE_LITERAL:
             return ((LiteralNode *)expression)->literal_type;
         case NODE_IDENTIFIER: {
-            Symbol *symbol = find_symbol(context, ((IdentifierNode *)expression)->name);
+            const char *name = ((IdentifierNode *)expression)->name;
+            Symbol *symbol = find_symbol(context, name);
             if (!symbol) {
-                VarDeclNode *constant =
-                    find_global_constant(context, ((IdentifierNode *)expression)->name);
+                uint64_t enum_value = 0;
+                if (enum_variant_value(context, name, &enum_value)) return LITERAL_I32;
+                VarDeclNode *constant = find_global_constant(context, name);
                 return constant && constant->type
                     ? constant->type->type
                     : default_integer_type();
@@ -406,6 +506,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type);
 static unsigned function_param_count(FunctionNode *function);
+static void validate_var_type(CodeGenContext *context, const VarTypeNode *type);
 
 static LLVMValueRef integer_constant(CodeGenContext *context, LiteralNode *literal,
                                      enum LiteralType type) {
@@ -700,6 +801,15 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     LLVMValueRef *arguments = count ? malloc(sizeof(LLVMValueRef) * count) : NULL;
     ASTNode *argument = call->arguments;
     for (unsigned i = 0; i < count; i++, argument = argument->next) {
+        const VarTypeNode *param_type = function_param_var_type(function, i);
+        if (param_type && param_type->enum_name &&
+            !expression_assignable_to(context, argument, param_type)) {
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "function '%s' argument %u type mismatch",
+                             call->name, i + 1); // 中文：函数参数类型不匹配
+            free(arguments);
+            exit(1);
+        }
         arguments[i] = generate_expression_as(context, argument, function_param_type(function, i));
     }
 
@@ -734,6 +844,10 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             IdentifierNode *identifier = (IdentifierNode *)expression;
             Symbol *symbol = find_symbol(context, identifier->name);
             if (!symbol) {
+                uint64_t enum_value = 0;
+                if (enum_variant_value(context, identifier->name, &enum_value)) {
+                    return LLVMConstInt(get_llvm_type(context, LITERAL_I32), enum_value, 0);
+                }
                 VarDeclNode *constant = find_global_constant(context, identifier->name);
                 LLVMValueRef global = LLVMGetNamedGlobal(context->module, identifier->name);
                 if (!constant || !constant->type || !global) {
@@ -860,6 +974,12 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
         fprintf(stderr, "error: assigning an entire array is not supported yet\n"); // 中文：第一版数组暂不支持整个数组赋值
         exit(1);
     }
+    if (symbol->declared_type &&
+        !expression_assignable_to(context, assignment->expression, symbol->declared_type)) {
+        fprintf(stderr, "error: assignment type mismatch for '%s'\n",
+                assignment->name); // 中文：赋值类型不匹配
+        exit(1);
+    }
     LLVMValueRef value = generate_expression_as(context, assignment->expression, symbol->type);
     LLVMBuildStore(context->builder, value, symbol->value);
 }
@@ -913,7 +1033,9 @@ static void generate_array_initializer(
             exit(1);
         }
         enum LiteralType actual_type = expression_type(context, current_element);
-        if (!array_element_type_compatible(element_type->type, actual_type)) {
+        if (element_type->enum_name
+                ? !expression_assignable_to(context, current_element, element_type)
+                : !array_element_type_compatible(element_type->type, actual_type)) {
             fprintf(stderr, "error: array element type mismatch\n"); // 中文：数组元素类型不匹配
             exit(1);
         }
@@ -1005,7 +1127,9 @@ static void generate_index_assignment(
         exit(1);
     }
     enum LiteralType actual_type = expression_type(context, assignment->expression);
-    if (!array_element_type_compatible(element_type->type, actual_type)) {
+    if (element_type->enum_name
+            ? !expression_assignable_to(context, assignment->expression, element_type)
+            : !array_element_type_compatible(element_type->type, actual_type)) {
         fprintf(stderr, "error: array element assignment type mismatch\n"); // 中文：数组元素赋值类型不匹配
         exit(1);
     }
@@ -1167,6 +1291,7 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_VAR_DECL: {
                 VarDeclNode *declaration = (VarDeclNode *)statement;
+                validate_var_type(context, declaration->type);
                 if (declaration->type && declaration->type->is_array) {
                     if (!declaration->expression) {
                         fprintf(stderr, "error: array variables must be initialized\n"); // 中文：数组变量必须初始化
@@ -1203,8 +1328,21 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 LLVMTypeRef llvm_type = get_llvm_type(context, type);
                 LLVMValueRef storage = create_entry_alloca(
                     context, llvm_type, declaration->name);
-                insert_symbol(context, declaration->name, storage, type, declaration->is_const);
+                if (declaration->type) {
+                    insert_typed_symbol(context, declaration->name, storage,
+                                        declaration->type, declaration->is_const);
+                } else {
+                    insert_symbol(context, declaration->name, storage, type,
+                                  declaration->is_const);
+                }
                 if (declaration->expression) {
+                    if (declaration->type &&
+                        !expression_assignable_to(context, declaration->expression,
+                                                  declaration->type)) {
+                        fprintf(stderr, "error: initializer type mismatch for '%s'\n",
+                                declaration->name); // 中文：初始化表达式类型不匹配
+                        exit(1);
+                    }
                     LLVMValueRef value = generate_expression_as(
                         context, declaration->expression, type);
                     LLVMBuildStore(context->builder, value, storage);
@@ -1219,6 +1357,13 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
+                if (context->current_return_var_type &&
+                    context->current_return_var_type->enum_name &&
+                    !expression_assignable_to(context, return_node->expression,
+                                              context->current_return_var_type)) {
+                    fprintf(stderr, "error: return type mismatch\n"); // 中文：返回值类型不匹配
+                    exit(1);
+                }
                 LLVMValueRef value = context->current_return_var_type &&
                                      context->current_return_var_type->is_array
                     ? generate_array_value(context, return_node->expression,
@@ -1280,7 +1425,10 @@ static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *f
     unsigned count = function_param_count(function);
     LLVMTypeRef *params = count ? malloc(sizeof(LLVMTypeRef) * count) : NULL;
     for (unsigned i = 0; i < count; i++) {
-        params[i] = get_llvm_type(context, function_param_type(function, i));
+        const VarTypeNode *param_type = function_param_var_type(function, i);
+        params[i] = param_type
+            ? get_llvm_var_type(context, param_type)
+            : get_llvm_type(context, function_param_type(function, i));
     }
     LLVMTypeRef return_type = function->return_type && function->return_type->is_array
         ? get_llvm_var_type(context, function->return_type)
@@ -1401,6 +1549,80 @@ static void generate_global_constants(CodeGenContext *context, ProgramNode *prog
     }
 }
 
+// 校验枚举声明和枚举类型引用是否有效。
+static void validate_var_type(CodeGenContext *context, const VarTypeNode *type) {
+    if (!type) return;
+    if (type->enum_name && !find_enum(context, type->enum_name)) {
+        fprintf(stderr, "error: undefined enum type '%s'\n",
+                type->enum_name); // 中文：未定义的枚举类型
+        exit(1);
+    }
+    if (type->is_array) validate_var_type(context, type->element_type);
+}
+
+// 递归校验语句中的枚举类型引用，覆盖嵌套 if/for/while 代码块。
+static void validate_statement_types(CodeGenContext *context, ASTNode *statement) {
+    for (; statement; statement = statement->next) {
+        switch (statement->type) {
+            case NODE_VAR_DECL:
+                validate_var_type(context, ((VarDeclNode *)statement)->type);
+                break;
+            case NODE_IF_STATEMENT: {
+                IfStatementNode *if_node = (IfStatementNode *)statement;
+                validate_statement_types(context, if_node->consequence);
+                validate_statement_types(context, if_node->alternative);
+                break;
+            }
+            case NODE_FOR_STATEMENT: {
+                ForStatementNode *for_node = (ForStatementNode *)statement;
+                validate_statement_types(context, for_node->initializer);
+                validate_statement_types(context, for_node->update);
+                validate_statement_types(context, for_node->body);
+                break;
+            }
+            default:
+                break;
+        }
+    }
+}
+
+// 逐个检查枚举名、成员名和函数签名/变量声明中引用的枚举类型。
+static void validate_enums(CodeGenContext *context, ProgramNode *program) {
+    for (ASTNode *node = program->enums; node; node = node->next) {
+        EnumNode *enum_node = (EnumNode *)node;
+        for (ASTNode *other = node->next; other; other = other->next) {
+            EnumNode *other_enum = (EnumNode *)other;
+            if (strcmp(enum_node->name, other_enum->name) == 0) {
+                fprintf(stderr, "error: duplicate enum '%s'\n",
+                        enum_node->name); // 中文：重复的枚举声明
+                exit(1);
+            }
+        }
+        for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
+            IdentifierNode *variant_node = (IdentifierNode *)variant;
+            for (ASTNode *other = variant->next; other; other = other->next) {
+                if (strcmp(variant_node->name, ((IdentifierNode *)other)->name) == 0) {
+                    fprintf(stderr, "error: duplicate enum variant '%s.%s'\n",
+                            enum_node->name, variant_node->name); // 中文：重复的枚举成员
+                    exit(1);
+                }
+            }
+        }
+    }
+
+    for (ASTNode *constant = program->constants; constant; constant = constant->next) {
+        validate_var_type(context, ((VarDeclNode *)constant)->type);
+    }
+    for (ASTNode *node = program->functions; node; node = node->next) {
+        FunctionNode *function = (FunctionNode *)node;
+        validate_var_type(context, function->return_type);
+        for (ASTNode *type = function->param_types; type; type = type->next) {
+            validate_var_type(context, (VarTypeNode *)type);
+        }
+        validate_statement_types(context, function->body);
+    }
+}
+
 static void generate_entry_point(CodeGenContext *context, FunctionNode *user_main) {
     if (!user_main) return;
 
@@ -1457,6 +1679,7 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
 void generate_code(CodeGenContext *context, ProgramNode *program) {
     context->program = program;
     FunctionNode *user_main = find_user_main(program);
+    validate_enums(context, program);
 
     LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
     LLVMTypeRef char_ptr_type = LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
@@ -1512,8 +1735,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
             LLVMValueRef value = LLVMGetParam(llvm_function, param_index);
             LLVMSetValueName2(value, identifier->name, strlen(identifier->name));
             LLVMBuildStore(context->builder, value, storage);
-            if (var_type && var_type->is_array) {
-                insert_array_symbol(context, identifier->name, storage, var_type, 0);
+            if (var_type) {
+                insert_typed_symbol(context, identifier->name, storage, var_type, 0);
             } else {
                 insert_symbol(context, identifier->name, storage, type, 0);
             }

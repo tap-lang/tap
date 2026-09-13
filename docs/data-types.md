@@ -61,6 +61,31 @@ const VALUES: [i32; 4] = [0; 4];
 | `enum` | 枚举 |
 | `tuple` | 元组 |
 
+### 枚举类型
+
+枚举使用 `enum Name { ... }` 声明，成员按声明顺序从 `0` 开始递增。当前枚举在后端按
+`i32` 表示，因此可以用 `%d` 打印，也可以用于比较、函数参数和函数返回值。
+
+```text
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right
+}
+
+fn turn(value: Direction): Direction {
+    if (value == Direction.Left) {
+        return Direction.Right;
+    }
+    return Direction.Up;
+}
+```
+
+- 枚举成员通过 `EnumName.MemberName` 访问，例如 `Direction.Left`。
+- 成员列表支持可选尾逗号。
+- 当前枚举不支持自定义成员值；`Direction.Up` 为 `0`，`Direction.Right` 为 `3`。
+
 ### 固定长度数组
 
 数组是同类型、固定长度、栈上分配的局部变量，元素类型可以继续是数组：

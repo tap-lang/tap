@@ -174,6 +174,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         break;
     case 4:
         if (memcmp(text, "else", 4) == 0) return TOKEN_ELSE;
+        if (memcmp(text, "enum", 4) == 0) return TOKEN_ENUM;
         if (memcmp(text, "bool", 4) == 0) return TOKEN_BOOL;
         if (memcmp(text, "true", 4) == 0) return TOKEN_BOOL;
         if (memcmp(text, "uint", 4) == 0) return TOKEN_UINT;

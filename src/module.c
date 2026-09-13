@@ -508,54 +508,78 @@ static int build_bindings(
 }
 
 static int rewrite_expression(
-    ASTNode *expression, LoadedModule *current_module, ImportBinding *bindings);
+    ProgramNode *program, ASTNode *expression,
+    LoadedModule *current_module, ImportBinding *bindings);
+
+// 判断限定标识符是否是当前文件里的 Enum.Member 枚举成员。
+static int is_local_enum_member(ProgramNode *program, const char *name) {
+    char *dot = strchr(name, '.');
+    if (!dot || dot == name || strchr(dot + 1, '.')) return 0;
+
+    size_t enum_name_length = (size_t)(dot - name);
+    for (ASTNode *node = program->enums; node; node = node->next) {
+        EnumNode *enum_node = (EnumNode *)node;
+        if (strlen(enum_node->name) == enum_name_length &&
+            strncmp(enum_node->name, name, enum_name_length) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 static int rewrite_statement_list(
-    ASTNode *statements, LoadedModule *current_module, ImportBinding *bindings) {
+    ProgramNode *program, ASTNode *statements,
+    LoadedModule *current_module, ImportBinding *bindings) {
     for (ASTNode *statement = statements; statement; statement = statement->next) {
         int result = 0;
         switch (statement->type) {
             case NODE_VAR_DECL:
                 result = rewrite_expression(
-                    ((VarDeclNode *)statement)->expression, current_module, bindings);
+                    program, ((VarDeclNode *)statement)->expression,
+                    current_module, bindings);
                 break;
             case NODE_ASSIGNMENT:
                 result = rewrite_expression(
-                    ((AssignmentNode *)statement)->expression, current_module, bindings);
+                    program, ((AssignmentNode *)statement)->expression,
+                    current_module, bindings);
                 break;
             case NODE_INDEX_ASSIGNMENT:
                 result = rewrite_expression(
+                    program,
                     (ASTNode *)((IndexAssignmentNode *)statement)->target,
                     current_module, bindings);
                 if (result == 0) {
                     result = rewrite_expression(
+                        program,
                         ((IndexAssignmentNode *)statement)->expression,
                         current_module, bindings);
                 }
                 break;
             case NODE_RETURN:
                 result = rewrite_expression(
-                    ((ReturnNode *)statement)->expression, current_module, bindings);
+                    program, ((ReturnNode *)statement)->expression,
+                    current_module, bindings);
                 break;
             case NODE_PRINT:
                 for (ASTNode *argument = ((PrintNode *)statement)->arguments;
                      argument && result == 0; argument = argument->next) {
-                    result = rewrite_expression(argument, current_module, bindings);
+                    result = rewrite_expression(program, argument, current_module, bindings);
                 }
                 break;
             case NODE_FUNCTION_CALL:
-                result = rewrite_expression(statement, current_module, bindings);
+                result = rewrite_expression(program, statement, current_module, bindings);
                 break;
             case NODE_IF_STATEMENT: {
                 IfStatementNode *if_node = (IfStatementNode *)statement;
-                result = rewrite_expression(if_node->condition, current_module, bindings);
+                result = rewrite_expression(
+                    program, if_node->condition, current_module, bindings);
                 if (result == 0) {
                     result = rewrite_statement_list(
-                        if_node->consequence, current_module, bindings);
+                        program, if_node->consequence, current_module, bindings);
                 }
                 if (result == 0) {
                     result = rewrite_statement_list(
-                        if_node->alternative, current_module, bindings);
+                        program, if_node->alternative, current_module, bindings);
                 }
                 break;
             }
@@ -563,19 +587,20 @@ static int rewrite_statement_list(
                 ForStatementNode *for_node = (ForStatementNode *)statement;
                 if (for_node->initializer) {
                     result = rewrite_statement_list(
-                        for_node->initializer, current_module, bindings);
+                        program, for_node->initializer, current_module, bindings);
                 }
                 if (result == 0) {
                     result = rewrite_expression(
+                        program,
                         for_node->condition, current_module, bindings);
                 }
                 if (result == 0 && for_node->update) {
                     result = rewrite_statement_list(
-                        for_node->update, current_module, bindings);
+                        program, for_node->update, current_module, bindings);
                 }
                 if (result == 0) {
                     result = rewrite_statement_list(
-                        for_node->body, current_module, bindings);
+                        program, for_node->body, current_module, bindings);
                 }
                 break;
             }
@@ -640,35 +665,37 @@ static int rewrite_call(
 }
 
 static int rewrite_expression(
-    ASTNode *expression, LoadedModule *current_module, ImportBinding *bindings) {
+    ProgramNode *program, ASTNode *expression,
+    LoadedModule *current_module, ImportBinding *bindings) {
     if (!expression) return 0;
 
     switch (expression->type) {
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
-            int result = rewrite_expression(binary->left, current_module, bindings);
+            int result = rewrite_expression(program, binary->left, current_module, bindings);
             return result == 0
-                ? rewrite_expression(binary->right, current_module, bindings)
+                ? rewrite_expression(program, binary->right, current_module, bindings)
                 : result;
         }
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
-                int result = rewrite_expression(argument, current_module, bindings);
+                int result = rewrite_expression(program, argument, current_module, bindings);
                 if (result != 0) return result;
             }
             return rewrite_call(call, current_module, bindings);
         }
         case NODE_INDEX_EXPRESSION: {
             IndexExpressionNode *index = (IndexExpressionNode *)expression;
-            int result = rewrite_expression(index->array, current_module, bindings);
+            int result = rewrite_expression(program, index->array, current_module, bindings);
             return result == 0
-                ? rewrite_expression(index->index, current_module, bindings)
+                ? rewrite_expression(program, index->index, current_module, bindings)
                 : result;
         }
         case NODE_IDENTIFIER: {
             IdentifierNode *identifier = (IdentifierNode *)expression;
             if (!strchr(identifier->name, '.')) return 0;
+            if (is_local_enum_member(program, identifier->name)) return 0;
 
             char *resolved = resolve_exported_name(identifier->name, current_module, bindings);
             if (!resolved) {
@@ -688,7 +715,7 @@ static int rewrite_functions(
     ProgramNode *program, LoadedModule *current_module, ImportBinding *bindings) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
-        int result = rewrite_statement_list(function->body, current_module, bindings);
+        int result = rewrite_statement_list(program, function->body, current_module, bindings);
         if (result != 0) return result;
     }
     return 0;

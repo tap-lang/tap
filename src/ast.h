@@ -23,6 +23,7 @@ enum NodeType {
     NODE_ARRAY_LITERAL,             // 数组字面量节点
     NODE_INDEX_EXPRESSION,          // 数组索引表达式节点
     NODE_INDEX_ASSIGNMENT,          // 数组索引赋值节点
+    NODE_ENUM,                      // 枚举声明节点
     NODE_FUNCTION_CALL,             // 函数调用节点
     NODE_IF_STATEMENT,              // 条件语句节点
     NODE_FOR_STATEMENT,             // for 循环节点
@@ -78,6 +79,7 @@ typedef struct ASTNode {
 typedef struct {
     ASTNode base;
     ASTNode *imports;      // 模块导入列表
+    ASTNode *enums;        // 枚举声明列表
     ASTNode *constants;    // 顶层常量列表
     ASTNode *functions;    // 函数列表
 } ProgramNode;
@@ -96,10 +98,18 @@ typedef struct {
 typedef struct VarTypeNode {
     ASTNode base;
     enum LiteralType type;  // 标量类型，数组节点中保留最终元素类型
+    char *enum_name;        // 非空时表示枚举类型，后端按 i32 降低
     int is_array;
     uint64_t array_length;
     struct VarTypeNode *element_type; // 数组拥有的递归元素类型
 } VarTypeNode;
+
+// 枚举声明节点
+typedef struct {
+    ASTNode base;
+    char *name;            // 枚举类型名
+    ASTNode *variants;     // 枚举成员列表（IdentifierNode）
+} EnumNode;
 
 // 函数节点
 typedef struct {
@@ -207,8 +217,10 @@ ProgramNode *create_program();
 ImportNode *create_import(
     const char *module_name, const char *alias, const char *filename, int line, int column);
 FunctionNode *create_function(char *name);
+EnumNode *create_enum(char *name);
 IdentifierNode *create_identifier(char *name);
 VarTypeNode *create_var_type(enum LiteralType type);
+VarTypeNode *create_enum_type(const char *name);
 // 数组类型接管 element_type 的所有权。
 VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length);
 LiteralNode *create_int_literal(uint64_t value);
@@ -234,6 +246,8 @@ FunctionCallNode *create_function_call(char *name);
 // 添加子节点的函数
 void add_function(ProgramNode *program, FunctionNode *function);
 void add_constant(ProgramNode *program, VarDeclNode *constant);
+void add_enum(ProgramNode *program, EnumNode *enum_node);
+void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant);
 void add_import(ProgramNode *program, ImportNode *import_node);
 void add_param(FunctionNode *function, IdentifierNode *param);
 void add_param_type(FunctionNode *function, VarTypeNode *type);
