@@ -51,6 +51,7 @@ fn main(): i32 {
 | `std.env` | `argc(): i32` | 返回当前程序的命令行参数数量，包含程序路径自身 |
 | `std.env` | `arg(index: i32): string` | 返回指定位置的命令行参数；越界时返回空字符串 |
 | `std.env` | `args(): [string; 64]` | 返回最多 64 个命令行参数，不足的位置为空字符串 |
+| `std.math` | `PI: f64` | 圆周率常量，值为 `3.141592653589793` |
 | `std.math` | `square(value: i32): i32` | 返回平方值 |
 | `std.math` | `abs(value: i32): i32` | 返回绝对值 |
 

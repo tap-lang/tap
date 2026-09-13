@@ -328,6 +328,7 @@ ProgramNode *create_program() {
     program->base.type = NODE_PROGRAM;
     program->base.next = NULL;
     program->imports = NULL;
+    program->constants = NULL;
     program->functions = NULL;
     return program;
 }
@@ -645,6 +646,18 @@ void add_function(ProgramNode *program, FunctionNode *function) {
     }
 }
 
+// 添加顶层常量到程序，保持源码中的声明顺序。
+void add_constant(ProgramNode *program, VarDeclNode *constant) {
+    if (!program->constants) {
+        program->constants = (ASTNode *)constant;
+        return;
+    }
+
+    ASTNode *current = program->constants;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)constant;
+}
+
 void add_import(ProgramNode *program, ImportNode *import_node) {
     if (!program->imports) {
         program->imports = (ASTNode *)import_node;
@@ -775,6 +788,7 @@ void free_ast(ASTNode *node) {
         case NODE_PROGRAM: {
             ProgramNode *program = (ProgramNode *)node;
             free_ast(program->imports);
+            free_ast(program->constants);
             free_ast(program->functions);
             break;
         }

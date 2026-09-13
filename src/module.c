@@ -323,6 +323,34 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
     if (duplicate) return report_duplicate(duplicate, previous);
 
     ModuleExport **tail = &module->exports;
+    for (ASTNode *node = program->constants; node; node = node->next) {
+        VarDeclNode *constant = (VarDeclNode *)node;
+        ModuleExport *export = calloc(1, sizeof(ModuleExport));
+        if (!export) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            return 1;
+        }
+        export->name = copy_string(constant->name);
+        export->symbol = create_symbol(module->prefix, constant->name);
+        if (!export->name || !export->symbol) {
+            free(export->name);
+            free(export->symbol);
+            free(export);
+            return 1;
+        }
+
+        free(constant->name);
+        constant->name = copy_string(export->symbol);
+        if (!constant->name) {
+            free(export->name);
+            free(export->symbol);
+            free(export);
+            return 1;
+        }
+        *tail = export;
+        tail = &export->next;
+    }
+
     for (ASTNode *node = program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
         if (function->is_extern) continue;
@@ -396,16 +424,56 @@ static void free_bindings(ImportBinding *bindings) {
     }
 }
 
+// 合并模块中导出的顶层常量和函数；源 ProgramNode 不再拥有这些链表。
 static void append_functions(ProgramNode *destination, ProgramNode *source) {
-    if (!source->functions) return;
-    if (!destination->functions) {
-        destination->functions = source->functions;
-    } else {
-        ASTNode *tail = destination->functions;
-        while (tail->next) tail = tail->next;
-        tail->next = source->functions;
+    if (source->constants) {
+        if (!destination->constants) {
+            destination->constants = source->constants;
+        } else {
+            ASTNode *tail = destination->constants;
+            while (tail->next) tail = tail->next;
+            tail->next = source->constants;
+        }
+        source->constants = NULL;
     }
-    source->functions = NULL;
+
+    if (source->functions) {
+        if (!destination->functions) {
+            destination->functions = source->functions;
+        } else {
+            ASTNode *tail = destination->functions;
+            while (tail->next) tail = tail->next;
+            tail->next = source->functions;
+        }
+        source->functions = NULL;
+    }
+}
+
+// 将模块成员名解析为内部唯一符号名，例如 math.PI -> __4yue_module_0.PI。
+static char *resolve_exported_name(
+    const char *name, LoadedModule *current_module, ImportBinding *bindings) {
+    char *dot = strchr(name, '.');
+    ModuleExport *export = NULL;
+
+    if (dot) {
+        size_t alias_length = (size_t)(dot - name);
+        char *alias = malloc(alias_length + 1);
+        if (!alias) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            return NULL;
+        }
+        memcpy(alias, name, alias_length);
+        alias[alias_length] = '\0';
+
+        ImportBinding *binding = find_binding(bindings, alias);
+        free(alias);
+        if (!binding) return NULL;
+        export = find_export(binding->module, dot + 1);
+    } else {
+        export = find_export(current_module, name);
+    }
+
+    return export ? copy_string(export->symbol) : NULL;
 }
 
 static int load_module(
@@ -597,6 +665,19 @@ static int rewrite_expression(
             return result == 0
                 ? rewrite_expression(index->index, current_module, bindings)
                 : result;
+        }
+        case NODE_IDENTIFIER: {
+            IdentifierNode *identifier = (IdentifierNode *)expression;
+            if (!strchr(identifier->name, '.')) return 0;
+
+            char *resolved = resolve_exported_name(identifier->name, current_module, bindings);
+            if (!resolved) {
+                fprintf(stderr, "error: unknown module constant '%s'\n", identifier->name); // 中文：未知模块常量
+                return 1;
+            }
+            free(identifier->name);
+            identifier->name = resolved;
+            return 0;
         }
         default:
             return 0;

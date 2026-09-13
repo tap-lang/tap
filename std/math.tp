@@ -1,3 +1,6 @@
+
+const PI: f64 = 3.141592653589793;
+
 // 平方
 fn square(value: i32): i32 {
     return value * value;

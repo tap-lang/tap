@@ -78,6 +78,7 @@ typedef struct ASTNode {
 typedef struct {
     ASTNode base;
     ASTNode *imports;      // 模块导入列表
+    ASTNode *constants;    // 顶层常量列表
     ASTNode *functions;    // 函数列表
 } ProgramNode;
 
@@ -232,6 +233,7 @@ FunctionCallNode *create_function_call(char *name);
 
 // 添加子节点的函数
 void add_function(ProgramNode *program, FunctionNode *function);
+void add_constant(ProgramNode *program, VarDeclNode *constant);
 void add_import(ProgramNode *program, ImportNode *import_node);
 void add_param(FunctionNode *function, IdentifierNode *param);
 void add_param_type(FunctionNode *function, VarTypeNode *type);

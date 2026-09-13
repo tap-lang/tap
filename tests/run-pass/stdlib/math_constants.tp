@@ -1,0 +1,13 @@
+import std.math;
+
+fn main(): i32 {
+    print("%.15f\n", math.PI);
+    return 0;
+}
+
+/** -- test
+- .stdout
+3.141592653589793
+- .exit
+0
+-- */

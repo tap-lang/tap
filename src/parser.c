@@ -737,11 +737,6 @@ static ASTNode *parse_primary(Parser *parser) {
             return function_call;
         }
 
-        if (strchr(name, '.')) {
-            free(name);
-            parser_error(parser, "namespace members must be used as function calls"); // 中文：名称空间成员必须作为函数调用使用
-        }
-
         IdentifierNode *identifier = create_identifier(name);
         free(name);
         return (ASTNode *)identifier;
@@ -900,10 +895,12 @@ static ASTNode *parse_expression(Parser *parser) {
 ProgramNode *parse_program(Parser *parser) {
     ProgramNode *program = create_program();
     
-    // 解析所有模块导入和函数定义
+    // 解析所有模块导入、顶层常量和函数定义
     while (parser->current_token->type != TOKEN_EOF) {
         if (parser->current_token->type == TOKEN_IMPORT) {
             add_import(program, parse_import(parser));
+        } else if (parser->current_token->type == TOKEN_CONST) {
+            add_constant(program, parse_var_decl(parser, 1));
         } else if (parser->current_token->type == TOKEN_EXTERN) {
             // Only functions are supported by the first external ABI version.
             consume(parser, TOKEN_EXTERN);
@@ -915,7 +912,7 @@ ProgramNode *parse_program(Parser *parser) {
             FunctionNode *function = parse_function(parser, 0);
             add_function(program, function);
         } else {
-            parser_error(parser, "expected module import or function definition"); // 中文：期望模块导入或函数定义
+            parser_error(parser, "expected module import, constant declaration, or function definition"); // 中文：期望模块导入、常量声明或函数定义
         }
     }
     

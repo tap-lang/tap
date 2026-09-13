@@ -45,6 +45,11 @@ static int is_unsigned_type(enum LiteralType type) {
     }
 }
 
+// 判断是否为浮点类型，用于浮点常量和浮点类型转换。
+static int is_float_type(enum LiteralType type) {
+    return type == LITERAL_FLOAT || type == LITERAL_F32 || type == LITERAL_F64;
+}
+
 static unsigned integer_type_bits(enum LiteralType type) {
     switch (type) {
         case LITERAL_BOOL: return 1;
@@ -179,6 +184,18 @@ static FunctionNode *find_function(CodeGenContext *context, const char *name) {
     return NULL;
 }
 
+// 在程序的顶层常量列表中查找已经解析出的全局常量。
+static VarDeclNode *find_global_constant(CodeGenContext *context, const char *name) {
+    if (!context->program) return NULL;
+    for (ASTNode *node = context->program->constants; node; node = node->next) {
+        if (node->type == NODE_VAR_DECL) {
+            VarDeclNode *constant = (VarDeclNode *)node;
+            if (strcmp(constant->name, name) == 0) return constant;
+        }
+    }
+    return NULL;
+}
+
 // 非标识符接收者由 Parser 降低为保留的内部调用名称。
 static int is_internal_string_len_call(const FunctionCallNode *call) {
     return strcmp(call->name, "__4yue_builtin_string_len") == 0;
@@ -301,6 +318,13 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             return ((LiteralNode *)expression)->literal_type;
         case NODE_IDENTIFIER: {
             Symbol *symbol = find_symbol(context, ((IdentifierNode *)expression)->name);
+            if (!symbol) {
+                VarDeclNode *constant =
+                    find_global_constant(context, ((IdentifierNode *)expression)->name);
+                return constant && constant->type
+                    ? constant->type->type
+                    : default_integer_type();
+            }
             return symbol ? symbol->type : default_integer_type();
         }
         case NODE_INDEX_EXPRESSION: {
@@ -359,6 +383,26 @@ static LLVMValueRef cast_integer(CodeGenContext *context, LLVMValueRef value,
     return LLVMBuildSExt(context->builder, value, target_type, "int_sext");
 }
 
+// 根据目标类型执行标量转换；当前支持整数扩展/截断和 f32/f64 互转。
+static LLVMValueRef cast_value(CodeGenContext *context, LLVMValueRef value,
+                               enum LiteralType source, enum LiteralType target) {
+    if (is_integer_type(source) && is_integer_type(target)) {
+        return cast_integer(context, value, source, target);
+    }
+    if (is_float_type(source) && is_float_type(target)) {
+        if (source == target) return value;
+        if (target == LITERAL_F64) {
+            return LLVMBuildFPExt(context->builder, value, get_llvm_type(context, target),
+                                  "float_ext");
+        }
+        if (target == LITERAL_F32 || target == LITERAL_FLOAT) {
+            return LLVMBuildFPTrunc(context->builder, value, get_llvm_type(context, target),
+                                    "float_trunc");
+        }
+    }
+    return value;
+}
+
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call);
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
@@ -391,7 +435,7 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
     }
 
     enum LiteralType source = expression_type(context, expression);
-    return cast_integer(context, generate_expression(context, expression), source, target);
+    return cast_value(context, generate_expression(context, expression), source, target);
 }
 
 static LLVMValueRef generate_index_address(
@@ -692,8 +736,19 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             IdentifierNode *identifier = (IdentifierNode *)expression;
             Symbol *symbol = find_symbol(context, identifier->name);
             if (!symbol) {
-                fprintf(stderr, "error: undefined variable '%s'\n", identifier->name); // 中文：未定义的变量
-                exit(1);
+                VarDeclNode *constant = find_global_constant(context, identifier->name);
+                LLVMValueRef global = LLVMGetNamedGlobal(context->module, identifier->name);
+                if (!constant || !constant->type || !global) {
+                    fprintf(stderr, "error: undefined variable '%s'\n", identifier->name); // 中文：未定义的变量
+                    exit(1);
+                }
+                if (constant->type->is_array) {
+                    fprintf(stderr, "error: array constant '%s' must be accessed with an index\n", identifier->name); // 中文：数组常量必须通过下标访问
+                    exit(1);
+                }
+                return LLVMBuildLoad2(
+                    context->builder, get_llvm_type(context, constant->type->type),
+                    global, "loaded_global_const");
             }
             if (symbol->array_type) {
                 fprintf(stderr, "error: array '%s' must be accessed with an index\n", identifier->name); // 中文：数组必须通过下标访问
@@ -1304,6 +1359,50 @@ static FunctionNode *find_user_main(ProgramNode *program) {
     return NULL;
 }
 
+// 将顶层常量的字面量初始化表达式转换为 LLVM 常量初始值。
+static LLVMValueRef constant_initializer(
+    CodeGenContext *context, VarDeclNode *constant) {
+    if (!constant->type || constant->type->is_array) {
+        fprintf(stderr, "error: global constants must have a scalar type\n"); // 中文：全局常量必须是标量类型
+        exit(1);
+    }
+    if (!constant->expression || constant->expression->type != NODE_LITERAL) {
+        fprintf(stderr, "error: global constant '%s' must be initialized with a literal\n",
+                constant->name); // 中文：全局常量必须使用字面量初始化
+        exit(1);
+    }
+
+    LiteralNode *literal = (LiteralNode *)constant->expression;
+    LLVMTypeRef target_type = get_llvm_type(context, constant->type->type);
+    if (is_integer_type(constant->type->type) && is_integer_type(literal->literal_type)) {
+        if (literal->integer_text) {
+            return LLVMConstIntOfStringAndSize(
+                target_type, literal->integer_text,
+                (unsigned)strlen(literal->integer_text), 10);
+        }
+        return LLVMConstInt(target_type, literal->value.int_value, 0);
+    }
+    if (is_float_type(constant->type->type) && is_float_type(literal->literal_type)) {
+        return LLVMConstReal(target_type, literal->value.float_value);
+    }
+    fprintf(stderr, "error: global constant '%s' initializer type mismatch\n",
+            constant->name); // 中文：全局常量初始化类型不匹配
+    exit(1);
+}
+
+// 为所有顶层常量生成 LLVM 全局常量，并设置为内部链接。
+static void generate_global_constants(CodeGenContext *context, ProgramNode *program) {
+    for (ASTNode *node = program->constants; node; node = node->next) {
+        VarDeclNode *constant = (VarDeclNode *)node;
+        LLVMValueRef global = LLVMAddGlobal(
+            context->module, get_llvm_type(context, constant->type->type),
+            constant->name);
+        LLVMSetInitializer(global, constant_initializer(context, constant));
+        LLVMSetGlobalConstant(global, 1);
+        LLVMSetLinkage(global, LLVMInternalLinkage);
+    }
+}
+
 static void generate_entry_point(CodeGenContext *context, FunctionNode *user_main) {
     if (!user_main) return;
 
@@ -1367,6 +1466,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     context->printf_func = LLVMAddFunction(context->module, "printf", context->printf_type);
     context->exit_type = LLVMFunctionType(LLVMVoidTypeInContext(context->context), &int32_type, 1, 0);
     context->exit_func = LLVMAddFunction(context->module, "exit", context->exit_type);
+
+    generate_global_constants(context, program);
 
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
