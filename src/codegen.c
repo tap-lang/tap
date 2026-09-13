@@ -48,6 +48,9 @@ static int is_float_type(enum LiteralType type) {
     return type == LITERAL_FLOAT || type == LITERAL_F32 || type == LITERAL_F64;
 }
 
+static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type);
+static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const char *name);
+
 static unsigned integer_type_bits(enum LiteralType type) {
     switch (type) {
         case LITERAL_BOOL: return 1;
@@ -107,6 +110,9 @@ static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode 
     if (type->is_array) {
         return LLVMArrayType2(
             get_llvm_var_type(context, type->element_type), type->array_length);
+    }
+    if (type->struct_name) {
+        return get_llvm_struct_type_by_name(context, type->struct_name);
     }
     return get_llvm_type(context, type->type);
 }
@@ -201,6 +207,46 @@ static EnumNode *find_enum(CodeGenContext *context, const char *name) {
         }
     }
     return NULL;
+}
+
+// 在当前程序中按名称查找结构体声明。
+static StructNode *find_struct(CodeGenContext *context, const char *name) {
+    if (!context->program) return NULL;
+    for (ASTNode *node = context->program->structs; node; node = node->next) {
+        if (node->type == NODE_STRUCT) {
+            StructNode *struct_node = (StructNode *)node;
+            if (strcmp(struct_node->name, name) == 0) return struct_node;
+        }
+    }
+    return NULL;
+}
+
+// 在结构体声明中查找字段，并返回字段下标。
+static StructFieldNode *find_struct_field(
+    StructNode *struct_node, const char *name, unsigned *index_out) {
+    unsigned index = 0;
+    for (ASTNode *field = struct_node ? struct_node->fields : NULL;
+         field; field = field->next, index++) {
+        StructFieldNode *struct_field = (StructFieldNode *)field;
+        if (strcmp(struct_field->name, name) == 0) {
+            if (index_out) *index_out = index;
+            return struct_field;
+        }
+    }
+    return NULL;
+}
+
+// 获取结构体对应的 LLVM 具名类型。
+static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const char *name) {
+    LLVMTypeRef type = LLVMGetTypeByName2(context->context, name);
+    if (type) return type;
+
+    if (!find_struct(context, name)) {
+        fprintf(stderr, "error: undefined struct type '%s'\n",
+                name); // 中文：未定义的结构体类型
+        exit(1);
+    }
+    return LLVMStructCreateNamed(context->context, name);
 }
 
 // 解析 Enum.Member 形式的枚举成员，并返回成员从 0 开始的序号。
@@ -311,11 +357,17 @@ static const char *llvm_call_name(const char *name) {
 }
 
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression);
+static LLVMValueRef generate_expression_for_type(
+    CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type);
 
 static int var_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     if (!left || !right) return left == right;
     if (left->is_array != right->is_array) return 0;
     if (!left->is_array) {
+        if (left->struct_name || right->struct_name) {
+            return left->struct_name && right->struct_name &&
+                   strcmp(left->struct_name, right->struct_name) == 0;
+        }
         if (left->enum_name || right->enum_name) {
             return left->enum_name && right->enum_name &&
                    strcmp(left->enum_name, right->enum_name) == 0;
@@ -328,15 +380,125 @@ static int var_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
             return 0;
         }
     }
+    if (left->struct_name || right->struct_name) {
+        if (!left->struct_name || !right->struct_name ||
+            strcmp(left->struct_name, right->struct_name) != 0) {
+            return 0;
+        }
+    }
     return left->array_length == right->array_length &&
            var_type_equal(left->element_type, right->element_type);
+}
+
+// 将形如 base.field 的限定名拆成两个部分；调用方负责释放输出字符串。
+static int split_field_access_name(
+    const char *name, char **base_out, char **field_out) {
+    const char *dot = strchr(name, '.');
+    if (!dot || dot == name || !dot[1] || strchr(dot + 1, '.')) return 0;
+
+    size_t base_length = (size_t)(dot - name);
+    char *base = malloc(base_length + 1);
+    char *field = strdup(dot + 1);
+    if (!base || !field) {
+        free(base);
+        free(field);
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(base, name, base_length);
+    base[base_length] = '\0';
+    *base_out = base;
+    *field_out = field;
+    return 1;
+}
+
+// 解析结构体字段访问，返回基础符号、字段声明和字段下标。
+static StructFieldNode *field_access_info(
+    CodeGenContext *context, const char *name, Symbol **symbol_out,
+    StructNode **struct_out, unsigned *index_out) {
+    char *base_name = NULL;
+    char *field_name = NULL;
+    if (!split_field_access_name(name, &base_name, &field_name)) return NULL;
+
+    Symbol *symbol = find_symbol(context, base_name);
+    if (!symbol) {
+        free(base_name);
+        free(field_name);
+        return NULL;
+    }
+    if (!symbol->declared_type || !symbol->declared_type->struct_name) {
+        fprintf(stderr, "error: variable '%s' is not a struct\n",
+                base_name); // 中文：变量不是结构体
+        free(base_name);
+        free(field_name);
+        exit(1);
+    }
+
+    StructNode *struct_node = find_struct(context, symbol->declared_type->struct_name);
+    StructFieldNode *field = find_struct_field(struct_node, field_name, index_out);
+    if (!field) {
+        fprintf(stderr, "error: struct '%s' has no field '%s'\n",
+                symbol->declared_type->struct_name, field_name); // 中文：结构体没有该字段
+        free(base_name);
+        free(field_name);
+        exit(1);
+    }
+
+    if (symbol_out) *symbol_out = symbol;
+    if (struct_out) *struct_out = struct_node;
+    free(base_name);
+    free(field_name);
+    return field;
+}
+
+// 生成结构体字段地址，用于字段读取和字段赋值。
+static LLVMValueRef generate_field_address(
+    CodeGenContext *context, const char *name, StructFieldNode **field_out,
+    Symbol **symbol_out) {
+    Symbol *symbol = NULL;
+    StructNode *struct_node = NULL;
+    unsigned index = 0;
+    StructFieldNode *field =
+        field_access_info(context, name, &symbol, &struct_node, &index);
+    if (!field) return NULL;
+
+    LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, struct_node->name);
+    if (field_out) *field_out = field;
+    if (symbol_out) *symbol_out = symbol;
+    return LLVMBuildStructGEP2(
+        context->builder, struct_type, symbol->value, index, "struct_field_ptr");
 }
 
 // 判断源表达式是否可以写入目标声明类型。
 static int expression_assignable_to(CodeGenContext *context, ASTNode *expression,
                                     const VarTypeNode *target_type) {
     if (!target_type || target_type->is_array) return 0;
-    enum LiteralType actual_type = expression_type(context, expression);
+    if (target_type->struct_name) {
+        if (expression && expression->type == NODE_STRUCT_LITERAL) {
+            StructLiteralNode *literal = (StructLiteralNode *)expression;
+            return strcmp(literal->struct_name, target_type->struct_name) == 0;
+        }
+        if (expression && expression->type == NODE_IDENTIFIER) {
+            IdentifierNode *identifier = (IdentifierNode *)expression;
+            Symbol *symbol = find_symbol(context, identifier->name);
+            if (symbol && symbol->declared_type && symbol->declared_type->struct_name) {
+                return strcmp(symbol->declared_type->struct_name,
+                              target_type->struct_name) == 0;
+            }
+            StructFieldNode *field =
+                field_access_info(context, identifier->name, NULL, NULL, NULL);
+            return field && field->field_type->struct_name &&
+                   strcmp(field->field_type->struct_name, target_type->struct_name) == 0;
+        }
+        if (expression && expression->type == NODE_FUNCTION_CALL) {
+            FunctionNode *function =
+                find_function(context, ((FunctionCallNode *)expression)->name);
+            const VarTypeNode *return_type = function_return_var_type(function);
+            return return_type && return_type->struct_name &&
+                   strcmp(return_type->struct_name, target_type->struct_name) == 0;
+        }
+        return 0;
+    }
     if (target_type->enum_name) {
         if (expression && expression->type == NODE_IDENTIFIER) {
             IdentifierNode *identifier = (IdentifierNode *)expression;
@@ -361,6 +523,7 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         }
         return 0;
     }
+    enum LiteralType actual_type = expression_type(context, expression);
     return target_type->type == actual_type ||
            (is_integer_type(target_type->type) && is_integer_type(actual_type));
 }
@@ -418,6 +581,9 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             if (!symbol) {
                 uint64_t enum_value = 0;
                 if (enum_variant_value(context, name, &enum_value)) return LITERAL_I32;
+                StructFieldNode *field =
+                    field_access_info(context, name, NULL, NULL, NULL);
+                if (field) return field->field_type->type;
                 VarDeclNode *constant = find_global_constant(context, name);
                 return constant && constant->type
                     ? constant->type->type
@@ -505,8 +671,10 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call);
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type);
+static LLVMValueRef generate_array_value(
+    CodeGenContext *context, ASTNode *expression, const VarTypeNode *expected_type);
 static unsigned function_param_count(FunctionNode *function);
-static void validate_var_type(CodeGenContext *context, const VarTypeNode *type);
+static void validate_var_type(CodeGenContext *context, VarTypeNode *type);
 
 static LLVMValueRef integer_constant(CodeGenContext *context, LiteralNode *literal,
                                      enum LiteralType type) {
@@ -516,6 +684,78 @@ static LLVMValueRef integer_constant(CodeGenContext *context, LiteralNode *liter
                                           (unsigned)strlen(literal->integer_text), 10);
     }
     return LLVMConstInt(llvm_type, literal->value.int_value, 0);
+}
+
+// 查找结构体字面量中的初始化字段。
+static StructInitFieldNode *find_struct_init_field(
+    StructLiteralNode *literal, const char *name) {
+    for (ASTNode *field = literal->fields; field; field = field->next) {
+        StructInitFieldNode *init = (StructInitFieldNode *)field;
+        if (strcmp(init->name, name) == 0) return init;
+    }
+    return NULL;
+}
+
+// 校验结构体字面量字段是否完整、无重复且无未知字段。
+static void validate_struct_literal_fields(
+    CodeGenContext *context, StructNode *struct_node, StructLiteralNode *literal) {
+    for (ASTNode *init_node = literal->fields; init_node; init_node = init_node->next) {
+        StructInitFieldNode *init = (StructInitFieldNode *)init_node;
+        if (!find_struct_field(struct_node, init->name, NULL)) {
+            fprintf(stderr, "error: struct '%s' has no field '%s'\n",
+                    struct_node->name, init->name); // 中文：结构体没有该字段
+            exit(1);
+        }
+        for (ASTNode *other = init_node->next; other; other = other->next) {
+            if (strcmp(init->name, ((StructInitFieldNode *)other)->name) == 0) {
+                fprintf(stderr, "error: duplicate struct initializer field '%s'\n",
+                        init->name); // 中文：重复的结构体初始化字段
+                exit(1);
+            }
+        }
+    }
+
+    for (ASTNode *field_node = struct_node->fields; field_node; field_node = field_node->next) {
+        StructFieldNode *field = (StructFieldNode *)field_node;
+        if (!find_struct_init_field(literal, field->name)) {
+            fprintf(stderr, "error: missing initializer for field '%s.%s'\n",
+                    struct_node->name, field->name); // 中文：缺少结构体字段初始化
+            exit(1);
+        }
+        validate_var_type(context, field->field_type);
+    }
+}
+
+// 生成结构体字面量的 LLVM 聚合值。
+static LLVMValueRef generate_struct_literal_value(
+    CodeGenContext *context, StructLiteralNode *literal, const VarTypeNode *target_type) {
+    if (!target_type || !target_type->struct_name ||
+        strcmp(literal->struct_name, target_type->struct_name) != 0) {
+        fprintf(stderr, "error: struct initializer type mismatch\n"); // 中文：结构体初始化类型不匹配
+        exit(1);
+    }
+
+    StructNode *struct_node = find_struct(context, literal->struct_name);
+    if (!struct_node) {
+        fprintf(stderr, "error: undefined struct type '%s'\n",
+                literal->struct_name); // 中文：未定义的结构体类型
+        exit(1);
+    }
+    validate_struct_literal_fields(context, struct_node, literal);
+
+    LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, literal->struct_name);
+    LLVMValueRef value = LLVMGetUndef(struct_type);
+    unsigned index = 0;
+    for (ASTNode *field_node = struct_node->fields;
+         field_node; field_node = field_node->next, index++) {
+        StructFieldNode *field = (StructFieldNode *)field_node;
+        StructInitFieldNode *init = find_struct_init_field(literal, field->name);
+        LLVMValueRef field_value =
+            generate_expression_for_type(context, init->expression, field->field_type);
+        value = LLVMBuildInsertValue(
+            context->builder, value, field_value, index, "struct_insert");
+    }
+    return value;
 }
 
 static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *expression,
@@ -535,6 +775,38 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
 
     enum LiteralType source = expression_type(context, expression);
     return cast_value(context, generate_expression(context, expression), source, target);
+}
+
+// 根据完整目标类型生成表达式，结构体和数组保留高层类型信息。
+static LLVMValueRef generate_expression_for_type(
+    CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type) {
+    if (!target_type) return generate_expression(context, expression);
+    if (target_type->is_array) {
+        return generate_array_value(context, expression, target_type);
+    }
+    if (target_type->struct_name) {
+        if (!expression_assignable_to(context, expression, target_type)) {
+            fprintf(stderr, "error: struct expression type mismatch\n"); // 中文：结构体表达式类型不匹配
+            exit(1);
+        }
+        if (expression && expression->type == NODE_STRUCT_LITERAL) {
+            return generate_struct_literal_value(
+                context, (StructLiteralNode *)expression, target_type);
+        }
+        if (expression && expression->type == NODE_IDENTIFIER) {
+            IdentifierNode *identifier = (IdentifierNode *)expression;
+            StructFieldNode *field = NULL;
+            LLVMValueRef field_address =
+                generate_field_address(context, identifier->name, &field, NULL);
+            if (field_address) {
+                return LLVMBuildLoad2(
+                    context->builder, get_llvm_var_type(context, field->field_type),
+                    field_address, "struct_field_value");
+            }
+        }
+        return generate_expression(context, expression);
+    }
+    return generate_expression_as(context, expression, target_type->type);
 }
 
 static LLVMValueRef generate_index_address(
@@ -802,7 +1074,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     ASTNode *argument = call->arguments;
     for (unsigned i = 0; i < count; i++, argument = argument->next) {
         const VarTypeNode *param_type = function_param_var_type(function, i);
-        if (param_type && param_type->enum_name &&
+        if (param_type && (param_type->enum_name || param_type->struct_name) &&
             !expression_assignable_to(context, argument, param_type)) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                              "function '%s' argument %u type mismatch",
@@ -810,7 +1082,9 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
             free(arguments);
             exit(1);
         }
-        arguments[i] = generate_expression_as(context, argument, function_param_type(function, i));
+        arguments[i] = param_type
+            ? generate_expression_for_type(context, argument, param_type)
+            : generate_expression_as(context, argument, function_param_type(function, i));
     }
 
     LLVMTypeRef function_type = LLVMGlobalGetValueType(llvm_function);
@@ -848,6 +1122,14 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 if (enum_variant_value(context, identifier->name, &enum_value)) {
                     return LLVMConstInt(get_llvm_type(context, LITERAL_I32), enum_value, 0);
                 }
+                StructFieldNode *field = NULL;
+                LLVMValueRef field_address =
+                    generate_field_address(context, identifier->name, &field, NULL);
+                if (field_address) {
+                    return LLVMBuildLoad2(
+                        context->builder, get_llvm_var_type(context, field->field_type),
+                        field_address, "loaded_struct_field");
+                }
                 VarDeclNode *constant = find_global_constant(context, identifier->name);
                 LLVMValueRef global = LLVMGetNamedGlobal(context->module, identifier->name);
                 if (!constant || !constant->type || !global) {
@@ -866,7 +1148,10 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 fprintf(stderr, "error: array '%s' must be accessed with an index\n", identifier->name); // 中文：数组必须通过下标访问
                 exit(1);
             }
-            return LLVMBuildLoad2(context->builder, get_llvm_type(context, symbol->type),
+            LLVMTypeRef llvm_type = symbol->declared_type
+                ? get_llvm_var_type(context, symbol->declared_type)
+                : get_llvm_type(context, symbol->type);
+            return LLVMBuildLoad2(context->builder, llvm_type,
                                   symbol->value, "loaded_var");
         }
         case NODE_INDEX_EXPRESSION: {
@@ -882,6 +1167,9 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
         }
         case NODE_ARRAY_LITERAL:
             fprintf(stderr, "error: array literals can only be used to initialize array variables\n"); // 中文：数组字面量只能用于数组变量初始化
+            exit(1);
+        case NODE_STRUCT_LITERAL:
+            fprintf(stderr, "error: struct literals must be used with a struct target type\n"); // 中文：结构体字面量必须用于结构体目标类型
             exit(1);
         case NODE_FUNCTION_CALL:
             {
@@ -963,6 +1251,26 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
 static void generate_assignment(CodeGenContext *context, AssignmentNode *assignment) {
     Symbol *symbol = find_symbol(context, assignment->name);
     if (!symbol) {
+        StructFieldNode *field = NULL;
+        Symbol *base_symbol = NULL;
+        LLVMValueRef field_address =
+            generate_field_address(context, assignment->name, &field, &base_symbol);
+        if (field_address) {
+            if (base_symbol->is_const) {
+                fprintf(stderr, "error: cannot assign to field of constant '%s'\n",
+                        base_symbol->name); // 中文：不能修改常量结构体字段
+                exit(1);
+            }
+            if (!expression_assignable_to(context, assignment->expression, field->field_type)) {
+                fprintf(stderr, "error: assignment type mismatch for '%s'\n",
+                        assignment->name); // 中文：赋值类型不匹配
+                exit(1);
+            }
+            LLVMValueRef value = generate_expression_for_type(
+                context, assignment->expression, field->field_type);
+            LLVMBuildStore(context->builder, value, field_address);
+            return;
+        }
         fprintf(stderr, "error: undefined variable '%s'\n", assignment->name); // 中文：未定义的变量
         exit(1);
     }
@@ -980,7 +1288,9 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
                 assignment->name); // 中文：赋值类型不匹配
         exit(1);
     }
-    LLVMValueRef value = generate_expression_as(context, assignment->expression, symbol->type);
+    LLVMValueRef value = symbol->declared_type
+        ? generate_expression_for_type(context, assignment->expression, symbol->declared_type)
+        : generate_expression_as(context, assignment->expression, symbol->type);
     LLVMBuildStore(context->builder, value, symbol->value);
 }
 
@@ -1322,6 +1632,19 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     fprintf(stderr, "error: array declarations must explicitly specify [element type; length]\n"); // 中文：数组声明必须显式指定 [元素类型; 长度]
                     exit(1);
                 }
+                if (declaration->type && declaration->type->struct_name) {
+                    LLVMTypeRef llvm_type = get_llvm_var_type(context, declaration->type);
+                    LLVMValueRef storage = create_entry_alloca(
+                        context, llvm_type, declaration->name);
+                    insert_typed_symbol(context, declaration->name, storage,
+                                        declaration->type, declaration->is_const);
+                    if (declaration->expression) {
+                        LLVMValueRef value = generate_expression_for_type(
+                            context, declaration->expression, declaration->type);
+                        LLVMBuildStore(context->builder, value, storage);
+                    }
+                    break;
+                }
                 enum LiteralType type = declaration->type
                     ? declaration->type->type
                     : expression_type(context, declaration->expression);
@@ -1358,16 +1681,16 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
                 if (context->current_return_var_type &&
-                    context->current_return_var_type->enum_name &&
+                    (context->current_return_var_type->enum_name ||
+                     context->current_return_var_type->struct_name) &&
                     !expression_assignable_to(context, return_node->expression,
                                               context->current_return_var_type)) {
                     fprintf(stderr, "error: return type mismatch\n"); // 中文：返回值类型不匹配
                     exit(1);
                 }
-                LLVMValueRef value = context->current_return_var_type &&
-                                     context->current_return_var_type->is_array
-                    ? generate_array_value(context, return_node->expression,
-                                           context->current_return_var_type)
+                LLVMValueRef value = context->current_return_var_type
+                    ? generate_expression_for_type(
+                        context, return_node->expression, context->current_return_var_type)
                     : generate_expression_as(context, return_node->expression,
                                              context->current_return_type);
                 LLVMBuildRet(context->builder, value);
@@ -1430,7 +1753,9 @@ static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *f
             ? get_llvm_var_type(context, param_type)
             : get_llvm_type(context, function_param_type(function, i));
     }
-    LLVMTypeRef return_type = function->return_type && function->return_type->is_array
+    LLVMTypeRef return_type = function->return_type &&
+                              (function->return_type->is_array ||
+                               function->return_type->struct_name)
         ? get_llvm_var_type(context, function->return_type)
         : get_llvm_type(context, function_return_type(function));
     LLVMTypeRef type = LLVMFunctionType(return_type, params, count, 0);
@@ -1449,7 +1774,9 @@ static LLVMValueRef zero_value(CodeGenContext *context, enum LiteralType type) {
 
 static LLVMValueRef zero_var_value(
     CodeGenContext *context, const VarTypeNode *type, enum LiteralType scalar_type) {
-    if (type && type->is_array) return LLVMConstNull(get_llvm_var_type(context, type));
+    if (type && (type->is_array || type->struct_name)) {
+        return LLVMConstNull(get_llvm_var_type(context, type));
+    }
     return zero_value(context, type ? type->type : scalar_type);
 }
 
@@ -1549,12 +1876,24 @@ static void generate_global_constants(CodeGenContext *context, ProgramNode *prog
     }
 }
 
-// 校验枚举声明和枚举类型引用是否有效。
-static void validate_var_type(CodeGenContext *context, const VarTypeNode *type) {
+// 校验命名类型引用；解析阶段先把标识符类型暂存为 enum_name。
+static void validate_var_type(CodeGenContext *context, VarTypeNode *type) {
     if (!type) return;
+    if (type->enum_name && !find_enum(context, type->enum_name)) {
+        StructNode *struct_node = find_struct(context, type->enum_name);
+        if (struct_node) {
+            type->struct_name = type->enum_name;
+            type->enum_name = NULL;
+        }
+    }
     if (type->enum_name && !find_enum(context, type->enum_name)) {
         fprintf(stderr, "error: undefined enum type '%s'\n",
                 type->enum_name); // 中文：未定义的枚举类型
+        exit(1);
+    }
+    if (type->struct_name && !find_struct(context, type->struct_name)) {
+        fprintf(stderr, "error: undefined struct type '%s'\n",
+                type->struct_name); // 中文：未定义的结构体类型
         exit(1);
     }
     if (type->is_array) validate_var_type(context, type->element_type);
@@ -1586,8 +1925,8 @@ static void validate_statement_types(CodeGenContext *context, ASTNode *statement
     }
 }
 
-// 逐个检查枚举名、成员名和函数签名/变量声明中引用的枚举类型。
-static void validate_enums(CodeGenContext *context, ProgramNode *program) {
+// 逐个检查结构体声明、枚举声明和函数/变量中引用的命名类型。
+static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->enums; node; node = node->next) {
         EnumNode *enum_node = (EnumNode *)node;
         for (ASTNode *other = node->next; other; other = other->next) {
@@ -1610,6 +1949,34 @@ static void validate_enums(CodeGenContext *context, ProgramNode *program) {
         }
     }
 
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        StructNode *struct_node = (StructNode *)node;
+        for (ASTNode *other = node->next; other; other = other->next) {
+            StructNode *other_struct = (StructNode *)other;
+            if (strcmp(struct_node->name, other_struct->name) == 0) {
+                fprintf(stderr, "error: duplicate struct '%s'\n",
+                        struct_node->name); // 中文：重复的结构体声明
+                exit(1);
+            }
+        }
+        if (find_enum(context, struct_node->name)) {
+            fprintf(stderr, "error: type '%s' is already declared as enum\n",
+                    struct_node->name); // 中文：类型名已声明为枚举
+            exit(1);
+        }
+        for (ASTNode *field = struct_node->fields; field; field = field->next) {
+            StructFieldNode *struct_field = (StructFieldNode *)field;
+            validate_var_type(context, struct_field->field_type);
+            for (ASTNode *other = field->next; other; other = other->next) {
+                if (strcmp(struct_field->name, ((StructFieldNode *)other)->name) == 0) {
+                    fprintf(stderr, "error: duplicate struct field '%s.%s'\n",
+                            struct_node->name, struct_field->name); // 中文：重复的结构体字段
+                    exit(1);
+                }
+            }
+        }
+    }
+
     for (ASTNode *constant = program->constants; constant; constant = constant->next) {
         validate_var_type(context, ((VarDeclNode *)constant)->type);
     }
@@ -1623,6 +1990,36 @@ static void validate_enums(CodeGenContext *context, ProgramNode *program) {
     }
 }
 
+// 提前声明所有 LLVM 结构体类型，再填充字段类型，支持字段引用后声明的结构体。
+static void declare_struct_types(CodeGenContext *context, ProgramNode *program) {
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        StructNode *struct_node = (StructNode *)node;
+        if (!LLVMGetTypeByName2(context->context, struct_node->name)) {
+            LLVMStructCreateNamed(context->context, struct_node->name);
+        }
+    }
+
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        StructNode *struct_node = (StructNode *)node;
+        unsigned count = 0;
+        for (ASTNode *field = struct_node->fields; field; field = field->next) count++;
+        LLVMTypeRef *field_types = count ? malloc(sizeof(LLVMTypeRef) * count) : NULL;
+        if (count && !field_types) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+        unsigned index = 0;
+        for (ASTNode *field = struct_node->fields; field; field = field->next, index++) {
+            field_types[index] = get_llvm_var_type(
+                context, ((StructFieldNode *)field)->field_type);
+        }
+        LLVMStructSetBody(
+            get_llvm_struct_type_by_name(context, struct_node->name),
+            field_types, count, 0);
+        free(field_types);
+    }
+}
+
 static void generate_entry_point(CodeGenContext *context, FunctionNode *user_main) {
     if (!user_main) return;
 
@@ -1632,6 +2029,10 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
     }
     if (user_main->return_type && user_main->return_type->is_array) {
         fprintf(stderr, "error: main function cannot return an array\n"); // 中文：main 不能返回数组
+        exit(1);
+    }
+    if (user_main->return_type && user_main->return_type->struct_name) {
+        fprintf(stderr, "error: main function cannot return a struct\n"); // 中文：main 不能返回结构体
         exit(1);
     }
 
@@ -1679,7 +2080,8 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
 void generate_code(CodeGenContext *context, ProgramNode *program) {
     context->program = program;
     FunctionNode *user_main = find_user_main(program);
-    validate_enums(context, program);
+    validate_user_types(context, program);
+    declare_struct_types(context, program);
 
     LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
     LLVMTypeRef char_ptr_type = LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
@@ -1728,7 +2130,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
             const VarTypeNode *var_type = function_param_var_type(function, param_index);
             LLVMValueRef storage = create_entry_alloca(
                 context,
-                var_type && var_type->is_array
+                var_type
                     ? get_llvm_var_type(context, var_type)
                     : get_llvm_type(context, type),
                 identifier->name);

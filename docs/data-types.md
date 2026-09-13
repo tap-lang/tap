@@ -61,6 +61,27 @@ const VALUES: [i32; 4] = [0; 4];
 | `enum` | 枚举 |
 | `tuple` | 元组 |
 
+### 结构体类型
+
+结构体使用 `struct Name { ... }` 声明字段，字段通过 `value.field` 访问。第一版结构体是值类型，
+可以用于局部变量、函数参数和函数返回值。
+
+```text
+struct Point {
+    x: i32,
+    y: i32
+}
+
+fn move(point: Point): Point {
+    return Point { x: point.x + 1, y: point.y + 1 };
+}
+```
+
+- 结构体字面量使用 `TypeName { field: value, ... }`。
+- 初始化时必须提供所有字段，字段名不能重复，也不能写不存在的字段。
+- 可对非 `const` 结构体变量的字段赋值，例如 `point.x = 10;`。
+- 当前不支持结构体方法、默认字段值和按模块导出结构体类型。
+
 ### 枚举类型
 
 枚举使用 `enum Name { ... }` 声明，成员按声明顺序从 `0` 开始递增。当前枚举在后端按

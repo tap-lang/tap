@@ -1,0 +1,30 @@
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn move(point: Point): Point {
+    let shifted: Point = Point {
+        x: point.x + 1,
+        y: point.y + 2,
+    };
+    return shifted;
+}
+
+fn main(): i32 {
+    let point: Point = Point { x: 10, y: 20 };
+    let shifted: Point = move(point);
+    print("%d %d\n", shifted.x, shifted.y);
+
+    shifted.x = 40;
+    print("%d %d\n", shifted.x, shifted.y);
+    return 0;
+}
+
+/** -- test
+- .stdout
+11 22
+40 22
+- .exit
+0
+-- */

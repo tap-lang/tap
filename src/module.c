@@ -697,6 +697,22 @@ static int rewrite_expression(
             if (!strchr(identifier->name, '.')) return 0;
             if (is_local_enum_member(program, identifier->name)) return 0;
 
+            char *dot = strchr(identifier->name, '.');
+            size_t alias_length = (size_t)(dot - identifier->name);
+            char *alias = malloc(alias_length + 1);
+            if (!alias) {
+                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                return 1;
+            }
+            memcpy(alias, identifier->name, alias_length);
+            alias[alias_length] = '\0';
+            ImportBinding *binding = find_binding(bindings, alias);
+            free(alias);
+            if (!binding) {
+                // 未导入同名前缀时，保留给后端按结构体字段或枚举成员处理。
+                return 0;
+            }
+
             char *resolved = resolve_exported_name(identifier->name, current_module, bindings);
             if (!resolved) {
                 fprintf(stderr, "error: unknown module constant '%s'\n", identifier->name); // 中文：未知模块常量

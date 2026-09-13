@@ -13,6 +13,7 @@ enum TokenType {
     TOKEN_LET,       // let 语句
     TOKEN_CONST,     // const 常量声明
     TOKEN_ENUM,      // enum 枚举声明
+    TOKEN_STRUCT,    // struct 结构体声明
     TOKEN_IF,        // if 条件语句
     TOKEN_FOR,       // for 循环
     TOKEN_WHILE,     // while 循环

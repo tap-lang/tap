@@ -68,6 +68,7 @@ static ASTNode *parse_if_statement(Parser *parser); // 解析条件语句
 static ASTNode *parse_for_statement(Parser *parser);
 static ASTNode *parse_while_statement(Parser *parser);
 static ASTNode *parse_loop_control_statement(Parser *parser);
+static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name);
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
 static int is_module_component(const Token *token) {
@@ -267,6 +268,48 @@ static VarDeclNode *parse_var_decl(Parser *parser, int consume_semicolon) {
     VarDeclNode *declaration = create_var_decl(name, type, expression, is_const);
     free(name);
     return declaration;
+}
+
+// 解析顶层结构体声明，字段以逗号分隔并支持可选尾逗号。
+static StructNode *parse_struct(Parser *parser) {
+    consume(parser, TOKEN_STRUCT);
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "expected struct name"); // 中文：期望结构体名称
+    }
+
+    char *struct_name = strdup(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+    StructNode *struct_node = create_struct(struct_name);
+    free(struct_name);
+
+    consume(parser, TOKEN_LBRACE);
+    if (parser->current_token->type == TOKEN_RBRACE) {
+        parser_error(parser, "struct must declare at least one field"); // 中文：结构体必须至少声明一个字段
+    }
+
+    while (parser->current_token->type != TOKEN_RBRACE &&
+           parser->current_token->type != TOKEN_EOF) {
+        if (parser->current_token->type != TOKEN_IDENTIFIER) {
+            parser_error(parser, "expected struct field name"); // 中文：期望结构体字段名
+        }
+        char *field_name = strdup(parser->current_token->lexeme);
+        consume(parser, TOKEN_IDENTIFIER);
+        consume(parser, TOKEN_COLON);
+        VarTypeNode *field_type = parse_type(parser);
+        StructFieldNode *field = create_struct_field(field_name, field_type);
+        free(field_name);
+        add_struct_field(struct_node, field);
+
+        if (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            if (parser->current_token->type == TOKEN_RBRACE) break;
+            continue;
+        }
+        break;
+    }
+
+    consume(parser, TOKEN_RBRACE);
+    return struct_node;
 }
 
 // 解析代码块（由花括号包围的语句序列）
@@ -708,6 +751,36 @@ static ASTNode *parse_array_literal(Parser *parser) {
     return (ASTNode *)array;
 }
 
+// 解析结构体字面量：Type { field: value, ... }。
+static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name) {
+    StructLiteralNode *literal = create_struct_literal((char *)struct_name);
+    consume(parser, TOKEN_LBRACE);
+
+    if (parser->current_token->type != TOKEN_RBRACE) {
+        for (;;) {
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                free_ast((ASTNode *)literal);
+                parser_error(parser, "expected struct initializer field name"); // 中文：期望结构体初始化字段名
+            }
+            char *field_name = strdup(parser->current_token->lexeme);
+            consume(parser, TOKEN_IDENTIFIER);
+            consume(parser, TOKEN_COLON);
+            ASTNode *expression = parse_expression(parser);
+            StructInitFieldNode *field =
+                create_struct_init_field(field_name, expression);
+            free(field_name);
+            add_struct_init_field(literal, field);
+
+            if (parser->current_token->type != TOKEN_COMMA) break;
+            consume(parser, TOKEN_COMMA);
+            if (parser->current_token->type == TOKEN_RBRACE) break;
+        }
+    }
+
+    consume(parser, TOKEN_RBRACE);
+    return (ASTNode *)literal;
+}
+
 static ASTNode *parse_primary(Parser *parser) {
     Token *token = parser->current_token;
 
@@ -743,6 +816,12 @@ static ASTNode *parse_primary(Parser *parser) {
         enum TokenType token_type = token->type;
         char *name = strdup(token->lexeme);
         consume(parser, token_type);
+
+        if (parser->current_token->type == TOKEN_LBRACE) {
+            ASTNode *literal = parse_struct_literal(parser, name);
+            free(name);
+            return literal;
+        }
 
         while (parser->current_token->type == TOKEN_DOT) {
             consume(parser, TOKEN_DOT);
@@ -928,6 +1007,8 @@ ProgramNode *parse_program(Parser *parser) {
             add_import(program, parse_import(parser));
         } else if (parser->current_token->type == TOKEN_ENUM) {
             add_enum(program, parse_enum(parser));
+        } else if (parser->current_token->type == TOKEN_STRUCT) {
+            add_struct(program, parse_struct(parser));
         } else if (parser->current_token->type == TOKEN_CONST) {
             add_constant(program, parse_var_decl(parser, 1));
         } else if (parser->current_token->type == TOKEN_EXTERN) {
@@ -941,7 +1022,7 @@ ProgramNode *parse_program(Parser *parser) {
             FunctionNode *function = parse_function(parser, 0);
             add_function(program, function);
         } else {
-            parser_error(parser, "expected module import, enum declaration, constant declaration, or function definition"); // 中文：期望模块导入、枚举声明、常量声明或函数定义
+            parser_error(parser, "expected module import, enum declaration, struct declaration, constant declaration, or function definition"); // 中文：期望模块导入、枚举声明、结构体声明、常量声明或函数定义
         }
     }
     

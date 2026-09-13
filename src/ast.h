@@ -24,6 +24,10 @@ enum NodeType {
     NODE_INDEX_EXPRESSION,          // 数组索引表达式节点
     NODE_INDEX_ASSIGNMENT,          // 数组索引赋值节点
     NODE_ENUM,                      // 枚举声明节点
+    NODE_STRUCT,                    // 结构体声明节点
+    NODE_STRUCT_FIELD,              // 结构体字段声明节点
+    NODE_STRUCT_LITERAL,            // 结构体字面量节点
+    NODE_STRUCT_INIT_FIELD,         // 结构体初始化字段节点
     NODE_FUNCTION_CALL,             // 函数调用节点
     NODE_IF_STATEMENT,              // 条件语句节点
     NODE_FOR_STATEMENT,             // for 循环节点
@@ -80,6 +84,7 @@ typedef struct {
     ASTNode base;
     ASTNode *imports;      // 模块导入列表
     ASTNode *enums;        // 枚举声明列表
+    ASTNode *structs;      // 结构体声明列表
     ASTNode *constants;    // 顶层常量列表
     ASTNode *functions;    // 函数列表
 } ProgramNode;
@@ -99,6 +104,7 @@ typedef struct VarTypeNode {
     ASTNode base;
     enum LiteralType type;  // 标量类型，数组节点中保留最终元素类型
     char *enum_name;        // 非空时表示枚举类型，后端按 i32 降低
+    char *struct_name;      // 非空时表示结构体类型
     int is_array;
     uint64_t array_length;
     struct VarTypeNode *element_type; // 数组拥有的递归元素类型
@@ -110,6 +116,34 @@ typedef struct {
     char *name;            // 枚举类型名
     ASTNode *variants;     // 枚举成员列表（IdentifierNode）
 } EnumNode;
+
+// 结构体声明节点
+typedef struct {
+    ASTNode base;
+    char *name;            // 结构体类型名
+    ASTNode *fields;       // 字段声明列表（StructFieldNode）
+} StructNode;
+
+// 结构体字段声明节点
+typedef struct {
+    ASTNode base;
+    char *name;            // 字段名
+    VarTypeNode *field_type; // 字段类型
+} StructFieldNode;
+
+// 结构体字面量节点
+typedef struct {
+    ASTNode base;
+    char *struct_name;     // 结构体类型名
+    ASTNode *fields;       // 初始化字段列表（StructInitFieldNode）
+} StructLiteralNode;
+
+// 结构体初始化字段节点
+typedef struct {
+    ASTNode base;
+    char *name;            // 字段名
+    ASTNode *expression;   // 字段初始化表达式
+} StructInitFieldNode;
 
 // 函数节点
 typedef struct {
@@ -218,9 +252,14 @@ ImportNode *create_import(
     const char *module_name, const char *alias, const char *filename, int line, int column);
 FunctionNode *create_function(char *name);
 EnumNode *create_enum(char *name);
+StructNode *create_struct(char *name);
+StructFieldNode *create_struct_field(char *name, VarTypeNode *field_type);
+StructLiteralNode *create_struct_literal(char *struct_name);
+StructInitFieldNode *create_struct_init_field(char *name, ASTNode *expression);
 IdentifierNode *create_identifier(char *name);
 VarTypeNode *create_var_type(enum LiteralType type);
 VarTypeNode *create_enum_type(const char *name);
+VarTypeNode *create_struct_type(const char *name);
 // 数组类型接管 element_type 的所有权。
 VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length);
 LiteralNode *create_int_literal(uint64_t value);
@@ -248,6 +287,9 @@ void add_function(ProgramNode *program, FunctionNode *function);
 void add_constant(ProgramNode *program, VarDeclNode *constant);
 void add_enum(ProgramNode *program, EnumNode *enum_node);
 void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant);
+void add_struct(ProgramNode *program, StructNode *struct_node);
+void add_struct_field(StructNode *struct_node, StructFieldNode *field);
+void add_struct_init_field(StructLiteralNode *literal, StructInitFieldNode *field);
 void add_import(ProgramNode *program, ImportNode *import_node);
 void add_param(FunctionNode *function, IdentifierNode *param);
 void add_param_type(FunctionNode *function, VarTypeNode *type);

@@ -16,7 +16,6 @@ fn main(): i32 {
     let direction: Direction = Direction.Left;
     if (turn(direction) == Direction.Right) {
         print("%d %d\n", Direction.Up, Direction.Right);
-        print("%s %s\n", Direction.Up, Direction.Right);
         return 0;
     }
     return 1;

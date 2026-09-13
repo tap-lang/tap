@@ -37,6 +37,8 @@ static void print_var_type(const VarTypeNode *type) {
         printf("; %" PRIu64 "]", type->array_length);
     } else if (type->enum_name) {
         printf("%s", type->enum_name);
+    } else if (type->struct_name) {
+        printf("%s", type->struct_name);
     } else {
         printf("%s", literal_type_str(type->type));
     }
@@ -142,6 +144,20 @@ static void dump_expr(ASTNode *n, int depth) {
         }
         print_indent(depth);
         printf(")\n");
+        break;
+    }
+    case NODE_STRUCT_LITERAL: {
+        StructLiteralNode *literal = (StructLiteralNode *)n;
+        print_indent(depth);
+        printf("StructLiteral: %s {\n", literal->struct_name);
+        for (ASTNode *field = literal->fields; field; field = field->next) {
+            StructInitFieldNode *init = (StructInitFieldNode *)field;
+            print_indent(depth + 2);
+            printf("%s:\n", init->name);
+            dump_expr(init->expression, depth + 4);
+        }
+        print_indent(depth);
+        printf("}\n");
         break;
     }
     default:
@@ -292,6 +308,21 @@ void print_ast(const ProgramNode *program) {
             }
         }
     }
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        if (node->type == NODE_STRUCT) {
+            StructNode *struct_node = (StructNode *)node;
+            printf("  Struct: %s\n", struct_node->name);
+            for (ASTNode *field = struct_node->fields; field; field = field->next) {
+                if (field->type == NODE_STRUCT_FIELD) {
+                    StructFieldNode *struct_field = (StructFieldNode *)field;
+                    print_indent(4);
+                    printf("Field: %s : ", struct_field->name);
+                    print_var_type(struct_field->field_type);
+                    printf("\n");
+                }
+            }
+        }
+    }
     for (ASTNode *fn = program->functions; fn; fn = fn->next) {
         if (fn->type != NODE_FUNCTION) {
             continue;
@@ -340,6 +371,7 @@ ProgramNode *create_program() {
     program->base.next = NULL;
     program->imports = NULL;
     program->enums = NULL;
+    program->structs = NULL;
     program->constants = NULL;
     program->functions = NULL;
     return program;
@@ -395,6 +427,63 @@ EnumNode *create_enum(char *name) {
     enum_node->name = strdup(name);
     enum_node->variants = NULL;
     return enum_node;
+}
+
+// 创建结构体声明节点，字段稍后通过 add_struct_field 追加。
+StructNode *create_struct(char *name) {
+    StructNode *struct_node = (StructNode *)malloc(sizeof(StructNode));
+    if (!struct_node) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    struct_node->base.type = NODE_STRUCT;
+    struct_node->base.next = NULL;
+    struct_node->name = strdup(name);
+    struct_node->fields = NULL;
+    return struct_node;
+}
+
+// 创建结构体字段声明节点，接管 field_type 的所有权。
+StructFieldNode *create_struct_field(char *name, VarTypeNode *field_type) {
+    StructFieldNode *field = (StructFieldNode *)malloc(sizeof(StructFieldNode));
+    if (!field) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    field->base.type = NODE_STRUCT_FIELD;
+    field->base.next = NULL;
+    field->name = strdup(name);
+    field->field_type = field_type;
+    return field;
+}
+
+// 创建结构体字面量节点，字段稍后通过 add_struct_init_field 追加。
+StructLiteralNode *create_struct_literal(char *struct_name) {
+    StructLiteralNode *literal = (StructLiteralNode *)malloc(sizeof(StructLiteralNode));
+    if (!literal) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    literal->base.type = NODE_STRUCT_LITERAL;
+    literal->base.next = NULL;
+    literal->struct_name = strdup(struct_name);
+    literal->fields = NULL;
+    return literal;
+}
+
+// 创建结构体初始化字段节点，接管 expression 的所有权。
+StructInitFieldNode *create_struct_init_field(char *name, ASTNode *expression) {
+    StructInitFieldNode *field =
+        (StructInitFieldNode *)malloc(sizeof(StructInitFieldNode));
+    if (!field) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    field->base.type = NODE_STRUCT_INIT_FIELD;
+    field->base.next = NULL;
+    field->name = strdup(name);
+    field->expression = expression;
+    return field;
 }
 
 // 创建标识符节点
@@ -545,6 +634,7 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->base.next = NULL;
     var_type->type = type;
     var_type->enum_name = NULL;
+    var_type->struct_name = NULL;
     var_type->is_array = 0;
     var_type->array_length = 0;
     var_type->element_type = NULL;
@@ -562,12 +652,30 @@ VarTypeNode *create_enum_type(const char *name) {
     return type;
 }
 
+// 创建结构体类型节点；结构体在 LLVM 中以具名 struct 降低。
+VarTypeNode *create_struct_type(const char *name) {
+    VarTypeNode *type = create_var_type(LITERAL_I32);
+    type->struct_name = strdup(name);
+    if (!type->struct_name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    return type;
+}
+
 // 创建可递归嵌套的数组类型节点。
 VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length) {
     VarTypeNode *type = create_var_type(element_type->type);
     if (element_type->enum_name) {
         type->enum_name = strdup(element_type->enum_name);
         if (!type->enum_name) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+    }
+    if (element_type->struct_name) {
+        type->struct_name = strdup(element_type->struct_name);
+        if (!type->struct_name) {
             fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             exit(1);
         }
@@ -714,6 +822,42 @@ void add_enum(ProgramNode *program, EnumNode *enum_node) {
     current->next = (ASTNode *)enum_node;
 }
 
+// 添加结构体到程序，保持源码声明顺序。
+void add_struct(ProgramNode *program, StructNode *struct_node) {
+    if (!program->structs) {
+        program->structs = (ASTNode *)struct_node;
+        return;
+    }
+
+    ASTNode *current = program->structs;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)struct_node;
+}
+
+// 添加字段到结构体声明，保持源码中的字段顺序。
+void add_struct_field(StructNode *struct_node, StructFieldNode *field) {
+    if (!struct_node->fields) {
+        struct_node->fields = (ASTNode *)field;
+        return;
+    }
+
+    ASTNode *current = struct_node->fields;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)field;
+}
+
+// 添加初始化字段到结构体字面量，保持源码顺序。
+void add_struct_init_field(StructLiteralNode *literal, StructInitFieldNode *field) {
+    if (!literal->fields) {
+        literal->fields = (ASTNode *)field;
+        return;
+    }
+
+    ASTNode *current = literal->fields;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)field;
+}
+
 // 添加枚举成员到枚举声明，保持源码中的成员顺序。
 void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant) {
     if (!enum_node->variants) {
@@ -852,6 +996,7 @@ void free_ast(ASTNode *node) {
             ProgramNode *program = (ProgramNode *)node;
             free_ast(program->imports);
             free_ast(program->enums);
+            free_ast(program->structs);
             free_ast(program->constants);
             free_ast(program->functions);
             break;
@@ -877,6 +1022,30 @@ void free_ast(ASTNode *node) {
             EnumNode *enum_node = (EnumNode *)node;
             free(enum_node->name);
             free_ast(enum_node->variants);
+            break;
+        }
+        case NODE_STRUCT: {
+            StructNode *struct_node = (StructNode *)node;
+            free(struct_node->name);
+            free_ast(struct_node->fields);
+            break;
+        }
+        case NODE_STRUCT_FIELD: {
+            StructFieldNode *field = (StructFieldNode *)node;
+            free(field->name);
+            free_ast((ASTNode *)field->field_type);
+            break;
+        }
+        case NODE_STRUCT_LITERAL: {
+            StructLiteralNode *literal = (StructLiteralNode *)node;
+            free(literal->struct_name);
+            free_ast(literal->fields);
+            break;
+        }
+        case NODE_STRUCT_INIT_FIELD: {
+            StructInitFieldNode *field = (StructInitFieldNode *)node;
+            free(field->name);
+            free_ast(field->expression);
             break;
         }
         case NODE_IDENTIFIER: {
@@ -913,6 +1082,7 @@ void free_ast(ASTNode *node) {
             // 数组类型递归拥有它的元素类型。
             VarTypeNode *var_type = (VarTypeNode *)node;
             free(var_type->enum_name);
+            free(var_type->struct_name);
             free_ast((ASTNode *)var_type->element_type);
             break;
         }
