@@ -22,8 +22,6 @@
 extern char **environ;
 #endif
 
-extern int debug;
-
 // Runtime paths are configured once by main and reused by all output modes.
 static char runtime_static_path[RUN_PATH_MAX];
 static char runtime_shared_path[RUN_PATH_MAX];
@@ -294,7 +292,6 @@ static int compile_with_temp_object(CodeGenContext *context, const char *exe_fil
     }
 #endif
 
-    if (debug) printf("可执行文件已生成: %s\n", exe_file);
     return 0;
 }
 
@@ -366,8 +363,6 @@ int run_with_lli(CodeGenContext *context) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
 
-    if (debug) printf("执行程序...\n");
-
     int result = write_ir_to_file(context, workspace.ir_file);
     if (result != 0) {
         fprintf(stderr, "failed to write temporary IR file\n"); // 中文：写入临时 IR 文件失败
@@ -382,7 +377,6 @@ int run_with_lli(CodeGenContext *context) {
         snprintf(load_option, sizeof(load_option), "--load=%s", runtime_shared_path);
         char *const argv[] = {"lli", load_option, workspace.ir_file, NULL};
         result = run_process(argv);
-        if (debug) printf("程序执行完毕，返回值: %d\n", result);
     }
 
     if (cleanup_temp_workspace(&workspace) != 0 && result == 0) result = 1;

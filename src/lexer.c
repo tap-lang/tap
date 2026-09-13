@@ -1,10 +1,6 @@
 #include "lexer.h"
 #include "helpers.h"
 
-extern int debug;
-
-
-
 // 创建词法分析器（读入 filename 指向的源文件）
 Lexer *create_lexer(const char *filename) {
     char *source = read_source_file(filename);
@@ -220,7 +216,6 @@ static Token *identifier(Lexer *lexer) {
     // 检查是否是关键字
     enum TokenType keyword_type = check_keyword(token->lexeme, strlen(token->lexeme));
     if (keyword_type != TOKEN_IDENTIFIER) {
-        if(debug) printf("Identified keyword: '%s' as type %d\n", token->lexeme, keyword_type);
         token->type = keyword_type;
         
         // 为布尔值设置值

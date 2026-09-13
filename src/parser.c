@@ -4,8 +4,6 @@
 #include "lexer.h"
 #include "helpers.h"
 
-extern int debug;
-
 // 辅助函数：打印token信息
 void print_token(Token *token) {
     printf("Token: type=%s, lexeme='%s'\n", TokenNames[token->type], token->lexeme);
@@ -233,7 +231,6 @@ static ASTNode *parse_block(Parser *parser) {
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
         // 解析语句
         if (parser->current_token->type == TOKEN_PRINT) {
-            if (debug) printf("解析打印语句 in {代码块} \n");
             // 解析打印语句
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);
@@ -346,9 +343,6 @@ static ASTNode *parse_if_statement(Parser *parser) {
 
 // 解析普通函数定义或无函数体的外部函数声明。
 static FunctionNode *parse_function(Parser *parser, int is_extern) {
-    
-    if (debug) printf("  - 解析函数定义\n");
-
     // 解析 fn 关键字
     consume(parser, TOKEN_FN);
     
@@ -371,12 +365,9 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     
     // 解析参数列表
     consume(parser, TOKEN_LPAREN);
-    
-    if(debug) printf("  - 解析参数列表\n");
 
     // 解析参数
     if (parser->current_token->type == TOKEN_IDENTIFIER) {
-         if(debug) printf("  - 解析第一个参数\n");
         // 解析第一个参数
         char *param_name = strdup(parser->current_token->lexeme);
         consume(parser, TOKEN_IDENTIFIER);
@@ -423,13 +414,7 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     // 解析函数返回类型（如果有）
     if (parser->current_token->type == TOKEN_COLON) {
         consume(parser, TOKEN_COLON);
-        
-        if(debug){
-            // 打印当前token信息用于调试
-            printf("After colon, ");
-            print_token(parser->current_token);
-        }
-        
+
         function->return_type = parse_type(parser);
     }
 
@@ -441,16 +426,11 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     
     // 解析函数体
     consume(parser, TOKEN_LBRACE);
-    
-    if (debug) printf("  - 解析函数体\n");
 
     // 解析函数体中的语句
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
         // 解析语句
         if (parser->current_token->type == TOKEN_PRINT) {
-            
-            if (debug) printf("  - 解析函数体中 print 语句\n");
-
             // 解析打印语句
             consume(parser, TOKEN_PRINT);
             consume(parser, TOKEN_LPAREN);

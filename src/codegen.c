@@ -3,8 +3,6 @@
 
 #include <limits.h>
 
-extern int debug;
-
 static enum LiteralType default_integer_type(void) {
     return LITERAL_I32;
 }

@@ -28,9 +28,6 @@ static void print_usage() {
     printf("  -V, --version     显示版本号\n");
 }
 
-// 全局debug变量，供其他模块使用
-int debug = 0;
-
 int main(int argc, char *argv[]) {
     
     char *input_file = NULL;       
@@ -77,8 +74,6 @@ int main(int argc, char *argv[]) {
             lex_only = 1;
         } else if (strcmp(argv[i], "-parse") == 0) {
             parse_only = 1;
-        } else if (strcmp(argv[i], "-debug") == 0) {
-            debug = 1;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "error: unknown option %s\n", argv[i]); // 中文：未知选项
             print_usage();
@@ -112,10 +107,6 @@ int main(int argc, char *argv[]) {
 
     // Runtime libraries are resolved once so native linking and lli use the same ABI.
     configure_runtime(argv[0]);
-
-    if (debug) {
-        printf("调试信息:\n");
-    }
 
     // 1. 词法分析（在 create_lexer 内读入源文件）
     Lexer *lexer = create_lexer(input_file);
@@ -207,8 +198,6 @@ int main(int argc, char *argv[]) {
         if (!run_native && !exe_file) {
             result = 1;
         } else {
-            if (debug) printf("生成可执行文件...\n");
-
             result = run_native
                 ? compile_and_run(codegen_context, exe_file, program_argc, program_argv)
                 : compile_to_executable(codegen_context, exe_file);

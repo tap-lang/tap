@@ -59,7 +59,6 @@ cmake --build .
 | `-lex` | 仅词法分析：逐 token 输出（文件、行列、类型、词素） |
 | `-parse` | 词法 + 语法分析：将 AST 打印到 stdout，不生成代码 |
 | `-run-lli` | 生成临时 IR 并用 `lli` 执行 |
-| `-debug` | 打开各阶段调试输出 |
 
 说明：
 

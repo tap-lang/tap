@@ -1,8 +1,6 @@
 #include "ast.h"
 #include <inttypes.h>
 
-extern int debug;
-
 static void print_indent(int depth) {
     for (int i = 0; i < depth; i++) {
         putchar(' ');
@@ -319,7 +317,6 @@ void print_ast(const ProgramNode *program) {
 
 // 创建程序节点
 ProgramNode *create_program() {
-    if (debug) printf("- 创建程序节点\n");
     ProgramNode *program = (ProgramNode *)malloc(sizeof(ProgramNode));
     if (!program) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -352,7 +349,6 @@ ImportNode *create_import(
 
 // 创建函数节点
 FunctionNode *create_function(char *name) {
-    if (debug) printf("  - 创建函数节点: %s\n", name);
     FunctionNode *function = (FunctionNode *)malloc(sizeof(FunctionNode));
     if (!function) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -671,9 +667,6 @@ void add_import(ProgramNode *program, ImportNode *import_node) {
 
 // 添加参数到函数
 void add_param(FunctionNode *function, IdentifierNode *param) {
-    
-    if (debug) printf("  - 添加函数参数: %s\n", param->name);
-
     if (!function->params) {
         function->params = (ASTNode *)param;
     } else {
@@ -687,8 +680,6 @@ void add_param(FunctionNode *function, IdentifierNode *param) {
 
 // 添加参数类型到函数
 void add_param_type(FunctionNode *function, VarTypeNode *type) {
-    if (debug) printf("  - 添加参数类型\n");
-
     if (!function->param_types) {
         function->param_types = (ASTNode *)type;
     } else {
