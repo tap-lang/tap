@@ -71,8 +71,7 @@ Parser 将 `import a.b;` 保存为 `ImportNode`，Module Loader 再把模块名�
 
 ## 版本生成
 
-版本模板是 [`version.h.ini`](../src/version.h.ini)。构建时由
-[`scripts/version.sh`](../src/scripts/version.sh) 或
-[`scripts/version.bat`](../src/scripts/version.bat) 根据 Git 信息生成 `src/version.h`。
+版本模板是 [`version.h.ini`](../src/version.h.ini)。构建时会先编译
+[`scripts/get_version.c`](../src/scripts/get_version.c)，再由这个 C 生成器根据 Git 信息生成 `src/version.h`。
 
 Make 和 CMake 都会在编译前触发版本文件生成。

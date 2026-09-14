@@ -15,6 +15,7 @@ RUNTIME_INCLUDE = -Iruntime/include
 RUNTIME_CFLAGS = -Wall -Wextra -g $(RUNTIME_INCLUDE) -fPIC
 RUNTIME_OBJECT = $(BUILD_DIR)/runtime.o
 RUNTIME_STATIC = $(BUILD_DIR)/lib4yue_runtime.a
+VERSION_GENERATOR = $(BUILD_DIR)/get_version
 
 # 根据操作系统类型设置不同的CFLAGS和LDFLAGS
 ifeq ($(OS),Windows_NT)
@@ -57,6 +58,7 @@ endif
 # 可执行文件扩展名（Windows 下为 .exe）
 ifeq ($(OS),Windows_NT)
     EXE = .exe
+    VERSION_GENERATOR := $(VERSION_GENERATOR).exe
 else
     EXE =
 endif
@@ -107,14 +109,13 @@ $(RUNTIME_SHARED): $(RUNTIME_OBJECT)
 # $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
 #	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# 判断是否为Windows系统
-ifeq ($(OS),Windows_NT)
-$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/scripts/version.bat
-	$(SRC_DIR)/scripts/version.bat
-else
-$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(SRC_DIR)/scripts/version.sh
-	sh $(SRC_DIR)/scripts/version.sh
-endif
+# 编译版本头文件生成器
+$(VERSION_GENERATOR): $(SRC_DIR)/scripts/get_version.c | $(BUILD_DIR)
+	$(CC) -Wall -Wextra -g $< -o $@
+
+# 生成版本头文件
+$(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(VERSION_GENERATOR)
+	$(VERSION_GENERATOR) $(SRC_DIR)/version.h.ini $(SRC_DIR)/version.h
 
 # 链接目标文件
 $(TARGET): $(OBJECTS) $(RUNTIME_STATIC) $(RUNTIME_SHARED)

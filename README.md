@@ -34,7 +34,7 @@ cmake --build .
 # 可执行文件位于 build/4yue（与 CMake 生成目录一致）
 ```
 
-版本号由 `src/scripts/version.sh`（或 Windows 下对应脚本）从 git 生成 `src/version.h`。
+版本号由 C 生成器 `src/scripts/get_version.c` 从 git 生成 `src/version.h`。
 
 ## 用法
 

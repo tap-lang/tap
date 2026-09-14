@@ -36,6 +36,8 @@ set_target_properties(4yue_runtime_shared PROPERTIES
 # set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 添加可执行文件
+add_executable(get_version src/scripts/get_version.c)
+
 add_executable(4yue
     src/main.c
     src/helpers.c
@@ -73,21 +75,16 @@ include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 # 生成版本文件
-if(WIN32)
-    add_custom_target(generate_version
-        COMMAND ${CMAKE_SOURCE_DIR}/src/scripts/version.bat
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        DEPENDS ${CMAKE_SOURCE_DIR}/src/version.h.ini
-        COMMENT "Generating version.h file using version.bat"
-    )
-else()
-    add_custom_target(generate_version
-        COMMAND ${CMAKE_SOURCE_DIR}/src/scripts/version.sh
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        DEPENDS ${CMAKE_SOURCE_DIR}/src/version.h.ini
-        COMMENT "Generating version.h file using version.sh"
-    )
-endif()
+add_custom_command(
+    OUTPUT ${CMAKE_SOURCE_DIR}/src/version.h
+    COMMAND $<TARGET_FILE:get_version>
+            ${CMAKE_SOURCE_DIR}/src/version.h.ini
+            ${CMAKE_SOURCE_DIR}/src/version.h
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    DEPENDS get_version ${CMAKE_SOURCE_DIR}/src/version.h.ini
+    COMMENT "Generating version.h file using get_version"
+)
+add_custom_target(generate_version DEPENDS ${CMAKE_SOURCE_DIR}/src/version.h)
 
 # 确保版本文件在构建前生成
 add_dependencies(4yue generate_version)
