@@ -3,10 +3,12 @@
 
 #include <limits.h>
 
+// 返回未显式标注整数时使用的默认整数类型。
 static enum LiteralType default_integer_type(void) {
     return LITERAL_I32;
 }
 
+// 判断字面量类型是否按整数类型处理。
 static int is_integer_type(enum LiteralType type) {
     switch (type) {
         case LITERAL_INT:
@@ -28,6 +30,7 @@ static int is_integer_type(enum LiteralType type) {
     }
 }
 
+// 判断整数类型是否按无符号规则处理。
 static int is_unsigned_type(enum LiteralType type) {
     switch (type) {
         case LITERAL_UINT:
@@ -51,6 +54,7 @@ static int is_float_type(enum LiteralType type) {
 static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type);
 static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const char *name);
 
+// 返回整数类型对应的位宽。
 static unsigned integer_type_bits(enum LiteralType type) {
     switch (type) {
         case LITERAL_BOOL: return 1;
@@ -70,6 +74,7 @@ static unsigned integer_type_bits(enum LiteralType type) {
     }
 }
 
+// 根据位宽和符号信息选择最小可承载的整数类型。
 static enum LiteralType integer_type_for(unsigned bits, int is_unsigned) {
     if (bits <= 8) return is_unsigned ? LITERAL_U8 : LITERAL_I8;
     if (bits <= 16) return is_unsigned ? LITERAL_U16 : LITERAL_I16;
@@ -78,6 +83,7 @@ static enum LiteralType integer_type_for(unsigned bits, int is_unsigned) {
     return is_unsigned ? LITERAL_U128 : LITERAL_I128;
 }
 
+// 计算两个整数操作数共同提升后的整数类型。
 static enum LiteralType common_integer_type(enum LiteralType left, enum LiteralType right) {
     unsigned left_bits = integer_type_bits(left);
     unsigned right_bits = integer_type_bits(right);
@@ -86,6 +92,7 @@ static enum LiteralType common_integer_type(enum LiteralType left, enum LiteralT
     return integer_type_for(bits, use_unsigned);
 }
 
+// 将源语言标量类型降低为 LLVM 类型。
 static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type) {
     if (is_integer_type(type)) {
         return LLVMIntTypeInContext(context->context, integer_type_bits(type));
@@ -105,7 +112,7 @@ static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type)
     }
 }
 
-// Recursively lower scalar and multidimensional array types to LLVM types.
+// 递归地将标量、结构体和多维数组类型降低为 LLVM 类型。
 static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type) {
     if (type->is_array) {
         return LLVMArrayType2(
@@ -117,6 +124,7 @@ static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode 
     return get_llvm_type(context, type->type);
 }
 
+// 在当前局部符号表中按名称查找变量符号。
 static Symbol *find_symbol(CodeGenContext *context, const char *name) {
     for (Symbol *symbol = context->symbols; symbol; symbol = symbol->next) {
         if (strcmp(symbol->name, name) == 0) return symbol;
@@ -124,6 +132,7 @@ static Symbol *find_symbol(CodeGenContext *context, const char *name) {
     return NULL;
 }
 
+// 插入普通标量符号到当前局部符号表。
 static void insert_symbol(CodeGenContext *context, const char *name, LLVMValueRef value,
                           enum LiteralType type, int is_const) {
     Symbol *symbol = malloc(sizeof(Symbol));
@@ -151,12 +160,14 @@ static void insert_typed_symbol(CodeGenContext *context, const char *name,
     if (type->is_array) context->symbols->array_type = type;
 }
 
+// 插入数组符号，并记录完整数组类型信息。
 static void insert_array_symbol(CodeGenContext *context, const char *name,
                                 LLVMValueRef value, const VarTypeNode *array_type,
                                 int is_const) {
     insert_typed_symbol(context, name, value, array_type, is_const);
 }
 
+// 释放当前函数生成过程中使用的局部符号表。
 static void free_symbols(Symbol *symbols) {
     while (symbols) {
         Symbol *next = symbols->next;
@@ -166,7 +177,7 @@ static void free_symbols(Symbol *symbols) {
     }
 }
 
-// Keep stack allocation bounded by placing every local slot in the function entry block.
+// 在函数入口块分配局部槽位，保证分支和循环内都能支配使用点。
 static LLVMValueRef create_entry_alloca(
     CodeGenContext *context, LLVMTypeRef type, const char *name) {
     LLVMBasicBlockRef current_block = LLVMGetInsertBlock(context->builder);
@@ -186,6 +197,7 @@ static LLVMValueRef create_entry_alloca(
     return storage;
 }
 
+// 在当前程序中按源语言函数名查找函数声明。
 static FunctionNode *find_function(CodeGenContext *context, const char *name) {
     if (!context->program) return NULL;
     for (ASTNode *node = context->program->functions; node; node = node->next) {
@@ -318,14 +330,17 @@ static Symbol *find_symbol_with_length(
     return NULL;
 }
 
+// 返回函数的标量返回类型，未声明时使用默认整数类型。
 static enum LiteralType function_return_type(FunctionNode *function) {
     return function && function->return_type ? function->return_type->type : default_integer_type();
 }
 
+// 返回函数的完整返回类型节点，用于数组、枚举和结构体。
 static const VarTypeNode *function_return_var_type(FunctionNode *function) {
     return function ? function->return_type : NULL;
 }
 
+// 返回指定下标参数的标量类型，未声明时使用默认整数类型。
 static enum LiteralType function_param_type(FunctionNode *function, unsigned index) {
     ASTNode *type = function ? function->param_types : NULL;
     while (type && index > 0) {
@@ -337,6 +352,7 @@ static enum LiteralType function_param_type(FunctionNode *function, unsigned ind
         : default_integer_type();
 }
 
+// 返回指定下标参数的完整类型节点。
 static const VarTypeNode *function_param_var_type(FunctionNode *function, unsigned index) {
     ASTNode *type = function ? function->param_types : NULL;
     while (type && index > 0) {
@@ -346,12 +362,14 @@ static const VarTypeNode *function_param_var_type(FunctionNode *function, unsign
     return type && type->type == NODE_VAR_TYPE ? (VarTypeNode *)type : NULL;
 }
 
+// 返回 LLVM 中使用的函数名；用户 main 会重命名为内部入口。
 static const char *llvm_function_name(const FunctionNode *function) {
     return function && !function->is_extern && strcmp(function->name, "main") == 0
         ? "__4yue_user_main"
         : function->name;
 }
 
+// 将源语言调用名转换为 LLVM 调用名。
 static const char *llvm_call_name(const char *name) {
     return strcmp(name, "main") == 0 ? "__4yue_user_main" : name;
 }
@@ -360,6 +378,7 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
 static LLVMValueRef generate_expression_for_type(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type);
 
+// 比较两个完整类型节点是否等价。
 static int var_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     if (!left || !right) return left == right;
     if (left->is_array != right->is_array) return 0;
@@ -528,7 +547,7 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
            (is_integer_type(target_type->type) && is_integer_type(actual_type));
 }
 
-// Resolve the recursive type produced by an identifier or a chain of indexes.
+// 解析标识符或连续下标表达式最终指向的数组类型。
 static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *expression) {
     if (expression && expression->type == NODE_IDENTIFIER) {
         const char *name = ((IdentifierNode *)expression)->name;
@@ -569,6 +588,7 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
     exit(1);
 }
 
+// 推断表达式在当前上下文中的标量类型。
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression) {
     if (!expression) return default_integer_type();
 
@@ -624,6 +644,7 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
     }
 }
 
+// 在整数类型之间执行扩展、截断或转 bool。
 static LLVMValueRef cast_integer(CodeGenContext *context, LLVMValueRef value,
                                  enum LiteralType source, enum LiteralType target) {
     if (!value || source == target) return value;
@@ -676,6 +697,7 @@ static LLVMValueRef generate_array_value(
 static unsigned function_param_count(FunctionNode *function);
 static void validate_var_type(CodeGenContext *context, VarTypeNode *type);
 
+// 根据整数字面量原文或数值构造指定整数类型的 LLVM 常量。
 static LLVMValueRef integer_constant(CodeGenContext *context, LiteralNode *literal,
                                      enum LiteralType type) {
     LLVMTypeRef llvm_type = get_llvm_type(context, type);
@@ -758,6 +780,7 @@ static LLVMValueRef generate_struct_literal_value(
     return value;
 }
 
+// 按目标标量类型生成表达式，并在必要时执行类型转换。
 static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *expression,
                                            enum LiteralType target) {
     if (expression && expression->type == NODE_LITERAL && is_integer_type(target)) {
@@ -809,6 +832,7 @@ static LLVMValueRef generate_expression_for_type(
     return generate_expression_as(context, expression, target_type->type);
 }
 
+// 生成数组元素地址，同时执行运行时越界检查。
 static LLVMValueRef generate_index_address(
     CodeGenContext *context, IndexExpressionNode *index_expression,
     const VarTypeNode **element_type_out) {
@@ -911,6 +935,7 @@ static LLVMValueRef generate_index_address(
                          indexes, 2, "array_element_ptr");
 }
 
+// 生成整数二元运算或比较表达式。
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type) {
     LLVMValueRef left = generate_expression_as(context, binary->left, operand_type);
@@ -950,6 +975,7 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
     }
 }
 
+// 生成字符串 len() 方法调用，返回 UTF-8 字节长度。
 static LLVMValueRef generate_string_length(
     CodeGenContext *context, FunctionCallNode *call,
     const char *receiver_name, size_t receiver_length) {
@@ -1036,6 +1062,7 @@ static LLVMValueRef generate_string_length(
     return index;
 }
 
+// 生成函数调用表达式，包括内建字符串方法和参数类型转换。
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call) {
     size_t receiver_length = 0;
     const char *receiver_name = named_string_len_receiver(call, &receiver_length);
@@ -1094,6 +1121,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     return value;
 }
 
+// 生成普通表达式的 LLVM 值。
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression) {
     if (!expression) return NULL;
 
@@ -1198,6 +1226,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
     exit(1);
 }
 
+// 将 printf 的窄整数实参提升到 C 可变参数 ABI 需要的宽度。
 static LLVMValueRef promote_printf_integer(CodeGenContext *context, ASTNode *expression) {
     enum LiteralType type = expression_type(context, expression);
     LLVMValueRef value = generate_expression(context, expression);
@@ -1208,6 +1237,7 @@ static LLVMValueRef promote_printf_integer(CodeGenContext *context, ASTNode *exp
     return value;
 }
 
+// 生成 print 语句，对接到底层 printf 调用。
 static void generate_print(CodeGenContext *context, PrintNode *print_node) {
     if (!print_node->arguments || !context->printf_func) return;
 
@@ -1248,6 +1278,7 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
 
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement);
 
+// 生成变量或结构体字段赋值语句。
 static void generate_assignment(CodeGenContext *context, AssignmentNode *assignment) {
     Symbol *symbol = find_symbol(context, assignment->name);
     if (!symbol) {
@@ -1294,12 +1325,13 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
     LLVMBuildStore(context->builder, value, symbol->value);
 }
 
+// 判断数组元素的标量类型是否允许写入目标元素类型。
 static int array_element_type_compatible(
     enum LiteralType expected, enum LiteralType actual) {
     return expected == actual || (is_integer_type(expected) && is_integer_type(actual));
 }
 
-// Recursively validate nested literals and store every scalar leaf.
+// 递归校验嵌套数组字面量，并把每个标量叶子写入数组存储。
 static void generate_array_initializer(
     CodeGenContext *context, LLVMValueRef storage,
     const VarTypeNode *array_type, ArrayLiteralNode *literal) {
@@ -1356,6 +1388,7 @@ static void generate_array_initializer(
     }
 }
 
+// 按期望数组类型生成数组值。
 static LLVMValueRef generate_array_value(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *expected_type) {
     if (!expected_type || !expected_type->is_array) {
@@ -1409,6 +1442,7 @@ static LLVMValueRef generate_array_value(
 }
 
 
+// 找到下标赋值目标最外层数组变量名。
 static const char *index_base_name(ASTNode *expression) {
     if (!expression) return NULL;
     if (expression->type == NODE_IDENTIFIER) {
@@ -1420,6 +1454,7 @@ static const char *index_base_name(ASTNode *expression) {
     return NULL;
 }
 
+// 生成数组元素赋值语句。
 static void generate_index_assignment(
     CodeGenContext *context, IndexAssignmentNode *assignment) {
     const char *base_name = index_base_name((ASTNode *)assignment->target);
@@ -1448,6 +1483,7 @@ static void generate_index_assignment(
     LLVMBuildStore(context->builder, value, address);
 }
 
+// 将 if/for 条件表达式规范化为 LLVM i1 值。
 static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition) {
     LLVMValueRef value = generate_expression(context, condition);
     enum LiteralType type = expression_type(context, condition);
@@ -1460,6 +1496,7 @@ static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition)
     exit(1);
 }
 
+// 生成 assert 语句的运行时检查和失败输出。
 static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
     unsigned count = 0;
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
@@ -1513,6 +1550,7 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
     LLVMPositionBuilderAtEnd(context->builder, pass_block);
 }
 
+// 生成 if/elseif/else 条件控制流。
 static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_node) {
     LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
     LLVMBasicBlockRef then_block = LLVMAppendBasicBlockInContext(context->context, function, "if_then");
@@ -1543,6 +1581,7 @@ static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_n
     LLVMPositionBuilderAtEnd(context->builder, merge_block);
 }
 
+// 生成 for/while 循环控制流，包括 break/continue 目标块。
 static void generate_for_statement(CodeGenContext *context, ForStatementNode *for_node) {
     if (for_node->initializer) {
         generate_statement_list(context, for_node->initializer);
@@ -1590,6 +1629,7 @@ static void generate_for_statement(CodeGenContext *context, ForStatementNode *fo
     LLVMPositionBuilderAtEnd(context->builder, end_block);
 }
 
+// 逐条生成语句列表，遇到已终结的基本块时停止。
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement) {
     for (; statement; statement = statement->next) {
         LLVMBasicBlockRef block = LLVMGetInsertBlock(context->builder);
@@ -1617,7 +1657,7 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     if (declaration->expression->type == NODE_ARRAY_LITERAL) {
                         ArrayLiteralNode *literal =
                             (ArrayLiteralNode *)declaration->expression;
-                        // Initialization follows the same recursive shape as the declared type.
+                        // 初始化过程与声明类型保持相同递归形状。
                         generate_array_initializer(
                             context, storage, declaration->type, literal);
                     } else {
@@ -1732,12 +1772,14 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
     }
 }
 
+// 统计函数参数数量。
 static unsigned function_param_count(FunctionNode *function) {
     unsigned count = 0;
     for (ASTNode *param = function->params; param; param = param->next) count++;
     return count;
 }
 
+// 根据函数签名创建 LLVM 函数类型。
 static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *function) {
     for (ASTNode *type = function->param_types; type; type = type->next) {
         if (((VarTypeNode *)type)->is_array) {
@@ -1763,6 +1805,7 @@ static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *f
     return type;
 }
 
+// 生成指定标量类型的零值。
 static LLVMValueRef zero_value(CodeGenContext *context, enum LiteralType type) {
     LLVMTypeRef llvm_type = get_llvm_type(context, type);
     if (is_integer_type(type)) return LLVMConstInt(llvm_type, 0, 0);
@@ -1772,6 +1815,7 @@ static LLVMValueRef zero_value(CodeGenContext *context, enum LiteralType type) {
     return LLVMConstNull(llvm_type);
 }
 
+// 生成完整类型的零值，支持数组和结构体。
 static LLVMValueRef zero_var_value(
     CodeGenContext *context, const VarTypeNode *type, enum LiteralType scalar_type) {
     if (type && (type->is_array || type->struct_name)) {
@@ -1780,12 +1824,12 @@ static LLVMValueRef zero_var_value(
     return zero_value(context, type ? type->type : scalar_type);
 }
 
-// Remove internal functions that cannot be reached from externally visible entry points.
+// 删除无法从外部可见入口触达的内部函数。
 static void eliminate_unreachable_functions(CodeGenContext *context) {
     LLVMPassBuilderOptionsRef options = LLVMCreatePassBuilderOptions();
     LLVMPassBuilderOptionsSetVerifyEach(options, 1);
 
-    // Remove unreachable definitions first, then discard their unused extern declarations.
+    // 先删除不可达定义，再丢弃未使用的 extern 声明。
     LLVMErrorRef error = LLVMRunPasses(
         context->module, "globaldce,strip-dead-prototypes", NULL, options);
     LLVMDisposePassBuilderOptions(options);
@@ -1797,6 +1841,7 @@ static void eliminate_unreachable_functions(CodeGenContext *context) {
     }
 }
 
+// 创建并初始化代码生成上下文。
 CodeGenContext *create_codegen_context(const char *module_name) {
     CodeGenContext *context = calloc(1, sizeof(CodeGenContext));
     if (!context) {
@@ -1820,6 +1865,7 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     return context;
 }
 
+// 在程序中查找用户声明的 main 函数。
 static FunctionNode *find_user_main(ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type == NODE_FUNCTION) {
@@ -2020,6 +2066,7 @@ static void declare_struct_types(CodeGenContext *context, ProgramNode *program) 
     }
 }
 
+// 生成包装入口 main，初始化运行时参数后调用用户 main。
 static void generate_entry_point(CodeGenContext *context, FunctionNode *user_main) {
     if (!user_main) return;
 
@@ -2077,6 +2124,7 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
     }
 }
 
+// 生成整个程序的 LLVM IR。
 void generate_code(CodeGenContext *context, ProgramNode *program) {
     context->program = program;
     FunctionNode *user_main = find_user_main(program);
@@ -2098,7 +2146,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         const char *name = llvm_function_name(function);
         LLVMValueRef llvm_function = LLVMAddFunction(
             context->module, name, create_function_type(context, function));
-        // Executables expose only main; GlobalDCE may remove every unreachable helper.
+        // 可执行产物只暴露 main；GlobalDCE 可能移除所有不可达 helper。
         if (!function->is_extern) {
             LLVMSetLinkage(llvm_function, LLVMInternalLinkage);
         }
@@ -2109,7 +2157,7 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
-        // Runtime functions already have native implementations and need no LLVM body.
+        // 运行时函数已有原生实现，不需要生成 LLVM 函数体。
         if (function->is_extern) continue;
         LLVMValueRef llvm_function = LLVMGetNamedFunction(
             context->module, llvm_function_name(function));
@@ -2162,10 +2210,11 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         exit(1);
     }
 
-    // Run DCE only after full generation and validation so unreachable code still reports errors.
+    // 完整生成和校验之后再运行 DCE，确保不可达代码中的错误仍能报告。
     eliminate_unreachable_functions(context);
 }
 
+// 懒初始化 JIT 执行引擎。
 static int initialize_execution_engine(CodeGenContext *context) {
     char *error = NULL;
     if (LLVMCreateExecutionEngineForModule(&context->engine, context->module, &error) != 0) {
@@ -2176,6 +2225,7 @@ static int initialize_execution_engine(CodeGenContext *context) {
     return 0;
 }
 
+// 释放代码生成上下文及其 LLVM 资源。
 void free_codegen_context(CodeGenContext *context) {
     if (!context) return;
     free_symbols(context->symbols);
@@ -2189,6 +2239,7 @@ void free_codegen_context(CodeGenContext *context) {
     free(context);
 }
 
+// 使用 JIT 执行指定函数并返回整数结果。
 int execute_code(CodeGenContext *context, const char *function_name) {
     if (initialize_execution_engine(context) != 0) return -1;
     LLVMValueRef function = LLVMGetNamedFunction(context->module, function_name);
@@ -2202,6 +2253,7 @@ int execute_code(CodeGenContext *context, const char *function_name) {
     return result;
 }
 
+// 将当前 LLVM 模块写出为 IR 文本文件。
 int write_ir_to_file(CodeGenContext *context, const char *filename) {
     char *error = NULL;
     if (LLVMPrintModuleToFile(context->module, filename, &error) != 0) {
@@ -2212,6 +2264,7 @@ int write_ir_to_file(CodeGenContext *context, const char *filename) {
     return 0;
 }
 
+// 按指定目标三元组输出目标文件。
 static int write_object_for_triple(
     CodeGenContext *context, const char *filename,
     const char *target_triple_override, const char *output_kind) {
@@ -2295,10 +2348,12 @@ static int write_object_for_triple(
     return result;
 }
 
+// 使用当前宿主目标输出目标文件。
 int write_object_to_file(CodeGenContext *context, const char *filename) {
     return write_object_for_triple(context, filename, NULL, "object");
 }
 
+// 使用 wasm32 目标输出 WebAssembly 对象文件。
 int write_wasm_to_file(CodeGenContext *context, const char *filename) {
     return write_object_for_triple(
         context, filename, "wasm32-unknown-unknown", "WebAssembly");
