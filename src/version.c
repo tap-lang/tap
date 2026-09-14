@@ -5,7 +5,7 @@
 
 void print_version(void)
 {
-    printf("4yue version %s (%s)\n", VERSION, GIT_COMMIT_ID);
+    printf("4yue version %s (%s %s)\n", VERSION, GIT_COMMIT_ID, VERSION_DATE);
 }
 
 const char *get_version(void)

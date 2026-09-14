@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #define popen _popen
@@ -18,6 +19,7 @@
 #endif
 
 static const char *PLACEHOLDER = "@GIT_COMMIT_ID";
+static const char *DATE_PLACEHOLDER = "@VERSION_DATE";
 
 // 输出错误信息，并附带当前 errno 对应的系统错误原因。
 static void print_errno(const char *message, const char *path) {
@@ -53,6 +55,23 @@ static char *git_commit_id(void) {
 #endif
     if (commit) return commit;
     return strdup("dev");
+}
+
+// 获取当前本地日期，格式为 YYYY-MM-DD。
+static char *version_date(void) {
+    time_t now = time(NULL);
+    struct tm local_time;
+#ifdef _WIN32
+    if (localtime_s(&local_time, &now) != 0) return strdup("unknown");
+#else
+    if (!localtime_r(&now, &local_time)) return strdup("unknown");
+#endif
+
+    char buffer[16];
+    if (strftime(buffer, sizeof(buffer), "%Y-%m-%d", &local_time) == 0) {
+        return strdup("unknown");
+    }
+    return strdup(buffer);
 }
 
 // 读取整个文本文件，调用者负责释放返回缓冲区。
@@ -118,27 +137,28 @@ static int write_file(const char *path, const char *data, size_t size) {
     return 0;
 }
 
-// 计算模板中占位符出现次数。
-static size_t count_placeholders(const char *data) {
+// 计算模板中指定占位符出现次数。
+static size_t count_placeholders(const char *data, const char *placeholder) {
     size_t count = 0;
-    size_t placeholder_length = strlen(PLACEHOLDER);
+    size_t placeholder_length = strlen(placeholder);
     const char *cursor = data;
-    while ((cursor = strstr(cursor, PLACEHOLDER))) {
+    while ((cursor = strstr(cursor, placeholder))) {
         count++;
         cursor += placeholder_length;
     }
     return count;
 }
 
-// 把模板里的提交号占位符替换为真实提交号。
-static char *render_version_header(
-    const char *template_data, size_t template_size, const char *commit, size_t *size_out) {
-    size_t placeholder_length = strlen(PLACEHOLDER);
-    size_t commit_length = strlen(commit);
-    size_t placeholder_count = count_placeholders(template_data);
+// 替换模板里的一个占位符。
+static char *replace_placeholder(
+    const char *template_data, size_t template_size, const char *placeholder,
+    const char *value, size_t *size_out) {
+    size_t placeholder_length = strlen(placeholder);
+    size_t value_length = strlen(value);
+    size_t placeholder_count = count_placeholders(template_data, placeholder);
     size_t output_size = template_size -
         placeholder_count * placeholder_length +
-        placeholder_count * commit_length;
+        placeholder_count * value_length;
 
     char *output = malloc(output_size + 1);
     if (!output) {
@@ -149,12 +169,12 @@ static char *render_version_header(
     const char *src = template_data;
     char *dst = output;
     const char *match = NULL;
-    while ((match = strstr(src, PLACEHOLDER))) {
+    while ((match = strstr(src, placeholder))) {
         size_t prefix_length = (size_t)(match - src);
         memcpy(dst, src, prefix_length);
         dst += prefix_length;
-        memcpy(dst, commit, commit_length);
-        dst += commit_length;
+        memcpy(dst, value, value_length);
+        dst += value_length;
         src = match + placeholder_length;
     }
     size_t tail_length = strlen(src);
@@ -164,6 +184,21 @@ static char *render_version_header(
 
     *size_out = output_size;
     return output;
+}
+
+// 把模板里的版本占位符替换为提交号和日期。
+static char *render_version_header(
+    const char *template_data, size_t template_size, const char *commit,
+    const char *date, size_t *size_out) {
+    size_t commit_size = 0;
+    char *with_commit = replace_placeholder(
+        template_data, template_size, PLACEHOLDER, commit, &commit_size);
+    if (!with_commit) return NULL;
+
+    char *with_date = replace_placeholder(
+        with_commit, commit_size, DATE_PLACEHOLDER, date, size_out);
+    free(with_commit);
+    return with_date;
 }
 
 // 根据 version.h.ini 生成 version.h。
@@ -181,18 +216,27 @@ int main(int argc, char **argv) {
         fprintf(stderr, "failed to determine git commit id\n"); // 中文：无法确定 Git 提交 ID
         return 1;
     }
+    char *date = version_date();
+    if (!date) {
+        fprintf(stderr, "failed to determine version date\n"); // 中文：无法确定版本日期
+        free(commit);
+        return 1;
+    }
 
     size_t template_size = 0;
     char *template_data = read_file(input_path, &template_size);
     if (!template_data) {
+        free(date);
         free(commit);
         return 1;
     }
 
     size_t output_size = 0;
-    char *output = render_version_header(template_data, template_size, commit, &output_size);
+    char *output = render_version_header(
+        template_data, template_size, commit, date, &output_size);
     if (!output) {
         free(template_data);
+        free(date);
         free(commit);
         return 1;
     }
@@ -200,6 +244,7 @@ int main(int argc, char **argv) {
     int result = write_file(output_path, output, output_size);
     free(output);
     free(template_data);
+    free(date);
     free(commit);
     return result;
 }
