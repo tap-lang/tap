@@ -22,18 +22,22 @@
 extern char **environ;
 #endif
 
-// Runtime paths are configured once by main and reused by all output modes.
+// Runtime 路径由 main 初始化一次，之后所有输出模式复用。
 static char runtime_static_path[RUN_PATH_MAX];
 static char runtime_shared_path[RUN_PATH_MAX];
 
 typedef struct {
+    // 本次编译/运行产生的临时目录。
     char directory[RUN_PATH_MAX];
+    // 临时 LLVM IR 文件路径。
     char ir_file[RUN_PATH_MAX];
+    // 临时目标文件路径。
     char object_file[RUN_PATH_MAX];
+    // 临时可执行文件路径。
     char executable_file[RUN_PATH_MAX];
 } TempWorkspace;
 
-// Runtime lookup only needs regular readable library files.
+// 判断 Runtime 候选文件是否存在且可读。
 static int runtime_file_exists(const char *path) {
     FILE *file = fopen(path, "rb");
     if (!file) return 0;
@@ -41,7 +45,7 @@ static int runtime_file_exists(const char *path) {
     return 1;
 }
 
-// Build one candidate path and keep it only when the library exists.
+// 拼接一个 Runtime 候选路径，只有文件存在时才写入输出缓冲区。
 static int find_runtime_file(
     char *output, size_t output_size, const char *directory, const char *filename) {
     int length = snprintf(output, output_size, "%s/%s", directory, filename);
@@ -52,7 +56,7 @@ static int find_runtime_file(
     return 1;
 }
 
-// Resolve the directory of argv[0] for build-tree and installed layouts.
+// 解析编译器可执行文件所在目录，兼容构建目录和安装目录布局。
 static void compiler_directory(
     const char *compiler_path, char *directory, size_t directory_size) {
     char resolved[RUN_PATH_MAX];
@@ -79,7 +83,7 @@ static void compiler_directory(
     directory[length] = '\0';
 }
 
-// Cache both Runtime forms so later compile operations avoid repeated filesystem scans.
+// 缓存 Runtime 静态库和动态库路径，避免后续编译重复扫描文件系统。
 void configure_runtime(const char *compiler_path) {
     runtime_static_path[0] = '\0';
     runtime_shared_path[0] = '\0';
@@ -107,7 +111,7 @@ void configure_runtime(const char *compiler_path) {
     const char *shared_names[] = {"lib4yue_runtime.so", NULL};
 #endif
 
-    // Search configured, development, and installed layouts in priority order.
+    // 按配置目录、开发目录、安装目录的优先级搜索 Runtime。
     for (size_t directory_index = 0; directory_index < 3; directory_index++) {
         const char *directory = directories[directory_index];
         if (!runtime_static_path[0]) {
@@ -129,6 +133,7 @@ void configure_runtime(const char *compiler_path) {
     }
 }
 
+// 根据临时目录生成 IR、目标文件和可执行文件路径。
 static int build_temp_paths(TempWorkspace *workspace, const char *separator) {
     int ir_length = snprintf(workspace->ir_file, sizeof(workspace->ir_file),
                              "%s%sprogram.ll", workspace->directory, separator);
@@ -153,6 +158,7 @@ static int build_temp_paths(TempWorkspace *workspace, const char *separator) {
     return 0;
 }
 
+// 创建一次编译/运行使用的临时工作目录。
 static int create_temp_workspace(TempWorkspace *workspace) {
     memset(workspace, 0, sizeof(*workspace));
 
@@ -194,12 +200,14 @@ static int create_temp_workspace(TempWorkspace *workspace) {
     return 0;
 }
 
+// 删除单个临时文件；文件不存在视为成功。
 static int remove_temp_file(const char *path) {
     if (!path[0] || remove(path) == 0 || errno == ENOENT) return 0;
     fprintf(stderr, "failed to delete temporary file: %s: %s\n", path, strerror(errno)); // 中文：删除临时文件失败
     return 1;
 }
 
+// 清理临时工作目录和其中的中间产物。
 static int cleanup_temp_workspace(TempWorkspace *workspace) {
     int result = 0;
     result |= remove_temp_file(workspace->ir_file);
@@ -223,6 +231,7 @@ static int cleanup_temp_workspace(TempWorkspace *workspace) {
     return result;
 }
 
+// 启动子进程并返回其退出码。
 static int run_process(char *const argv[]) {
     fflush(NULL);
 
@@ -256,19 +265,135 @@ static int run_process(char *const argv[]) {
 #endif
 }
 
-static int link_object_file(const char *object_file, const char *exe_file) {
-#ifdef _WIN32
-    const char *linker = "clang";
-#else
-    const char *linker = "cc";
+#if defined(__APPLE__)
+// 执行 xcrun 查询命令并读取首行输出。
+static int read_command_line(const char *command, char *output, size_t output_size) {
+    FILE *pipe = popen(command, "r");
+    if (!pipe) {
+        fprintf(stderr, "failed to run command: %s\n", command); // 中文：执行命令失败
+        return 1;
+    }
+    if (!fgets(output, (int)output_size, pipe)) {
+        pclose(pipe);
+        fprintf(stderr, "failed to read command output: %s\n", command); // 中文：读取命令输出失败
+        return 1;
+    }
+    int status = pclose(pipe);
+    if (status != 0) {
+        fprintf(stderr, "command failed: %s\n", command); // 中文：命令执行失败
+        return 1;
+    }
+    output[strcspn(output, "\r\n")] = '\0';
+    if (!output[0]) {
+        fprintf(stderr, "command output is empty: %s\n", command); // 中文：命令输出为空
+        return 1;
+    }
+    return 0;
+}
+#elif !defined(_WIN32)
+// 在若干候选路径中选择第一个存在的文件。
+static const char *first_existing_file(const char *const paths[]) {
+    for (size_t index = 0; paths[index]; index++) {
+        if (runtime_file_exists(paths[index])) return paths[index];
+    }
+    return NULL;
+}
 #endif
+
+// 使用 ld 把目标文件和 Runtime 静态库链接成可执行文件。
+static int link_object_file(const char *object_file, const char *exe_file) {
     if (!runtime_static_path[0]) {
         fprintf(stderr,
             "error: 4yue Runtime static library not found; set 4YUE_RUNTIME_PATH\n"); // 中文：找不到 4yue Runtime 静态库；请设置 4YUE_RUNTIME_PATH
         return 1;
     }
+
+#ifdef _WIN32
+    // Windows 上暂时保留 clang 作为链接驱动，避免手动处理 MSVC/MinGW 运行库差异。
+    const char *linker = "clang";
     char *const argv[] = {(char *)linker, (char *)object_file, runtime_static_path,
                           "-o", (char *)exe_file, NULL};
+#elif defined(__APPLE__)
+    // macOS 直接调用 ld 时必须显式传入 SDK、架构和平台版本。
+    char sdk_path[RUN_PATH_MAX];
+    char sdk_version[64];
+    if (read_command_line("xcrun --sdk macosx --show-sdk-path",
+                          sdk_path, sizeof(sdk_path)) != 0 ||
+        read_command_line("xcrun --sdk macosx --show-sdk-version",
+                          sdk_version, sizeof(sdk_version)) != 0) {
+        return 1;
+    }
+#if defined(__aarch64__)
+    const char *arch = "arm64";
+#elif defined(__x86_64__)
+    const char *arch = "x86_64";
+#else
+    const char *arch = "arm64";
+#endif
+    char *const argv[] = {
+        "ld",
+        "-o", (char *)exe_file,
+        (char *)object_file,
+        runtime_static_path,
+        "-lSystem",
+        "-syslibroot", sdk_path,
+        "-arch", (char *)arch,
+        "-platform_version", "macos", sdk_version, sdk_version,
+        NULL
+    };
+#else
+    // Linux 直接调用 ld 时需要手动补齐 C 运行时入口文件和动态链接器。
+    const char *const crt1_candidates[] = {
+        "/usr/lib/x86_64-linux-gnu/Scrt1.o",
+        "/usr/lib64/Scrt1.o",
+        "/usr/lib/Scrt1.o",
+        NULL
+    };
+    const char *const crti_candidates[] = {
+        "/usr/lib/x86_64-linux-gnu/crti.o",
+        "/usr/lib64/crti.o",
+        "/usr/lib/crti.o",
+        NULL
+    };
+    const char *const crtn_candidates[] = {
+        "/usr/lib/x86_64-linux-gnu/crtn.o",
+        "/usr/lib64/crtn.o",
+        "/usr/lib/crtn.o",
+        NULL
+    };
+    const char *const dynamic_linker_candidates[] = {
+        "/lib64/ld-linux-x86-64.so.2",
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/lib/ld-linux-aarch64.so.1",
+        "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+        NULL
+    };
+    const char *crt1 = first_existing_file(crt1_candidates);
+    const char *crti = first_existing_file(crti_candidates);
+    const char *crtn = first_existing_file(crtn_candidates);
+    const char *dynamic_linker = first_existing_file(dynamic_linker_candidates);
+    if (!crt1 || !crti || !crtn || !dynamic_linker) {
+        fprintf(stderr,
+            "error: system CRT files for direct ld linking were not found\n"); // 中文：找不到直接 ld 链接所需的系统 CRT 文件
+        return 1;
+    }
+    char *const argv[] = {
+        "ld",
+        "-dynamic-linker", (char *)dynamic_linker,
+        "-o", (char *)exe_file,
+        (char *)crt1,
+        (char *)crti,
+        (char *)object_file,
+        runtime_static_path,
+        "-L/usr/lib/x86_64-linux-gnu",
+        "-L/lib/x86_64-linux-gnu",
+        "-L/usr/lib64",
+        "-L/lib64",
+        "-lc",
+        (char *)crtn,
+        NULL
+    };
+#endif
     int result = run_process(argv);
     if (result != 0) {
         fprintf(stderr, "link failed with linker exit code: %d\n", result); // 中文：链接失败，链接器退出码
@@ -277,6 +402,7 @@ static int link_object_file(const char *object_file, const char *exe_file) {
     return 0;
 }
 
+// 先写出临时目标文件，再链接为指定可执行文件。
 static int compile_with_temp_object(CodeGenContext *context, const char *exe_file,
                                     const char *object_file) {
     if (write_object_to_file(context, object_file) != 0 ||
@@ -295,6 +421,7 @@ static int compile_with_temp_object(CodeGenContext *context, const char *exe_fil
     return 0;
 }
 
+// 将当前模块编译为可执行文件。
 int compile_to_executable(CodeGenContext *context, const char *exe_file) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
@@ -304,11 +431,13 @@ int compile_to_executable(CodeGenContext *context, const char *exe_file) {
     return result;
 }
 
+// 执行已生成的可执行文件，并转发用户程序参数。
 static int execute_file(const char *exe_file, int program_argc, char **program_argv) {
     char *relative_path = NULL;
     const char *exec_path = exe_file;
 
 #ifndef _WIN32
+    // POSIX 执行当前目录下的文件时需要显式加 "./"，否则会按 PATH 查找。
     if (!strchr(exe_file, '/')) {
         size_t path_size = strlen(exe_file) + 3;
         relative_path = malloc(path_size);
@@ -321,6 +450,7 @@ static int execute_file(const char *exe_file, int program_argc, char **program_a
     }
 #endif
 
+    // argv[0] 是程序路径，后续元素原样转发给 4yue 程序。
     char **argv = malloc(sizeof(char *) * ((size_t)program_argc + 2));
     if (!argv) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -338,6 +468,7 @@ static int execute_file(const char *exe_file, int program_argc, char **program_a
     return result;
 }
 
+// 编译当前模块并立即执行生成的程序。
 int compile_and_run(CodeGenContext *context, const char *exe_file,
                     int program_argc, char **program_argv) {
     TempWorkspace workspace;
@@ -359,6 +490,7 @@ int compile_and_run(CodeGenContext *context, const char *exe_file,
     return result;
 }
 
+// 使用 lli 解释执行临时 IR，并加载 Runtime 动态库解析 extern 符号。
 int run_with_lli(CodeGenContext *context) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
@@ -372,7 +504,7 @@ int run_with_lli(CodeGenContext *context) {
             "error: 4yue Runtime shared library not found; set 4YUE_RUNTIME_PATH\n"); // 中文：找不到 4yue Runtime 共享库；请设置 4YUE_RUNTIME_PATH
         result = 1;
     } else {
-        // lli exposes symbols from the Runtime shared library to extern declarations.
+        // lli 通过加载 Runtime 动态库向 extern 声明暴露符号。
         char load_option[RUN_PATH_MAX + 8];
         snprintf(load_option, sizeof(load_option), "--load=%s", runtime_shared_path);
         char *const argv[] = {"lli", load_option, workspace.ir_file, NULL};
