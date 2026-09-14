@@ -19,6 +19,7 @@ static void print_usage() {
     printf("选项:\n");
     printf("  -h, --help        显示此帮助信息\n");
     printf("  -o <文件>         指定输出文件\n");
+    printf("  -static           静态链接生成的本地可执行文件\n");
     printf("  -ir               生成LLVM IR代码\n");
     printf("  -emit-obj         生成目标文件\n");
     printf("  -emit-wasm        生成WebAssembly目标文件\n");
@@ -37,6 +38,7 @@ int main(int argc, char *argv[]) {
     int emit_wasm = 0;
     int run_lli = 0;
     int run_native = 0;
+    int static_link = 0;
     int lex_only = 0;
     int parse_only = 0;
     int program_argc = 0;
@@ -62,6 +64,8 @@ int main(int argc, char *argv[]) {
                 print_usage();
                 return 1;
             }
+        } else if (strcmp(argv[i], "-static") == 0) {
+            static_link = 1;
         } else if (strcmp(argv[i], "-ir") == 0) {
             emit_ir = 1;
         } else if (strcmp(argv[i], "-emit-obj") == 0) {
@@ -104,8 +108,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "error: program arguments can only be used with run\n"); // 中文：程序参数只能与 run 命令一起使用
         return 1;
     }
+    if (static_link && (emit_ir || emit_obj || emit_wasm || run_lli || lex_only || parse_only)) {
+        fprintf(stderr, "error: -static can only be used when generating or running a native executable\n"); // 中文：-static 只能用于生成或运行本地可执行文件
+        return 1;
+    }
 
-    // Runtime libraries are resolved once so native linking and lli use the same ABI.
+    // Runtime 库只解析一次，确保本地链接和 lli 使用一致的 ABI。
     configure_runtime(argv[0]);
 
     // 1. 词法分析（在 create_lexer 内读入源文件）
@@ -199,8 +207,8 @@ int main(int argc, char *argv[]) {
             result = 1;
         } else {
             result = run_native
-                ? compile_and_run(codegen_context, exe_file, program_argc, program_argv)
-                : compile_to_executable(codegen_context, exe_file);
+                ? compile_and_run(codegen_context, exe_file, program_argc, program_argv, static_link)
+                : compile_to_executable(codegen_context, exe_file, static_link);
         }
         free(default_exe_file);
     }

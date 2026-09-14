@@ -53,6 +53,7 @@ cmake --build .
 | `-h`, `--help` | 打印帮助 |
 | `-V`, `--version` | 打印版本与 git 提交 |
 | `-o <文件>` | 指定输出（IR / 目标文件 / 可执行文件名，视模式而定） |
+| `-static` | 静态链接生成的本地可执行文件；仅适用于默认编译和 `run` |
 | `-ir` | 完整编译后写出 LLVM IR（默认 `output.ll`，可用 `-o` 覆盖） |
 | `-emit-obj` | 写出目标文件（默认 `output.o`，可用 `-o` 覆盖） |
 | `-emit-wasm` | 写出 WebAssembly 目标文件（默认 `output.wasm`，可用 `-o` 覆盖） |
@@ -64,12 +65,14 @@ cmake --build .
 
 - **默认**（无 `run` / `-ir` / `-emit-obj` / `-emit-wasm` / `-run-lli`）：直接生成目标文件并链接为可执行文件（默认使用源文件的基础名称，可用 `-o` 指定）。
 - **`run`**：执行与默认模式相同的本地编译流程，编译成功后运行可执行文件，返回程序的退出码并删除生成的可执行文件。
+- **`-static`**：生成本地可执行文件时启用静态链接；macOS 不支持完整静态链接系统库，因此会给出明确错误。
 - **`-lex`** 与 **`-parse`** 互斥于后续流水线：若同时传 `-lex`，只执行词法阶段。
 
 ### 示例
 
 ```bash
 ./build/4yue tests/run-pass/basics/hello.tp
+./build/4yue -static -o hello-static tests/run-pass/basics/hello.tp
 ./build/4yue run tests/run-pass/basics/hello.tp
 ./build/4yue -o hello.bin tests/run-pass/basics/hello.tp
 ./build/4yue -ir -o out.ll tests/run-pass/functions/fibonacci.tp

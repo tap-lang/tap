@@ -265,8 +265,8 @@ static int run_process(char *const argv[]) {
 #endif
 }
 
-#if defined(__APPLE__)
-// 执行 xcrun 查询命令并读取首行输出。
+#if !defined(_WIN32)
+// 执行外部查询命令并读取首行输出。
 static int read_command_line(const char *command, char *output, size_t output_size) {
     FILE *pipe = popen(command, "r");
     if (!pipe) {
@@ -290,7 +290,27 @@ static int read_command_line(const char *command, char *output, size_t output_si
     }
     return 0;
 }
-#elif !defined(_WIN32)
+#endif
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+// 使用 gcc 查询系统启动文件的实际安装路径。
+static int gcc_file_path(const char *filename, char *output, size_t output_size) {
+    char command[128];
+    int length = snprintf(command, sizeof(command), "gcc -print-file-name=%s", filename);
+    if (length < 0 || (size_t)length >= sizeof(command)) {
+        fprintf(stderr, "gcc query command is too long: %s\n", filename); // 中文：gcc 查询命令过长
+        return 1;
+    }
+    if (read_command_line(command, output, output_size) != 0) return 1;
+    if (!runtime_file_exists(output)) {
+        fprintf(stderr, "gcc could not find required file: %s\n", filename); // 中文：gcc 找不到必需文件
+        return 1;
+    }
+    return 0;
+}
+#endif
+
+#if !defined(_WIN32) && !defined(__APPLE__)
 // 在若干候选路径中选择第一个存在的文件。
 static const char *first_existing_file(const char *const paths[]) {
     for (size_t index = 0; paths[index]; index++) {
@@ -301,19 +321,28 @@ static const char *first_existing_file(const char *const paths[]) {
 #endif
 
 // 使用 ld 把目标文件和 Runtime 静态库链接成可执行文件。
-static int link_object_file(const char *object_file, const char *exe_file) {
+static int link_object_file(const char *object_file, const char *exe_file, int static_link) {
     if (!runtime_static_path[0]) {
         fprintf(stderr,
             "error: 4yue Runtime static library not found; set 4YUE_RUNTIME_PATH\n"); // 中文：找不到 4yue Runtime 静态库；请设置 4YUE_RUNTIME_PATH
         return 1;
     }
 
+    int result = 0;
 #ifdef _WIN32
     // Windows 上暂时保留 clang 作为链接驱动，避免手动处理 MSVC/MinGW 运行库差异。
     const char *linker = "clang";
-    char *const argv[] = {(char *)linker, (char *)object_file, runtime_static_path,
-                          "-o", (char *)exe_file, NULL};
+    char *const dynamic_argv[] = {(char *)linker, (char *)object_file, runtime_static_path,
+                                  "-o", (char *)exe_file, NULL};
+    char *const static_argv[] = {(char *)linker, "-static", (char *)object_file,
+                                 runtime_static_path, "-o", (char *)exe_file, NULL};
+    result = run_process(static_link ? static_argv : dynamic_argv);
 #elif defined(__APPLE__)
+    if (static_link) {
+        fprintf(stderr,
+            "error: -static is not supported on macOS because libSystem is only available as a dynamic library\n"); // 中文：macOS 不支持完整静态链接
+        return 1;
+    }
     // macOS 直接调用 ld 时必须显式传入 SDK、架构和平台版本。
     char sdk_path[RUN_PATH_MAX];
     char sdk_version[64];
@@ -341,60 +370,101 @@ static int link_object_file(const char *object_file, const char *exe_file) {
         "-platform_version", "macos", sdk_version, sdk_version,
         NULL
     };
+    result = run_process(argv);
 #else
-    // Linux 直接调用 ld 时需要手动补齐 C 运行时入口文件和动态链接器。
-    const char *const crt1_candidates[] = {
-        "/usr/lib/x86_64-linux-gnu/Scrt1.o",
-        "/usr/lib64/Scrt1.o",
-        "/usr/lib/Scrt1.o",
-        NULL
-    };
-    const char *const crti_candidates[] = {
-        "/usr/lib/x86_64-linux-gnu/crti.o",
-        "/usr/lib64/crti.o",
-        "/usr/lib/crti.o",
-        NULL
-    };
-    const char *const crtn_candidates[] = {
-        "/usr/lib/x86_64-linux-gnu/crtn.o",
-        "/usr/lib64/crtn.o",
-        "/usr/lib/crtn.o",
-        NULL
-    };
-    const char *const dynamic_linker_candidates[] = {
-        "/lib64/ld-linux-x86-64.so.2",
-        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
-        "/lib/ld-linux-aarch64.so.1",
-        "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
-        NULL
-    };
-    const char *crt1 = first_existing_file(crt1_candidates);
-    const char *crti = first_existing_file(crti_candidates);
-    const char *crtn = first_existing_file(crtn_candidates);
-    const char *dynamic_linker = first_existing_file(dynamic_linker_candidates);
-    if (!crt1 || !crti || !crtn || !dynamic_linker) {
-        fprintf(stderr,
-            "error: system CRT files for direct ld linking were not found\n"); // 中文：找不到直接 ld 链接所需的系统 CRT 文件
-        return 1;
+    if (static_link) {
+        // Linux 静态链接需要启动文件，路径由 gcc 查询后交给 ld 使用。
+        char crt1[RUN_PATH_MAX];
+        char crti[RUN_PATH_MAX];
+        char crtn[RUN_PATH_MAX];
+        char crtbegin[RUN_PATH_MAX];
+        char crtend[RUN_PATH_MAX];
+        if (gcc_file_path("crt1.o", crt1, sizeof(crt1)) != 0 ||
+            gcc_file_path("crti.o", crti, sizeof(crti)) != 0 ||
+            gcc_file_path("crtn.o", crtn, sizeof(crtn)) != 0 ||
+            gcc_file_path("crtbeginT.o", crtbegin, sizeof(crtbegin)) != 0 ||
+            gcc_file_path("crtend.o", crtend, sizeof(crtend)) != 0) {
+            return 1;
+        }
+
+        char *const argv[] = {
+            "ld",
+            "-static",
+            "-o", (char *)exe_file,
+            crt1,
+            crti,
+            crtbegin,
+            (char *)object_file,
+            runtime_static_path,
+            "-L/usr/lib/x86_64-linux-gnu",
+            "-L/lib/x86_64-linux-gnu",
+            "-L/usr/lib/aarch64-linux-gnu",
+            "-L/lib/aarch64-linux-gnu",
+            "-L/usr/lib64",
+            "-L/lib64",
+            "-lc",
+            crtend,
+            crtn,
+            NULL
+        };
+        result = run_process(argv);
+    } else {
+        // Linux 动态链接需要手动补齐 C 运行时入口文件和动态链接器。
+        const char *const crt1_candidates[] = {
+            "/usr/lib/x86_64-linux-gnu/Scrt1.o",
+            "/usr/lib64/Scrt1.o",
+            "/usr/lib/Scrt1.o",
+            NULL
+        };
+        const char *const crti_candidates[] = {
+            "/usr/lib/x86_64-linux-gnu/crti.o",
+            "/usr/lib64/crti.o",
+            "/usr/lib/crti.o",
+            NULL
+        };
+        const char *const crtn_candidates[] = {
+            "/usr/lib/x86_64-linux-gnu/crtn.o",
+            "/usr/lib64/crtn.o",
+            "/usr/lib/crtn.o",
+            NULL
+        };
+        const char *const dynamic_linker_candidates[] = {
+            "/lib64/ld-linux-x86-64.so.2",
+            "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+            "/lib/ld-linux-aarch64.so.1",
+            "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+            NULL
+        };
+        const char *crt1 = first_existing_file(crt1_candidates);
+        const char *crti = first_existing_file(crti_candidates);
+        const char *crtn = first_existing_file(crtn_candidates);
+        const char *dynamic_linker = first_existing_file(dynamic_linker_candidates);
+        if (!crt1 || !crti || !crtn || !dynamic_linker) {
+            fprintf(stderr,
+                "error: system CRT files for direct ld linking were not found\n"); // 中文：找不到直接 ld 链接所需的系统 CRT 文件
+            return 1;
+        }
+        char *const argv[] = {
+            "ld",
+            "-dynamic-linker", (char *)dynamic_linker,
+            "-o", (char *)exe_file,
+            (char *)crt1,
+            (char *)crti,
+            (char *)object_file,
+            runtime_static_path,
+            "-L/usr/lib/x86_64-linux-gnu",
+            "-L/lib/x86_64-linux-gnu",
+            "-L/usr/lib/aarch64-linux-gnu",
+            "-L/lib/aarch64-linux-gnu",
+            "-L/usr/lib64",
+            "-L/lib64",
+            "-lc",
+            (char *)crtn,
+            NULL
+        };
+        result = run_process(argv);
     }
-    char *const argv[] = {
-        "ld",
-        "-dynamic-linker", (char *)dynamic_linker,
-        "-o", (char *)exe_file,
-        (char *)crt1,
-        (char *)crti,
-        (char *)object_file,
-        runtime_static_path,
-        "-L/usr/lib/x86_64-linux-gnu",
-        "-L/lib/x86_64-linux-gnu",
-        "-L/usr/lib64",
-        "-L/lib64",
-        "-lc",
-        (char *)crtn,
-        NULL
-    };
 #endif
-    int result = run_process(argv);
     if (result != 0) {
         fprintf(stderr, "link failed with linker exit code: %d\n", result); // 中文：链接失败，链接器退出码
         return 1;
@@ -404,9 +474,9 @@ static int link_object_file(const char *object_file, const char *exe_file) {
 
 // 先写出临时目标文件，再链接为指定可执行文件。
 static int compile_with_temp_object(CodeGenContext *context, const char *exe_file,
-                                    const char *object_file) {
+                                    const char *object_file, int static_link) {
     if (write_object_to_file(context, object_file) != 0 ||
-        link_object_file(object_file, exe_file) != 0) {
+        link_object_file(object_file, exe_file, static_link) != 0) {
         fprintf(stderr, "failed to generate executable\n"); // 中文：生成可执行文件失败
         return 1;
     }
@@ -422,11 +492,12 @@ static int compile_with_temp_object(CodeGenContext *context, const char *exe_fil
 }
 
 // 将当前模块编译为可执行文件。
-int compile_to_executable(CodeGenContext *context, const char *exe_file) {
+int compile_to_executable(CodeGenContext *context, const char *exe_file, int static_link) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
 
-    int result = compile_with_temp_object(context, exe_file, workspace.object_file);
+    int result = compile_with_temp_object(
+        context, exe_file, workspace.object_file, static_link);
     if (cleanup_temp_workspace(&workspace) != 0 && result == 0) result = 1;
     return result;
 }
@@ -470,12 +541,13 @@ static int execute_file(const char *exe_file, int program_argc, char **program_a
 
 // 编译当前模块并立即执行生成的程序。
 int compile_and_run(CodeGenContext *context, const char *exe_file,
-                    int program_argc, char **program_argv) {
+                    int program_argc, char **program_argv, int static_link) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
 
     const char *run_file = exe_file ? exe_file : workspace.executable_file;
-    int compile_result = compile_with_temp_object(context, run_file, workspace.object_file);
+    int compile_result = compile_with_temp_object(
+        context, run_file, workspace.object_file, static_link);
     int result = compile_result;
     if (compile_result == 0) {
         result = execute_file(run_file, program_argc, program_argv);
