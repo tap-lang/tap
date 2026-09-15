@@ -51,6 +51,9 @@ fn main(): i32 {
 | `std.env` | `argc(): i32` | 返回当前程序的命令行参数数量，包含程序路径自身 |
 | `std.env` | `arg(index: i32): string` | 返回指定位置的命令行参数；越界时返回空字符串 |
 | `std.env` | `args(): [string; 64]` | 返回最多 64 个命令行参数，不足的位置为空字符串 |
+| `std.env` | `var(name: string): string` | 返回指定环境变量的值；不存在时返回空字符串 |
+| `std.env` | `varc(): i32` | 返回当前进程环境变量数量 |
+| `std.env` | `vars(): [string; 256]` | 返回最多 256 个环境变量条目，格式为 `NAME=VALUE`，不足的位置为空字符串 |
 | `std.math` | `PI: f64` | 圆周率常量，值为 `3.141592653589793` |
 | `std.math` | `square(value: i32): i32` | 返回平方值 |
 | `std.math` | `abs(value: i32): i32` | 返回绝对值 |
@@ -64,6 +67,8 @@ fn main(): i32 {
     let values: [string; 64] = env.args();
     print("%d\n", env.argc());
     print("%s\n", values[1]);
+    print("%s\n", env.var("PATH"));
+    print("%s\n", env.vars()[0]);
     return 0;
 }
 ```
@@ -88,10 +93,13 @@ extern fn __4yue_clear_screen(): i32;
 extern fn __4yue_random(maximum: i32): i32;
 extern fn __4yue_argc(): i32;
 extern fn __4yue_arg(index: i32): string;
+extern fn __4yue_env_var(name: string): string;
+extern fn __4yue_envc(): i32;
+extern fn __4yue_env(index: i32): string;
 ```
 
 普通程序应调用 Prelude 封装后的 `read_key`、`sleep_ms`、`clear_screen`
-和 `random`，以及 `std.env` 封装后的 `argc`、`arg`、`args`，不要直接调用
+和 `random`，以及 `std.env` 封装后的 `argc`、`arg`、`args`、`var`、`varc`、`vars`，不要直接调用
 `__4yue_` 前缀函数。
 
 Runtime 的 C ABI 声明位于
@@ -130,6 +138,7 @@ Runtime 的 C ABI 声明位于
 - 标准库函数目前只覆盖 `i32` 相关能力。
 - `string` 已是可用的语言类型并提供内建 `.len()` 方法，但还没有稳定的字符串标准库
   API；语言层能力见[字符串文档](data-type-string.md)。
-- 数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，不是动态数组。
+- 数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
+  `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。
 - 模块只导出顶层函数，没有可见性控制。
 - Prelude 是自动注入的全局函数集合，不支持按需选择导入。

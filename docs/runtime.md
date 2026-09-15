@@ -18,6 +18,9 @@ extern fn __4yue_sleep_ms(milliseconds: i32): i32;
 | `argc(): i32` | 返回命令行参数数量，包含程序路径自身 |
 | `arg(index: i32): string` | 返回指定命令行参数；越界时返回空字符串 |
 | `args(): [string; 64]` | 返回最多 64 个命令行参数组成的固定长度字符串数组 |
+| `var(name: string): string` | 返回指定环境变量的值；不存在时返回空字符串 |
+| `varc(): i32` | 返回当前进程环境变量数量 |
+| `vars(): [string; 256]` | 返回最多 256 个环境变量条目，格式为 `NAME=VALUE` |
 
 说明：POSIX 终端方向键会在一次 read_key 调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 扩展方向键返回第二个 scan code，通常是 `72/80/77/75`。
 

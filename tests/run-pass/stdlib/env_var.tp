@@ -1,0 +1,26 @@
+import std.env as env;
+
+fn main(): i32 {
+    let values: [string; 256] = env.vars();
+    if (env.var("4YUE_STD_PATH").len() > 0) {
+        print("std path set\n");
+    }
+    print("missing len %u\n", env.var("4YUE_ENV_VAR_DOES_NOT_EXIST").len());
+    if (env.varc() > 0) {
+        print("env count set\n");
+    }
+    if (values[0].len() > 0) {
+        print("first env set\n");
+    }
+    return 0;
+}
+
+/** -- test
+- .stdout
+std path set
+missing len 0
+env count set
+first env set
+- .exit
+0
+-- */

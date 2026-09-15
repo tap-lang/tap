@@ -16,6 +16,14 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+extern char **_environ;
+#define FOUR_YUE_ENVIRON _environ
+#else
+extern char **environ;
+#define FOUR_YUE_ENVIRON environ
+#endif
+
 #ifndef _WIN32
 // POSIX terminals stay in raw mode between polls and are restored at process exit.
 static struct termios original_terminal;
@@ -107,6 +115,32 @@ const char *__4yue_arg(int32_t index) {
         return "";
     }
     return saved_argv[index];
+}
+
+// 获取指定名称的环境变量；不存在时返回空字符串，方便 4yue 侧直接当 string 使用。
+const char *__4yue_env_var(const char *name) {
+    if (!name || !name[0]) return "";
+    const char *value = getenv(name);
+    return value ? value : "";
+}
+
+// 返回当前进程环境变量数量。
+int32_t __4yue_envc(void) {
+    int32_t count = 0;
+    if (!FOUR_YUE_ENVIRON) return 0;
+    while (FOUR_YUE_ENVIRON[count]) {
+        count++;
+    }
+    return count;
+}
+
+// 按索引返回环境变量原始条目，格式为 NAME=VALUE；越界时返回空字符串。
+const char *__4yue_env(int32_t index) {
+    if (index < 0 || !FOUR_YUE_ENVIRON) return "";
+    for (int32_t current = 0; current <= index; current++) {
+        if (!FOUR_YUE_ENVIRON[current]) return "";
+    }
+    return FOUR_YUE_ENVIRON[index];
 }
 
 int32_t __4yue_read_key(void) {
