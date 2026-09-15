@@ -114,6 +114,9 @@ static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type)
 
 // 递归地将标量、结构体和多维数组类型降低为 LLVM 类型。
 static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type) {
+    if (type->is_pointer) {
+        return LLVMPointerType(get_llvm_var_type(context, type->element_type), 0);
+    }
     if (type->is_array) {
         return LLVMArrayType2(
             get_llvm_var_type(context, type->element_type), type->array_length);
@@ -377,11 +380,18 @@ static const char *llvm_call_name(const char *name) {
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression);
 static LLVMValueRef generate_expression_for_type(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type);
+static const VarTypeNode *indexed_value_type(
+    CodeGenContext *context, ASTNode *expression);
+static const char *index_base_name(ASTNode *expression);
 
 // 比较两个完整类型节点是否等价。
 static int var_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     if (!left || !right) return left == right;
     if (left->is_array != right->is_array) return 0;
+    if (left->is_pointer != right->is_pointer) return 0;
+    if (left->is_pointer) {
+        return var_type_equal(left->element_type, right->element_type);
+    }
     if (!left->is_array) {
         if (left->struct_name || right->struct_name) {
             return left->struct_name && right->struct_name &&
@@ -488,10 +498,137 @@ static LLVMValueRef generate_field_address(
         context->builder, struct_type, symbol->value, index, "struct_field_ptr");
 }
 
+// 取函数名最后一段，模块函数内部名如 __4yue_module_0.push 会得到 push。
+static const char *function_base_name(const char *name) {
+    const char *dot = strrchr(name, '.');
+    return dot ? dot + 1 : name;
+}
+
+// 根据接收者完整类型和方法名查找可作为方法调用的函数。
+static FunctionNode *find_method_function(
+    CodeGenContext *context, const VarTypeNode *receiver_type,
+    const char *method_name) {
+    if (!context->program || !receiver_type) return NULL;
+    for (ASTNode *node = context->program->functions; node; node = node->next) {
+        if (node->type != NODE_FUNCTION) continue;
+        FunctionNode *function = (FunctionNode *)node;
+        const VarTypeNode *first_param = function_param_var_type(function, 0);
+        if (first_param && var_type_equal(first_param, receiver_type) &&
+            strcmp(function_base_name(function->name), method_name) == 0) {
+            return function;
+        }
+    }
+    return NULL;
+}
+
+// 解析 receiver.method(...) 调用，只有接收者是结构体变量时才参与方法匹配。
+static FunctionNode *resolve_method_call(
+    CodeGenContext *context, const FunctionCallNode *call,
+    Symbol **receiver_symbol_out, char **receiver_name_out,
+    char **method_name_out) {
+    char *receiver_name = NULL;
+    char *method_name = NULL;
+    if (!split_field_access_name(call->name, &receiver_name, &method_name)) {
+        return NULL;
+    }
+
+    Symbol *receiver_symbol = find_symbol(context, receiver_name);
+    if (!receiver_symbol ||
+        !receiver_symbol->declared_type ||
+        !receiver_symbol->declared_type->struct_name) {
+        free(receiver_name);
+        free(method_name);
+        return NULL;
+    }
+
+    FunctionNode *function =
+        find_method_function(context, receiver_symbol->declared_type, method_name);
+    if (!function) {
+        free(receiver_name);
+        free(method_name);
+        return NULL;
+    }
+
+    if (receiver_symbol_out) *receiver_symbol_out = receiver_symbol;
+    if (receiver_name_out) {
+        *receiver_name_out = receiver_name;
+    } else {
+        free(receiver_name);
+    }
+    if (method_name_out) {
+        *method_name_out = method_name;
+    } else {
+        free(method_name);
+    }
+    return function;
+}
+
+// 检查取地址表达式的目标类型是否与指针元素类型一致。
+static int reference_assignable_to(
+    CodeGenContext *context, const ReferenceNode *reference,
+    const VarTypeNode *pointer_type) {
+    if (!reference || !pointer_type || !pointer_type->is_pointer ||
+        !reference->target) {
+        return 0;
+    }
+
+    if (reference->target->type == NODE_IDENTIFIER) {
+        const char *name = ((IdentifierNode *)reference->target)->name;
+        Symbol *symbol = find_symbol(context, name);
+        if (symbol) {
+            if (symbol->declared_type) {
+                return var_type_equal(symbol->declared_type, pointer_type->element_type);
+            }
+            const VarTypeNode *element_type = pointer_type->element_type;
+            return !element_type->is_array && !element_type->is_pointer &&
+                   !element_type->enum_name && !element_type->struct_name &&
+                   element_type->type == symbol->type;
+        }
+
+        StructFieldNode *field = field_access_info(context, name, NULL, NULL, NULL);
+        return field && var_type_equal(field->field_type, pointer_type->element_type);
+    }
+
+    if (reference->target->type == NODE_INDEX_EXPRESSION) {
+        const VarTypeNode *element_type =
+            indexed_value_type(context, reference->target);
+        return element_type && var_type_equal(element_type, pointer_type->element_type);
+    }
+
+    return 0;
+}
+
 // 判断源表达式是否可以写入目标声明类型。
 static int expression_assignable_to(CodeGenContext *context, ASTNode *expression,
                                     const VarTypeNode *target_type) {
     if (!target_type || target_type->is_array) return 0;
+    if (target_type->is_pointer) {
+        if (expression && expression->type == NODE_REFERENCE) {
+            return reference_assignable_to(
+                context, (ReferenceNode *)expression, target_type);
+        }
+        if (expression && expression->type == NODE_FUNCTION_CALL) {
+            FunctionNode *function =
+                find_function(context, ((FunctionCallNode *)expression)->name);
+            if (!function) {
+                function = resolve_method_call(
+                    context, (FunctionCallNode *)expression, NULL, NULL, NULL);
+            }
+            const VarTypeNode *return_type = function_return_var_type(function);
+            return return_type && var_type_equal(return_type, target_type);
+        }
+        if (expression && expression->type == NODE_IDENTIFIER) {
+            const char *name = ((IdentifierNode *)expression)->name;
+            Symbol *symbol = find_symbol(context, name);
+            if (symbol && symbol->declared_type) {
+                return var_type_equal(symbol->declared_type, target_type);
+            }
+            StructFieldNode *field =
+                field_access_info(context, name, NULL, NULL, NULL);
+            return field && var_type_equal(field->field_type, target_type);
+        }
+        return 0;
+    }
     if (target_type->struct_name) {
         if (expression && expression->type == NODE_STRUCT_LITERAL) {
             StructLiteralNode *literal = (StructLiteralNode *)expression;
@@ -512,6 +649,10 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         if (expression && expression->type == NODE_FUNCTION_CALL) {
             FunctionNode *function =
                 find_function(context, ((FunctionCallNode *)expression)->name);
+            if (!function) {
+                function = resolve_method_call(
+                    context, (FunctionCallNode *)expression, NULL, NULL, NULL);
+            }
             const VarTypeNode *return_type = function_return_var_type(function);
             return return_type && return_type->struct_name &&
                    strcmp(return_type->struct_name, target_type->struct_name) == 0;
@@ -536,6 +677,10 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         if (expression && expression->type == NODE_FUNCTION_CALL) {
             FunctionNode *function =
                 find_function(context, ((FunctionCallNode *)expression)->name);
+            if (!function) {
+                function = resolve_method_call(
+                    context, (FunctionCallNode *)expression, NULL, NULL, NULL);
+            }
             const VarTypeNode *return_type = function_return_var_type(function);
             return return_type && return_type->enum_name &&
                    strcmp(return_type->enum_name, target_type->enum_name) == 0;
@@ -547,17 +692,28 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
            (is_integer_type(target_type->type) && is_integer_type(actual_type));
 }
 
-// 解析标识符或连续下标表达式最终指向的数组类型。
+// 解析标识符或连续下标表达式最终指向的数组/指针元素类型。
 static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *expression) {
     if (expression && expression->type == NODE_IDENTIFIER) {
         const char *name = ((IdentifierNode *)expression)->name;
         Symbol *symbol = find_symbol(context, name);
         if (!symbol) {
+            StructFieldNode *field =
+                field_access_info(context, name, NULL, NULL, NULL);
+            if (field && field->field_type->is_pointer) {
+                return field->field_type->element_type;
+            }
+            if (field && field->field_type->is_array) {
+                return field->field_type;
+            }
             fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
             exit(1);
         }
+        if (symbol->declared_type && symbol->declared_type->is_pointer) {
+            return symbol->declared_type->element_type;
+        }
         if (!symbol->array_type) {
-            fprintf(stderr, "error: variable '%s' is not an array\n", name); // 中文：变量不是数组
+            fprintf(stderr, "error: variable '%s' is not an array or pointer\n", name); // 中文：变量不是数组或指针
             exit(1);
         }
         return symbol->array_type;
@@ -566,9 +722,11 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
     if (expression && expression->type == NODE_INDEX_EXPRESSION) {
         IndexExpressionNode *index = (IndexExpressionNode *)expression;
         const VarTypeNode *container_type = indexed_value_type(context, index->array);
+        if (container_type->is_pointer) {
+            return container_type->element_type;
+        }
         if (!container_type->is_array) {
-            fprintf(stderr, "error: index target is not an array\n"); // 中文：索引目标不是数组
-            exit(1);
+            return container_type;
         }
         return container_type->element_type;
     }
@@ -577,15 +735,69 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
         FunctionCallNode *call = (FunctionCallNode *)expression;
         FunctionNode *function = find_function(context, call->name);
         const VarTypeNode *return_type = function_return_var_type(function);
+        if (return_type && return_type->is_pointer) {
+            return return_type->element_type;
+        }
         if (!return_type || !return_type->is_array) {
-            fprintf(stderr, "error: function '%s' does not return an array\n", call->name); // 中文：函数不返回数组
+            fprintf(stderr, "error: function '%s' does not return an array or pointer\n", call->name); // 中文：函数不返回数组或指针
             exit(1);
         }
         return return_type;
     }
 
-    fprintf(stderr, "error: invalid array index target\n"); // 中文：数组索引目标无效
+    fprintf(stderr, "error: invalid array or pointer index target\n"); // 中文：数组或指针索引目标无效
     exit(1);
+}
+
+// 深拷贝完整类型节点，供局部引用类型推断后由 AST 独立持有。
+static VarTypeNode *copy_var_type(const VarTypeNode *source) {
+    if (!source) return NULL;
+    if (source->is_pointer) {
+        return create_pointer_type(copy_var_type(source->element_type));
+    }
+    if (source->is_array) {
+        return create_array_type(
+            copy_var_type(source->element_type), source->array_length);
+    }
+    if (source->struct_name) return create_struct_type(source->struct_name);
+    if (source->enum_name) return create_enum_type(source->enum_name);
+    return create_var_type(source->type);
+}
+
+// 根据可寻址目标推断 `&target` 的完整 ptr<T> 类型。
+static VarTypeNode *infer_reference_type(
+    CodeGenContext *context, const ReferenceNode *reference) {
+    ASTNode *target = reference ? reference->target : NULL;
+    const VarTypeNode *target_type = NULL;
+    VarTypeNode *inferred_scalar = NULL;
+
+    if (target && target->type == NODE_IDENTIFIER) {
+        const char *name = ((IdentifierNode *)target)->name;
+        Symbol *symbol = find_symbol(context, name);
+        if (symbol) {
+            if (symbol->declared_type) {
+                target_type = symbol->declared_type;
+            } else {
+                inferred_scalar = create_var_type(symbol->type);
+                target_type = inferred_scalar;
+            }
+        } else {
+            StructFieldNode *field =
+                field_access_info(context, name, NULL, NULL, NULL);
+            if (field) target_type = field->field_type;
+        }
+    } else if (target && target->type == NODE_INDEX_EXPRESSION) {
+        target_type = indexed_value_type(context, target);
+    }
+
+    if (!target_type) {
+        fprintf(stderr, "error: reference target is not addressable\n"); // 中文：引用目标不可寻址
+        exit(1);
+    }
+
+    VarTypeNode *element_type = copy_var_type(target_type);
+    free_ast((ASTNode *)inferred_scalar);
+    return create_pointer_type(element_type);
 }
 
 // 推断表达式在当前上下文中的标量类型。
@@ -622,13 +834,16 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             size_t receiver_length = 0;
+            FunctionNode *function = find_function(context, call->name);
+            if (!function) {
+                function = resolve_method_call(context, call, NULL, NULL, NULL);
+            }
             // len() 返回与目标架构指针同宽的无符号整数。
-            if (is_internal_string_len_call(call) ||
-                (named_string_len_receiver(call, &receiver_length) &&
-                 !find_function(context, call->name))) {
+            if (!function &&
+                (is_internal_string_len_call(call) ||
+                 named_string_len_receiver(call, &receiver_length))) {
                 return LITERAL_UINT;
             }
-            FunctionNode *function = find_function(context, call->name);
             return function_return_type(function);
         }
         case NODE_BINARY_OP: {
@@ -807,6 +1022,13 @@ static LLVMValueRef generate_expression_for_type(
     if (target_type->is_array) {
         return generate_array_value(context, expression, target_type);
     }
+    if (target_type->is_pointer) {
+        if (!expression_assignable_to(context, expression, target_type)) {
+            fprintf(stderr, "error: pointer expression type mismatch\n"); // 中文：指针表达式类型不匹配
+            exit(1);
+        }
+        return generate_expression(context, expression);
+    }
     if (target_type->struct_name) {
         if (!expression_assignable_to(context, expression, target_type)) {
             fprintf(stderr, "error: struct expression type mismatch\n"); // 中文：结构体表达式类型不匹配
@@ -837,29 +1059,56 @@ static LLVMValueRef generate_index_address(
     CodeGenContext *context, IndexExpressionNode *index_expression,
     const VarTypeNode **element_type_out) {
     LLVMValueRef array_address = NULL;
+    LLVMValueRef pointer_value = NULL;
     const VarTypeNode *array_type = NULL;
+    int is_pointer_index = 0;
 
-    // The first index starts from array storage; later indexes start from a subarray address.
+    // 第一层下标从数组存储或指针值开始；后续下标从子数组地址继续。
     if (index_expression->array &&
         index_expression->array->type == NODE_IDENTIFIER) {
         const char *name = ((IdentifierNode *)index_expression->array)->name;
         Symbol *symbol = find_symbol(context, name);
         if (!symbol) {
-            fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
+            StructFieldNode *field = NULL;
+            LLVMValueRef field_address =
+                generate_field_address(context, name, &field, NULL);
+            if (field_address && field->field_type->is_pointer) {
+                array_type = field->field_type;
+                pointer_value = LLVMBuildLoad2(
+                    context->builder, get_llvm_var_type(context, array_type),
+                    field_address, "loaded_field_pointer");
+                is_pointer_index = 1;
+            } else if (field_address && field->field_type->is_array) {
+                array_address = field_address;
+                array_type = field->field_type;
+            } else {
+                fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
+                exit(1);
+            }
+        } else if (symbol->declared_type && symbol->declared_type->is_pointer) {
+            array_type = symbol->declared_type;
+            pointer_value = LLVMBuildLoad2(
+                context->builder, get_llvm_var_type(context, array_type),
+                symbol->value, "loaded_pointer");
+            is_pointer_index = 1;
+        } else if (symbol->array_type) {
+            array_address = symbol->value;
+            array_type = symbol->array_type;
+        } else {
+            fprintf(stderr, "error: variable '%s' is not an array or pointer\n", name); // 中文：变量不是数组或指针
             exit(1);
         }
-        if (!symbol->array_type) {
-            fprintf(stderr, "error: variable '%s' is not an array\n", name); // 中文：变量不是数组
-            exit(1);
-        }
-        array_address = symbol->value;
-        array_type = symbol->array_type;
     } else if (index_expression->array &&
                index_expression->array->type == NODE_INDEX_EXPRESSION) {
         array_address = generate_index_address(
             context, (IndexExpressionNode *)index_expression->array, &array_type);
-        if (!array_type->is_array) {
-            fprintf(stderr, "error: index target is not an array\n"); // 中文：索引目标不是数组
+        if (array_type->is_pointer) {
+            pointer_value = LLVMBuildLoad2(
+                context->builder, get_llvm_var_type(context, array_type),
+                array_address, "loaded_nested_pointer");
+            is_pointer_index = 1;
+        } else if (!array_type->is_array) {
+            fprintf(stderr, "error: index target is not an array or pointer\n"); // 中文：索引目标不是数组或指针
             exit(1);
         }
     } else if (index_expression->array &&
@@ -867,22 +1116,26 @@ static LLVMValueRef generate_index_address(
         FunctionCallNode *call = (FunctionCallNode *)index_expression->array;
         FunctionNode *function = find_function(context, call->name);
         array_type = function_return_var_type(function);
-        if (!array_type || !array_type->is_array) {
-            fprintf(stderr, "error: function '%s' does not return an array\n", call->name); // 中文：函数不返回数组
+        if (array_type && array_type->is_pointer) {
+            pointer_value = generate_function_call(context, call);
+            is_pointer_index = 1;
+        } else if (array_type && array_type->is_array) {
+            LLVMTypeRef llvm_array_type = get_llvm_var_type(context, array_type);
+            array_address = create_entry_alloca(context, llvm_array_type, "array_return_tmp");
+            LLVMBuildStore(context->builder, generate_function_call(context, call), array_address);
+        } else {
+            fprintf(stderr, "error: function '%s' does not return an array or pointer\n", call->name); // 中文：函数不返回数组或指针
             exit(1);
         }
-        LLVMTypeRef llvm_array_type = get_llvm_var_type(context, array_type);
-        array_address = create_entry_alloca(context, llvm_array_type, "array_return_tmp");
-        LLVMBuildStore(context->builder, generate_function_call(context, call), array_address);
     } else {
-        fprintf(stderr, "error: invalid array index target\n"); // 中文：数组索引目标无效
+        fprintf(stderr, "error: invalid array or pointer index target\n"); // 中文：数组或指针索引目标无效
         exit(1);
     }
 
-    // Every dimension performs its own signed/unsigned bounds check.
+    // 固定长度数组的每一维都会根据下标有无符号执行上下界检查。
     enum LiteralType index_type = expression_type(context, index_expression->index);
     if (!is_integer_type(index_type) || integer_type_bits(index_type) > 64) {
-        fprintf(stderr, "error: array index must be an integer of at most 64 bits\n"); // 中文：数组下标必须是最多 64 位的整数
+        fprintf(stderr, "error: index must be an integer of at most 64 bits\n"); // 中文：下标必须是最多 64 位的整数
         exit(1);
     }
 
@@ -890,6 +1143,14 @@ static LLVMValueRef generate_index_address(
     enum LiteralType check_type = is_unsigned_type(index_type) ? LITERAL_U64 : LITERAL_I64;
     LLVMValueRef index = cast_integer(context, raw_index, index_type, check_type);
     LLVMTypeRef index_llvm_type = get_llvm_type(context, check_type);
+
+    if (is_pointer_index) {
+        if (element_type_out) *element_type_out = array_type->element_type;
+        LLVMTypeRef element_llvm_type = get_llvm_var_type(context, array_type->element_type);
+        return LLVMBuildGEP2(context->builder, element_llvm_type, pointer_value,
+                             &index, 1, "pointer_element_ptr");
+    }
+
     LLVMValueRef zero = LLVMConstInt(index_llvm_type, 0, 0);
     LLVMValueRef length = LLVMConstInt(index_llvm_type, array_type->array_length, 0);
     LLVMValueRef lower_ok = is_unsigned_type(index_type)
@@ -933,6 +1194,52 @@ static LLVMValueRef generate_index_address(
     if (element_type_out) *element_type_out = array_type->element_type;
     return LLVMBuildGEP2(context->builder, llvm_array_type, array_address,
                          indexes, 2, "array_element_ptr");
+}
+
+// 生成可寻址表达式的地址，并阻止通过引用修改常量。
+static LLVMValueRef generate_reference(
+    CodeGenContext *context, ReferenceNode *reference) {
+    ASTNode *target = reference ? reference->target : NULL;
+    if (target && target->type == NODE_IDENTIFIER) {
+        const char *name = ((IdentifierNode *)target)->name;
+        Symbol *symbol = find_symbol(context, name);
+        if (symbol) {
+            if (symbol->is_const) {
+                fprintf(stderr, "error: cannot take mutable reference to constant '%s'\n",
+                        name); // 中文：不能取得常量的可写引用
+                exit(1);
+            }
+            return symbol->value;
+        }
+
+        StructFieldNode *field = NULL;
+        Symbol *base_symbol = NULL;
+        LLVMValueRef address = generate_field_address(
+            context, name, &field, &base_symbol);
+        if (address) {
+            if (base_symbol->is_const) {
+                fprintf(stderr, "error: cannot take mutable reference to constant '%s'\n",
+                        base_symbol->name); // 中文：不能取得常量字段的可写引用
+                exit(1);
+            }
+            return address;
+        }
+    }
+
+    if (target && target->type == NODE_INDEX_EXPRESSION) {
+        const char *base_name = index_base_name(target);
+        Symbol *symbol = base_name ? find_symbol(context, base_name) : NULL;
+        if (symbol && symbol->is_const) {
+            fprintf(stderr, "error: cannot take mutable reference to constant '%s'\n",
+                    base_name); // 中文：不能取得常量元素的可写引用
+            exit(1);
+        }
+        return generate_index_address(
+            context, (IndexExpressionNode *)target, NULL);
+    }
+
+    fprintf(stderr, "error: reference target is not addressable\n"); // 中文：引用目标不可寻址
+    exit(1);
 }
 
 // 生成整数二元运算或比较表达式。
@@ -1062,12 +1369,108 @@ static LLVMValueRef generate_string_length(
     return index;
 }
 
+// 生成结构体方法调用；语句形式可在返回同类型结构体时自动写回接收者。
+static LLVMValueRef generate_method_call(
+    CodeGenContext *context, FunctionCallNode *call, FunctionNode *function,
+    Symbol *receiver_symbol, int write_back_receiver) {
+    unsigned user_count = 0;
+    for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
+        user_count++;
+    }
+
+    unsigned expected_count = function_param_count(function);
+    if (user_count + 1 != expected_count) {
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "method '%s' expects %u arguments, but got %u",
+                         function_base_name(function->name),
+                         expected_count > 0 ? expected_count - 1 : 0,
+                         user_count); // 中文：方法参数数量不匹配
+        exit(1);
+    }
+
+    const VarTypeNode *receiver_type = receiver_symbol->declared_type;
+    const VarTypeNode *first_param = function_param_var_type(function, 0);
+    if (!first_param || !var_type_equal(first_param, receiver_type)) {
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "method '%s' receiver type mismatch",
+                         function_base_name(function->name)); // 中文：方法接收者类型不匹配
+        exit(1);
+    }
+
+    LLVMValueRef llvm_function = LLVMGetNamedFunction(
+        context->module, llvm_call_name(function->name));
+    if (!llvm_function) {
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "undefined function '%s'", function->name); // 中文：未定义的函数
+        exit(1);
+    }
+
+    LLVMValueRef *arguments = expected_count
+        ? malloc(sizeof(LLVMValueRef) * expected_count)
+        : NULL;
+    if (expected_count && !arguments) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+
+    arguments[0] = LLVMBuildLoad2(
+        context->builder, get_llvm_var_type(context, receiver_type),
+        receiver_symbol->value, "method_receiver");
+
+    ASTNode *argument = call->arguments;
+    for (unsigned i = 1; i < expected_count; i++, argument = argument->next) {
+        const VarTypeNode *param_type = function_param_var_type(function, i);
+        if (param_type &&
+            (param_type->enum_name || param_type->struct_name || param_type->is_pointer) &&
+            !expression_assignable_to(context, argument, param_type)) {
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "method '%s' argument %u type mismatch",
+                             function_base_name(function->name), i); // 中文：方法参数类型不匹配
+            free(arguments);
+            exit(1);
+        }
+        arguments[i] = param_type
+            ? generate_expression_for_type(context, argument, param_type)
+            : generate_expression_as(context, argument, function_param_type(function, i));
+    }
+
+    LLVMTypeRef function_type = LLVMGlobalGetValueType(llvm_function);
+    LLVMValueRef value = LLVMBuildCall2(context->builder, function_type, llvm_function,
+                                        arguments, expected_count, "method_call_result");
+    free(arguments);
+
+    const VarTypeNode *return_type = function_return_var_type(function);
+    if (write_back_receiver && return_type && var_type_equal(return_type, receiver_type)) {
+        if (receiver_symbol->is_const) {
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "cannot call mutating method '%s' on constant '%s'",
+                             function_base_name(function->name),
+                             receiver_symbol->name); // 中文：不能对常量调用可变方法
+            exit(1);
+        }
+        LLVMBuildStore(context->builder, value, receiver_symbol->value);
+    }
+
+    return value;
+}
+
 // 生成函数调用表达式，包括内建字符串方法和参数类型转换。
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call) {
     size_t receiver_length = 0;
     const char *receiver_name = named_string_len_receiver(call, &receiver_length);
+    FunctionNode *function = find_function(context, call->name);
+
+    if (!function) {
+        Symbol *method_receiver = NULL;
+        FunctionNode *method =
+            resolve_method_call(context, call, &method_receiver, NULL, NULL);
+        if (method) {
+            return generate_method_call(context, call, method, method_receiver, 0);
+        }
+    }
+
     // 已解析到真实函数的 module.len() 优先按模块调用处理。
-    if (receiver_name && find_function(context, call->name)) receiver_name = NULL;
+    if (receiver_name && function) receiver_name = NULL;
     if (is_internal_string_len_call(call) || receiver_name) {
         return generate_string_length(context, call, receiver_name, receiver_length);
     }
@@ -1078,10 +1481,26 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         exit(1);
     }
 
-    FunctionNode *function = find_function(context, call->name);
     const char *callee_name = function ? llvm_call_name(call->name) : call->name;
     LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, callee_name);
     if (!llvm_function || !function) {
+        char *base_name = NULL;
+        char *method_name = NULL;
+        if (split_field_access_name(call->name, &base_name, &method_name)) {
+            Symbol *receiver_symbol = find_symbol(context, base_name);
+            if (!receiver_symbol) {
+                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                                 "namespace '%s' was not imported",
+                                 base_name); // 中文：未导入名称空间
+            } else {
+                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                                 "type has no method '%s'",
+                                 method_name); // 中文：类型没有该方法
+            }
+            free(base_name);
+            free(method_name);
+            exit(1);
+        }
         print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                          "undefined function '%s'", call->name); // 中文：未定义的函数
         exit(1);
@@ -1101,7 +1520,8 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     ASTNode *argument = call->arguments;
     for (unsigned i = 0; i < count; i++, argument = argument->next) {
         const VarTypeNode *param_type = function_param_var_type(function, i);
-        if (param_type && (param_type->enum_name || param_type->struct_name) &&
+        if (param_type &&
+            (param_type->enum_name || param_type->struct_name || param_type->is_pointer) &&
             !expression_assignable_to(context, argument, param_type)) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                              "function '%s' argument %u type mismatch",
@@ -1193,6 +1613,8 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             return LLVMBuildLoad2(context->builder, get_llvm_var_type(context, element_type),
                                   address, "array_element");
         }
+        case NODE_REFERENCE:
+            return generate_reference(context, (ReferenceNode *)expression);
         case NODE_ARRAY_LITERAL:
             fprintf(stderr, "error: array literals can only be used to initialize array variables\n"); // 中文：数组字面量只能用于数组变量初始化
             exit(1);
@@ -1374,6 +1796,17 @@ static void generate_array_initializer(
             fprintf(stderr, "error: array element type mismatch\n"); // 中文：数组元素类型不匹配
             exit(1);
         }
+        if (element_type->is_pointer) {
+            if (!expression_assignable_to(context, current_element, element_type)) {
+                fprintf(stderr, "error: array element type mismatch\n"); // 中文：数组元素类型不匹配
+                exit(1);
+            }
+            LLVMValueRef value = generate_expression_for_type(
+                context, current_element, element_type);
+            LLVMBuildStore(context->builder, value, element_address);
+            if (!literal->is_repeat) element = element->next;
+            continue;
+        }
         enum LiteralType actual_type = expression_type(context, current_element);
         if (element_type->enum_name
                 ? !expression_assignable_to(context, current_element, element_type)
@@ -1470,6 +1903,16 @@ static void generate_index_assignment(
     if (element_type->is_array) {
         fprintf(stderr, "error: assigning an entire subarray is not supported yet\n"); // 中文：暂不支持整个子数组赋值
         exit(1);
+    }
+    if (element_type->is_pointer) {
+        if (!expression_assignable_to(context, assignment->expression, element_type)) {
+            fprintf(stderr, "error: pointer element assignment type mismatch\n"); // 中文：指针元素赋值类型不匹配
+            exit(1);
+        }
+        LLVMValueRef value = generate_expression_for_type(
+            context, assignment->expression, element_type);
+        LLVMBuildStore(context->builder, value, address);
+        return;
     }
     enum LiteralType actual_type = expression_type(context, assignment->expression);
     if (element_type->enum_name
@@ -1641,6 +2084,11 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_VAR_DECL: {
                 VarDeclNode *declaration = (VarDeclNode *)statement;
+                if (!declaration->type && declaration->expression &&
+                    declaration->expression->type == NODE_REFERENCE) {
+                    declaration->type = infer_reference_type(
+                        context, (ReferenceNode *)declaration->expression);
+                }
                 validate_var_type(context, declaration->type);
                 if (declaration->type && declaration->type->is_array) {
                     if (!declaration->expression) {
@@ -1672,7 +2120,8 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     fprintf(stderr, "error: array declarations must explicitly specify [element type; length]\n"); // 中文：数组声明必须显式指定 [元素类型; 长度]
                     exit(1);
                 }
-                if (declaration->type && declaration->type->struct_name) {
+                if (declaration->type &&
+                    (declaration->type->struct_name || declaration->type->is_pointer)) {
                     LLVMTypeRef llvm_type = get_llvm_var_type(context, declaration->type);
                     LLVMValueRef storage = create_entry_alloca(
                         context, llvm_type, declaration->name);
@@ -1722,7 +2171,8 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 ReturnNode *return_node = (ReturnNode *)statement;
                 if (context->current_return_var_type &&
                     (context->current_return_var_type->enum_name ||
-                     context->current_return_var_type->struct_name) &&
+                     context->current_return_var_type->struct_name ||
+                     context->current_return_var_type->is_pointer) &&
                     !expression_assignable_to(context, return_node->expression,
                                               context->current_return_var_type)) {
                     fprintf(stderr, "error: return type mismatch\n"); // 中文：返回值类型不匹配
@@ -1741,7 +2191,14 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 if (strcmp(call->name, "assert") == 0) {
                     generate_assert(context, call);
                 } else {
-                    generate_function_call(context, call);
+                    Symbol *method_receiver = NULL;
+                    FunctionNode *method =
+                        resolve_method_call(context, call, &method_receiver, NULL, NULL);
+                    if (method) {
+                        generate_method_call(context, call, method, method_receiver, 1);
+                    } else {
+                        generate_function_call(context, call);
+                    }
                 }
                 break;
             }
@@ -1797,7 +2254,8 @@ static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *f
     }
     LLVMTypeRef return_type = function->return_type &&
                               (function->return_type->is_array ||
-                               function->return_type->struct_name)
+                               function->return_type->struct_name ||
+                               function->return_type->is_pointer)
         ? get_llvm_var_type(context, function->return_type)
         : get_llvm_type(context, function_return_type(function));
     LLVMTypeRef type = LLVMFunctionType(return_type, params, count, 0);
@@ -1943,6 +2401,7 @@ static void validate_var_type(CodeGenContext *context, VarTypeNode *type) {
         exit(1);
     }
     if (type->is_array) validate_var_type(context, type->element_type);
+    if (type->is_pointer) validate_var_type(context, type->element_type);
 }
 
 // 递归校验语句中的枚举类型引用，覆盖嵌套 if/for/while 代码块。

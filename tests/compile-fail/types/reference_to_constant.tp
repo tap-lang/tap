@@ -1,0 +1,13 @@
+fn main(): i32 {
+    const VALUE: i32 = 42;
+    let value_ref: ptr<i32> = &VALUE;
+    value_ref[0] = 7;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot take mutable reference to constant 'VALUE'
+- .exit
+1
+-- */

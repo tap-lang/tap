@@ -60,6 +60,7 @@ enum TokenType {
     TOKEN_GREATER_THAN_OR_EQUAL,    // >=
     TOKEN_AND,                      // &&
     TOKEN_OR,                       // ||
+    TOKEN_REFERENCE,                // &
 
     // 分隔符
     TOKEN_LPAREN,      // (

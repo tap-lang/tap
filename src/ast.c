@@ -35,6 +35,10 @@ static void print_var_type(const VarTypeNode *type) {
         printf("[");
         print_var_type(type->element_type);
         printf("; %" PRIu64 "]", type->array_length);
+    } else if (type->is_pointer) {
+        printf("ptr<");
+        print_var_type(type->element_type);
+        printf(">");
     } else if (type->enum_name) {
         printf("%s", type->enum_name);
     } else if (type->struct_name) {
@@ -112,6 +116,11 @@ static void dump_expr(ASTNode *n, int depth) {
         dump_expr(b->right, depth + 2);
         break;
     }
+    case NODE_REFERENCE:
+        print_indent(depth);
+        printf("Reference: &\n");
+        dump_expr(((ReferenceNode *)n)->target, depth + 2);
+        break;
     case NODE_ARRAY_LITERAL: {
         ArrayLiteralNode *array = (ArrayLiteralNode *)n;
         print_indent(depth);
@@ -623,6 +632,19 @@ BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode
     return binary_op;
 }
 
+// 创建取地址表达式节点，并接管 target 的所有权。
+ReferenceNode *create_reference(ASTNode *target) {
+    ReferenceNode *reference = (ReferenceNode *)malloc(sizeof(ReferenceNode));
+    if (!reference) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    reference->base.type = NODE_REFERENCE;
+    reference->base.next = NULL;
+    reference->target = target;
+    return reference;
+}
+
 // 创建变量类型节点
 VarTypeNode *create_var_type(enum LiteralType type) {
     VarTypeNode *var_type = (VarTypeNode *)malloc(sizeof(VarTypeNode));
@@ -636,6 +658,7 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->enum_name = NULL;
     var_type->struct_name = NULL;
     var_type->is_array = 0;
+    var_type->is_pointer = 0;
     var_type->array_length = 0;
     var_type->element_type = NULL;
     return var_type;
@@ -682,6 +705,28 @@ VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length) {
     }
     type->is_array = 1;
     type->array_length = length;
+    type->element_type = element_type;
+    return type;
+}
+
+// 创建可递归嵌套的指针类型节点。
+VarTypeNode *create_pointer_type(VarTypeNode *element_type) {
+    VarTypeNode *type = create_var_type(element_type->type);
+    if (element_type->enum_name) {
+        type->enum_name = strdup(element_type->enum_name);
+        if (!type->enum_name) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+    }
+    if (element_type->struct_name) {
+        type->struct_name = strdup(element_type->struct_name);
+        if (!type->struct_name) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+    }
+    type->is_pointer = 1;
     type->element_type = element_type;
     return type;
 }
@@ -1078,6 +1123,9 @@ void free_ast(ASTNode *node) {
             free_ast(binary_op->right);
             break;
         }
+        case NODE_REFERENCE:
+            free_ast(((ReferenceNode *)node)->target);
+            break;
         case NODE_VAR_TYPE: {
             // 数组类型递归拥有它的元素类型。
             VarTypeNode *var_type = (VarTypeNode *)node;

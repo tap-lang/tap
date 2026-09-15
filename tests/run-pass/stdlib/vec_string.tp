@@ -1,0 +1,37 @@
+import std.vec_string as vec;
+
+fn accept_values(values: ptr<StringVec>): i32 {
+    return 0;
+}
+
+fn main(): i32 {
+    let values: StringVec = vec.new();
+    accept_values(&values);
+    values.push("zero");
+    values.push("one");
+    values.push("two");
+    values.push("three");
+    values.push("four");
+    values.push("five");
+    values.push("six");
+    values.push("seven");
+    values.push("eight");
+
+    print("%d\n", values.len());
+    print("%s %s\n", values.get(0), values.get(8));
+
+    values.set(1, "ONE");
+    print("%s\n", values.get(1));
+
+    values.free();
+    return 0;
+}
+
+/** -- test
+- .stdout
+9
+zero eight
+ONE
+- .exit
+0
+-- */

@@ -424,8 +424,30 @@ static void free_bindings(ImportBinding *bindings) {
     }
 }
 
-// 合并模块中导出的顶层常量和函数；源 ProgramNode 不再拥有这些链表。
+// 合并模块中导出的顶层类型、常量和函数；源 ProgramNode 不再拥有这些链表。
 static void append_functions(ProgramNode *destination, ProgramNode *source) {
+    if (source->enums) {
+        if (!destination->enums) {
+            destination->enums = source->enums;
+        } else {
+            ASTNode *tail = destination->enums;
+            while (tail->next) tail = tail->next;
+            tail->next = source->enums;
+        }
+        source->enums = NULL;
+    }
+
+    if (source->structs) {
+        if (!destination->structs) {
+            destination->structs = source->structs;
+        } else {
+            ASTNode *tail = destination->structs;
+            while (tail->next) tail = tail->next;
+            tail->next = source->structs;
+        }
+        source->structs = NULL;
+    }
+
     if (source->constants) {
         if (!destination->constants) {
             destination->constants = source->constants;
@@ -632,15 +654,9 @@ static int rewrite_call(
 
         ImportBinding *binding = find_binding(bindings, alias);
         if (!binding) {
-            // 没有同名导入时，将 name.len() 留给后端按字符串方法解析。
-            if (!strchr(dot + 1, '.') && strcmp(dot + 1, "len") == 0) {
-                free(alias);
-                return 0;
-            }
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "namespace '%s' was not imported", alias); // 中文：未导入名称空间
+            // 没有同名导入时，保留给后端按 receiver.method() 方法调用解析。
             free(alias);
-            return 1;
+            return 0;
         }
         export = find_export(binding->module, dot + 1);
         if (!export) {

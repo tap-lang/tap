@@ -153,9 +153,10 @@ void *__4yue_realloc(void *pointer, size_t size) {
     return realloc(pointer, size == 0 ? 1 : size);
 }
 
-// 释放由 4yue Runtime 分配的堆内存；NULL 指针安全无操作。
-void __4yue_free(void *pointer) {
+// 释放由 4yue Runtime 分配的堆内存；NULL 指针安全无操作，返回 0 方便 4yue 调用。
+int32_t __4yue_free(void *pointer) {
     free(pointer);
+    return 0;
 }
 
 int32_t __4yue_read_key(void) {

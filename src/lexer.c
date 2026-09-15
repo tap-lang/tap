@@ -498,7 +498,7 @@ Token *get_next_token(Lexer *lexer) {
                 advance(lexer);
                 return create_token(lexer, TOKEN_AND, lexer->current - 2, lexer->current);
             }
-            break;
+            return create_token(lexer, TOKEN_REFERENCE, lexer->current - 1, lexer->current);
         case '|':
             if (peek(lexer) == '|') {
                 advance(lexer);

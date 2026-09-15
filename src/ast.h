@@ -18,6 +18,7 @@ enum NodeType {
     NODE_RETURN,                    // 返回语句节点
     NODE_PRINT,                     // 打印语句节点
     NODE_BINARY_OP,                 // 二元操作符节点
+    NODE_REFERENCE,                 // 取地址表达式节点
     NODE_VAR_DECL,                  // 变量声明节点
     NODE_ASSIGNMENT,                // 赋值语句节点
     NODE_ARRAY_LITERAL,             // 数组字面量节点
@@ -106,8 +107,9 @@ typedef struct VarTypeNode {
     char *enum_name;        // 非空时表示枚举类型，后端按 i32 降低
     char *struct_name;      // 非空时表示结构体类型
     int is_array;
+    int is_pointer;
     uint64_t array_length;
-    struct VarTypeNode *element_type; // 数组拥有的递归元素类型
+    struct VarTypeNode *element_type; // 数组/指针拥有的递归元素类型
 } VarTypeNode;
 
 // 枚举声明节点
@@ -198,6 +200,12 @@ typedef struct {
     ASTNode *right;        // 右操作数
 } BinaryOpNode;
 
+// 取地址表达式节点
+typedef struct {
+    ASTNode base;
+    ASTNode *target;       // 被取地址的可寻址表达式
+} ReferenceNode;
+
 
 // 变量声明节点
 typedef struct {
@@ -262,6 +270,8 @@ VarTypeNode *create_enum_type(const char *name);
 VarTypeNode *create_struct_type(const char *name);
 // 数组类型接管 element_type 的所有权。
 VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length);
+// 指针类型接管 element_type 的所有权。
+VarTypeNode *create_pointer_type(VarTypeNode *element_type);
 LiteralNode *create_int_literal(uint64_t value);
 LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);
@@ -271,6 +281,7 @@ ReturnNode *create_return(ASTNode *expression);
 PrintNode *create_print();
 void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
+ReferenceNode *create_reference(ASTNode *target);
 VarDeclNode *create_var_decl(
     char *name, VarTypeNode *type, ASTNode *expression, int is_const);
 AssignmentNode *create_assignment(const char *name, ASTNode *expression);

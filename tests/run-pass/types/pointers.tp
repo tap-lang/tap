@@ -1,0 +1,22 @@
+extern fn __4yue_malloc(size: uint): ptr<string>;
+extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
+
+fn main(): i32 {
+    let values: ptr<string> = __4yue_malloc(64);
+    values[0] = "alpha";
+    values[1] = "beta";
+    print("%s %s\n", values[0], values[1]);
+
+    values = __4yue_realloc(values, 128);
+    values[2] = "gamma";
+    print("%s\n", values[2]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+alpha beta
+gamma
+- .exit
+0
+-- */

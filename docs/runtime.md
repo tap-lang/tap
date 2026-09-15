@@ -41,9 +41,9 @@ Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或
 
 | C ABI | 行为 |
 |---|---|
-| `__4yue_malloc(size)` | 分配堆内存；`size == 0` 时按 1 字节处理 |
-| `__4yue_realloc(pointer, size)` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
-| `__4yue_free(pointer)` | 释放堆内存；`NULL` 指针安全无操作 |
+| `__4yue_malloc(size): ptr<T>` | 分配堆内存；`size == 0` 时按 1 字节处理 |
+| `__4yue_realloc(pointer, size): ptr<T>` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
+| `__4yue_free(pointer): i32` | 释放堆内存；`NULL` 指针安全无操作；返回 `0` |
 
-这些函数目前只作为 Runtime ABI 暴露；4yue 语言侧还没有稳定的指针类型，
-因此暂不在标准库中提供直接包装。
+这些函数目前只作为 Runtime ABI 暴露，主要供标准库容器使用。普通程序应优先调用
+`std.vec_string` 这类封装，避免直接管理裸指针和容量。

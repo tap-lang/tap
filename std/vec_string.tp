@@ -1,0 +1,60 @@
+extern fn __4yue_malloc(size: uint): ptr<string>;
+extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
+extern fn __4yue_free(pointer: ptr<string>): i32;
+
+struct StringVec {
+    data: ptr<string>,
+    len: i32,
+    cap: i32,
+}
+
+fn new(): StringVec {
+    return StringVec {
+        data: __4yue_malloc(64),
+        len: 0,
+        cap: 8,
+    };
+}
+
+fn len(vec: StringVec): i32 {
+    return vec.len;
+}
+
+fn push(vec: StringVec, value: string): StringVec {
+    if (vec.len == vec.cap) {
+        vec.cap = vec.cap * 2;
+        vec.data = __4yue_realloc(vec.data, vec.cap * 8);
+    }
+    vec.data[vec.len] = value;
+    vec.len++;
+    return vec;
+}
+
+fn get(vec: StringVec, index: i32): string {
+    if (index < 0) {
+        print("StringVec index out of bounds: index=%d, length=%d\n", index, vec.len);
+        return "";
+    }
+    if (index >= vec.len) {
+        print("StringVec index out of bounds: index=%d, length=%d\n", index, vec.len);
+        return "";
+    }
+    return vec.data[index];
+}
+
+fn set(vec: StringVec, index: i32, value: string): StringVec {
+    if (index < 0) {
+        print("StringVec index out of bounds: index=%d, length=%d\n", index, vec.len);
+        return vec;
+    }
+    if (index >= vec.len) {
+        print("StringVec index out of bounds: index=%d, length=%d\n", index, vec.len);
+        return vec;
+    }
+    vec.data[index] = value;
+    return vec;
+}
+
+fn free(vec: StringVec): i32 {
+    return __4yue_free(vec.data);
+}

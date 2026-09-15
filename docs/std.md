@@ -57,6 +57,13 @@ fn main(): i32 {
 | `std.math` | `PI: f64` | 圆周率常量，值为 `3.141592653589793` |
 | `std.math` | `square(value: i32): i32` | 返回平方值 |
 | `std.math` | `abs(value: i32): i32` | 返回绝对值 |
+| `std.vec_string` | `StringVec` | 可变长度字符串数组结构体 |
+| `std.vec_string` | `new(): StringVec` | 创建空字符串动态数组，初始容量为 8 |
+| `std.vec_string` | `len(vec: StringVec): i32` | 返回当前元素数量 |
+| `std.vec_string` | `push(vec: StringVec, value: string): StringVec` | 追加字符串，容量不足时自动扩容 |
+| `std.vec_string` | `get(vec: StringVec, index: i32): string` | 读取指定元素；越界时输出错误并返回空字符串 |
+| `std.vec_string` | `set(vec: StringVec, index: i32, value: string): StringVec` | 替换指定元素；越界时输出错误并保持原值 |
+| `std.vec_string` | `free(vec: StringVec): i32` | 释放动态数组内部缓冲区，成功返回 `0` |
 
 `std.env` 示例：
 
@@ -79,6 +86,28 @@ fn main(): i32 {
 4yue run app.tp -- alpha beta
 ```
 
+`std.vec_string` 示例：
+
+```text
+import std.vec_string as vec;
+
+fn main(): i32 {
+    let values: StringVec = vec.new();
+    values.push("hello");
+    values.push("4yue");
+
+    print("%d\n", values.len());
+    print("%s %s\n", values.get(0), values.get(1));
+
+    values.free();
+    return 0;
+}
+```
+
+`StringVec` 是值类型。直接写 `values.push("hello");` 或 `values.set(0, "HELLO");`
+时，编译器会把返回的 `StringVec` 自动写回 `values`。`free` 只释放内部缓冲区，
+不会清空原结构体字段；释放后不要继续访问同一个 `StringVec`。
+
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
 
 ## Runtime ABI
@@ -96,8 +125,10 @@ extern fn __4yue_arg(index: i32): string;
 extern fn __4yue_env_var(name: string): string;
 extern fn __4yue_envc(): i32;
 extern fn __4yue_env(index: i32): string;
-// 内存 ABI 当前只供编译器和未来容器库使用，语言侧暂未提供稳定指针类型包装。
-// void* 在 4yue 中尚无对应公共类型，因此普通程序不要直接声明这些函数。
+extern fn __4yue_malloc(size: uint): ptr<string>;
+extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
+extern fn __4yue_free(pointer: ptr<string>): i32;
+// 内存 ABI 主要供容器标准库使用；普通程序优先使用 std.vec_string 等封装。
 // __4yue_malloc / __4yue_realloc / __4yue_free 见 runtime.md。
 ```
 
@@ -141,7 +172,8 @@ Runtime 的 C ABI 声明位于
 - 标准库函数目前只覆盖 `i32` 相关能力。
 - `string` 已是可用的语言类型并提供内建 `.len()` 方法，但还没有稳定的字符串标准库
   API；语言层能力见[字符串文档](data-type-string.md)。
-- 数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
-  `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。
-- 模块只导出顶层函数，没有可见性控制。
+- 内建数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
+  `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。动态字符串数组请使用
+  `std.vec_string`。
+- 模块会导出顶层常量、结构体、枚举和函数，但没有可见性控制；导入的类型名当前进入全局类型命名空间。
 - Prelude 是自动注入的全局函数集合，不支持按需选择导入。

@@ -57,6 +57,7 @@ const VALUES: [i32; 4] = [0; 4];
 | 类型 | 描述 |
 | --- | --- |
 | `[T; N]` | 固定长度数组 |
+| `ptr<T>` | 指向 `T` 的裸指针 |
 | `struct` | 结构体 |
 | `enum` | 枚举 |
 | `tuple` | 元组 |
@@ -80,7 +81,8 @@ fn move(point: Point): Point {
 - 结构体字面量使用 `TypeName { field: value, ... }`。
 - 初始化时必须提供所有字段，字段名不能重复，也不能写不存在的字段。
 - 可对非 `const` 结构体变量的字段赋值，例如 `point.x = 10;`。
-- 当前不支持结构体方法、默认字段值和按模块导出结构体类型。
+- 当前不支持结构体方法和默认字段值。模块中的结构体可以被导入，但类型名会进入全局类型命名空间，
+  还不支持 `module.TypeName` 这种限定类型名。
 
 ### 枚举类型
 
@@ -127,3 +129,60 @@ print("%d\n", matrix[1][0]);
 - 多维数组只有索引到最终标量元素后才能用于表达式或赋值。
 - 当前不支持整个数组或子数组赋值、数组参数和动态长度。函数可以返回固定长度数组，
   返回值可用于数组变量初始化、继续返回或索引表达式。
+
+### 指针类型
+
+`ptr<T>` 表示指向 `T` 的裸指针，主要用于 Runtime ABI、引用传参和标准库容器。指针可以作为
+变量、函数参数和函数返回值使用，也可以通过下标读写元素。`&value` 取得可写变量的地址并
+产生 `ptr<T>`：
+
+```text
+extern fn __4yue_malloc(size: uint): ptr<string>;
+extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
+
+fn increment(value: ptr<i32>): i32 {
+    value[0] = value[0] + 1;
+    return 0;
+}
+
+fn main(): i32 {
+    let count: i32 = 0;
+    increment(&count);
+
+    let values: ptr<string> = __4yue_malloc(64);
+    values[0] = "hello";
+    values[1] = "4yue";
+    print("%s %s\n", values[0], values[1]);
+
+    values = __4yue_realloc(values, 128);
+    return 0;
+}
+```
+
+目前可以对变量、结构体字段和数组/指针元素取地址，例如 `&value`、`&point.x` 和
+`&values[index]`；`let value_ref = &value;` 可以自动推断出对应的指针类型。因为尚未实现
+只读指针类型，`const` 常量不能取地址。指针下标不会自动检查边界，调用方必须保证容量足够。
+普通程序优先使用标准库封装，例如 `std.vec_string`，只有编写底层库、引用传参或对接 C ABI
+时才建议直接使用 `ptr<T>`。
+
+### 动态字符串数组
+
+当前标准库提供了第一版专用动态数组 `std.vec_string.StringVec`，用于保存可变数量的
+`string`：
+
+```text
+import std.vec_string as vec;
+
+fn main(): i32 {
+    let values: StringVec = vec.new();
+    values.push("hello");
+    values.push("4yue");
+    print("%s\n", values.get(1));
+    values.free();
+    return 0;
+}
+```
+
+`StringVec` 通过堆内存保存元素，`push` 会在容量不足时自动扩容。`values.push(...)`
+和 `values.set(...)` 作为语句使用时会自动把返回的结构体写回 `values`。当前还没有泛型
+`Vec<T>`。

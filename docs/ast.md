@@ -47,6 +47,7 @@ typedef struct ASTNode {
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
 | `NODE_PRINT` | `PrintNode` | `arguments` 指向打印参数链表 |
 | `NODE_BINARY_OP` | `BinaryOpNode` | 操作符、左操作数和右操作数 |
+| `NODE_REFERENCE` | `ReferenceNode` | `target` 指向被取地址的变量、结构体字段或索引表达式 |
 | `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型、初始化表达式，以及 `is_const` 声明标记 |
 | `NODE_ASSIGNMENT` | `AssignmentNode` | 被赋值变量名和新的值表达式 |
 | `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
@@ -57,7 +58,7 @@ typedef struct ASTNode {
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
 | `NODE_CONTINUE_STATEMENT` | `ASTNode` | 跳到当前循环的更新块 |
-| `NODE_VAR_TYPE` | `VarTypeNode` | 标量类型，或通过 `element_type` 递归表示固定长度数组 |
+| `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举类型，或通过 `element_type` 递归表示固定长度数组和指针 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或
 Parser 产物。
@@ -93,7 +94,7 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 
 - `VarDeclNode`：变量声明和初始化。
 - `AssignmentNode`：变量赋值，以及 `++`、`--` 展开后的更新。
-- `IndexAssignmentNode`：固定长度数组的标量元素赋值，支持多维索引链。
+- `IndexAssignmentNode`：固定长度数组或指针的元素赋值，固定长度数组支持多维索引链。
 - `ReturnNode`：返回表达式。
 - `PrintNode`：一个或多个打印参数。
 - `IfStatementNode`：`if`、`elseif` 和 `else`。
@@ -119,7 +120,8 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 - 函数调用。
 - 括号表达式。
 - 二元算术与比较表达式。
-- 可嵌套的固定长度数组字面量和多维数组索引表达式。
+- 可嵌套的固定长度数组字面量、多维数组索引表达式和指针索引表达式。
+- 取地址表达式；`&value` 使用 `ReferenceNode` 保存可寻址目标。
 - 一元负号；Parser 将 `-value` 转换成 `0 - value` 的 `BinaryOpNode`。
 
 `BinaryOpType` 定义了以下操作符：
@@ -150,6 +152,8 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 
 `VarTypeNode` 当前也复用 `LiteralType` 表示声明类型。需要区分：`LiteralNode.literal_type`
 描述表达式中的值，`VarTypeNode.type` 描述变量、参数或函数返回值的类型注解。
+`VarTypeNode.is_array` 和 `VarTypeNode.is_pointer` 通过 `element_type` 递归描述 `[T; N]`
+和 `ptr<T>`，数组额外记录 `array_length`。
 
 十进制整数字面量默认创建为 `LITERAL_I32`，同时在 `integer_text` 中保留原文，使 Codegen
 可以直接构造超过 64 位的 `i128/u128` 常量。浮点和布尔构造函数已经存在，但尚未接入对应的
