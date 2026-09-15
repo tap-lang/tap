@@ -137,8 +137,7 @@ print("%d\n", matrix[1][0]);
 产生 `ptr<T>`：
 
 ```text
-extern fn __4yue_malloc(size: uint): ptr<string>;
-extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
+import std.memory as memory;
 
 fn increment(value: ptr<i32>): i32 {
     value[0] = value[0] + 1;
@@ -149,21 +148,21 @@ fn main(): i32 {
     let count: i32 = 0;
     increment(&count);
 
-    let values: ptr<string> = __4yue_malloc(64);
+    let values: ptr<string> = memory.malloc(64);
     values[0] = "hello";
     values[1] = "4yue";
     print("%s %s\n", values[0], values[1]);
 
-    values = __4yue_realloc(values, 128);
-    return 0;
+    values = memory.realloc(values, 128);
+    return memory.free(values);
 }
 ```
 
 目前可以对变量、结构体字段和数组/指针元素取地址，例如 `&value`、`&point.x` 和
 `&values[index]`；`let value_ref = &value;` 可以自动推断出对应的指针类型。因为尚未实现
 只读指针类型，`const` 常量不能取地址。指针下标不会自动检查边界，调用方必须保证容量足够。
-普通程序优先使用标准库封装，例如 `std.vec_string`，只有编写底层库、引用传参或对接 C ABI
-时才建议直接使用 `ptr<T>`。
+普通程序优先使用标准库封装，例如 `std.memory` 和 `std.vec_string`，只有编写底层库、引用传参
+或对接 C ABI 时才建议直接使用 `ptr<T>`。
 
 ### 动态字符串数组
 

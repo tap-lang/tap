@@ -1,6 +1,4 @@
-extern fn __4yue_malloc(size: uint): ptr<string>;
-extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
-extern fn __4yue_free(pointer: ptr<string>): i32;
+import std.memory as memory;
 
 struct StringVec {
     data: ptr<string>,
@@ -10,7 +8,7 @@ struct StringVec {
 
 fn new(): StringVec {
     return StringVec {
-        data: __4yue_malloc(64),
+        data: memory.malloc(64),
         len: 0,
         cap: 8,
     };
@@ -23,7 +21,7 @@ fn len(vec: StringVec): i32 {
 fn push(vec: StringVec, value: string): StringVec {
     if (vec.len == vec.cap) {
         vec.cap = vec.cap * 2;
-        vec.data = __4yue_realloc(vec.data, vec.cap * 8);
+        vec.data = memory.realloc(vec.data, vec.cap * 8);
     }
     vec.data[vec.len] = value;
     vec.len++;
@@ -56,5 +54,5 @@ fn set(vec: StringVec, index: i32, value: string): StringVec {
 }
 
 fn free(vec: StringVec): i32 {
-    return __4yue_free(vec.data);
+    return memory.free(vec.data);
 }

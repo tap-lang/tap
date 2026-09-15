@@ -45,5 +45,6 @@ Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或
 | `__4yue_realloc(pointer, size): ptr<T>` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
 | `__4yue_free(pointer): i32` | 释放堆内存；`NULL` 指针安全无操作；返回 `0` |
 
-这些函数目前只作为 Runtime ABI 暴露，主要供标准库容器使用。普通程序应优先调用
-`std.vec_string` 这类封装，避免直接管理裸指针和容量。
+这些函数由 `std.memory` 封装，底层 ABI 声明不需要出现在普通程序或其他容器模块中。
+需要直接管理堆内存时使用 `memory.malloc/realloc/free`；业务代码仍应优先使用
+`std.vec_string` 这类容器，避免直接管理裸指针和容量。

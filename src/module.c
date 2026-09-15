@@ -693,6 +693,29 @@ static int rewrite_expression(
                 ? rewrite_expression(program, binary->right, current_module, bindings)
                 : result;
         }
+        case NODE_REFERENCE:
+            return rewrite_expression(
+                program, ((ReferenceNode *)expression)->target,
+                current_module, bindings);
+        case NODE_ARRAY_LITERAL: {
+            ArrayLiteralNode *array = (ArrayLiteralNode *)expression;
+            for (ASTNode *element = array->elements; element; element = element->next) {
+                int result = rewrite_expression(
+                    program, element, current_module, bindings);
+                if (result != 0) return result;
+            }
+            return 0;
+        }
+        case NODE_STRUCT_LITERAL: {
+            StructLiteralNode *literal = (StructLiteralNode *)expression;
+            for (ASTNode *node = literal->fields; node; node = node->next) {
+                StructInitFieldNode *field = (StructInitFieldNode *)node;
+                int result = rewrite_expression(
+                    program, field->expression, current_module, bindings);
+                if (result != 0) return result;
+            }
+            return 0;
+        }
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
