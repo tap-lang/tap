@@ -8,12 +8,13 @@
 AST 位于 Parser 和 LLVM Codegen 之间：
 
 ```text
-源文件 -> Lexer -> Token -> Parser -> AST -> LLVM Codegen -> LLVM IR
+源文件 -> Lexer -> Token -> Parser -> AST -> 泛型单态化 -> LLVM Codegen -> LLVM IR
 ```
 
 - Parser 创建并连接 AST 节点。
 - `-parse` 通过 `print_ast()` 将 AST 打印到标准输出。
-- Codegen 遍历 AST，生成函数、表达式和控制流对应的 LLVM IR。
+- 泛型单态化处理泛型调用，生成具体函数并移除泛型模板。
+- Codegen 遍历不含泛型类型参数的 AST，生成函数、表达式和控制流对应的 LLVM IR。
 - 编译流程结束后，调用 `free_ast()` 释放 AST。
 
 ## 基础表示
@@ -41,7 +42,7 @@ typedef struct ASTNode {
 |---|---|---|
 | `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
 | `NODE_IMPORT` | `ImportNode` | 模块名、名称空间别名及导入声明的源文件位置 |
-| `NODE_FUNCTION` | `FunctionNode` | 函数名、参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明 |
+| `NODE_FUNCTION` | `FunctionNode` | 函数名、泛型类型参数、普通参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明 |
 | `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
@@ -53,7 +54,7 @@ typedef struct ASTNode {
 | `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
 | `NODE_INDEX_EXPRESSION` | `IndexExpressionNode` | 数组表达式和下标表达式 |
 | `NODE_INDEX_ASSIGNMENT` | `IndexAssignmentNode` | 索引目标和新的元素值 |
-| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名和实参链表 |
+| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名、显式泛型类型实参和普通实参链表 |
 | `NODE_IF_STATEMENT` | `IfStatementNode` | 条件、真分支和假分支 |
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
@@ -80,6 +81,7 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 每个 `FunctionNode` 包含：
 
 - `name`：函数名。
+- `type_params`：由 `IdentifierNode` 组成的泛型类型参数链表。
 - `params`：由 `IdentifierNode` 组成的形参链表。
 - `param_types`：由 `VarTypeNode` 组成的参数类型链表。
 - `body`：函数体语句链表。
@@ -168,15 +170,18 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 | `ProgramNode.imports` | `ImportNode` |
 | `ProgramNode.functions` | `FunctionNode` |
 | `FunctionNode.params` | `IdentifierNode` |
+| `FunctionNode.type_params` | `IdentifierNode` |
 | `FunctionNode.param_types` | `VarTypeNode` |
 | `FunctionNode.body` | 语句节点 |
 | `PrintNode.arguments` | 表达式节点 |
 | `FunctionCallNode.arguments` | 表达式节点 |
+| `FunctionCallNode.type_arguments` | `VarTypeNode` |
 | `IfStatementNode.consequence` | 语句节点 |
 | `IfStatementNode.alternative` | 语句链表或单个 `IfStatementNode` |
 
-添加导入、函数、参数、语句或实参时，应使用 `add_import()`、`add_function()`、`add_param()`、
-`add_param_type()`、`add_statement()`、`add_argument()` 和 `add_print_argument()`。
+添加导入、函数、类型参数、参数、语句或实参时，应使用 `add_import()`、`add_function()`、
+`add_type_param()`、`add_param()`、`add_param_type()`、`add_statement()`、`add_type_argument()`、
+`add_argument()` 和 `add_print_argument()`。
 这些函数目前通过遍历链表追加元素，单次追加的复杂度为 O(n)。
 
 ## 创建与所有权
@@ -228,9 +233,19 @@ Program
 
 `print_ast()` 只用于调试和测试，不参与代码生成。
 
+## 泛型单态化
+
+Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`，把
+`identity<i32>(...)` 中的 `i32` 保存到 `FunctionCallNode.type_arguments`。模块与 Prelude
+加载完成后，`specialize_generics()` 根据显式类型实参、普通实参类型和调用目标类型推断绑定，
+克隆并替换函数 AST。例如 `identity<i32>(1)` 会生成内部函数 `identity$i32` 并改写调用名称。
+
+相同类型组合只生成一个具体函数，递归泛型调用也会指向同一个具体实例。全部可达调用处理完成后，
+泛型模板会从 `ProgramNode.functions` 删除，因此 Codegen 只接收具体类型。
+
 ## Codegen 如何消费 AST
 
-Codegen 对 `ProgramNode.functions` 执行两轮遍历：
+单态化完成后，Codegen 对 `ProgramNode.functions` 执行两轮遍历：
 
 1. 根据函数名、参数类型和返回类型创建全部 LLVM 函数声明。
 2. 遍历每个函数体，为语句和表达式生成 LLVM IR。

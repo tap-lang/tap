@@ -5,6 +5,7 @@
 #include "parser.h"
 #include "module.h"
 #include "prelude.h"
+#include "generics.h"
 #include "codegen.h"
 #include "run.h"
 #include "helpers.h"
@@ -147,6 +148,7 @@ int main(int argc, char *argv[]) {
 
     if (load_modules(program, input_file, argv[0]) != 0 
         || load_prelude(program, argv[0]) != 0
+        || specialize_generics(program) != 0
     ) {
         free_ast((ASTNode *)program);
         free_parser(parser);

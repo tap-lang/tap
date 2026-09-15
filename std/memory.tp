@@ -1,18 +1,18 @@
-extern fn __4yue_malloc(size: uint): ptr<string>;
-extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
-extern fn __4yue_free(pointer: ptr<string>): i32;
+extern fn __4yue_malloc(size: uint): ptr<i8>;
+extern fn __4yue_realloc(pointer: ptr<i8>, size: uint): ptr<i8>;
+extern fn __4yue_free(pointer: ptr<i8>): i32;
 
 // 分配指定字节数的堆内存
-fn malloc(size: uint): ptr<string> {
+fn malloc<T>(size: uint): ptr<T> {
     return __4yue_malloc(size);
 }
 
 // 调整已有堆内存的字节数
-fn realloc(pointer: ptr<string>, size: uint): ptr<string> {
+fn realloc<T>(pointer: ptr<T>, size: uint): ptr<T> {
     return __4yue_realloc(pointer, size);
 }
 
 // 释放堆内存
-fn free(pointer: ptr<string>): i32 {
+fn free<T>(pointer: ptr<T>): i32 {
     return __4yue_free(pointer);
 }

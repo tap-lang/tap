@@ -1,0 +1,14 @@
+fn choose<T, T>(left: T, right: T): T {
+    return left;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: duplicate generic type parameter
+- .exit
+1
+-- */

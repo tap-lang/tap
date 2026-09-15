@@ -1,19 +1,26 @@
 import std.memory as memory;
 
 fn main(): i32 {
-    let values: ptr<string> = memory.malloc(16);
+    let values: ptr<string> = memory.malloc<string>(16);
     values[0] = "first";
 
     values = memory.realloc(values, 32);
     values[1] = "second";
     print("%s %s\n", values[0], values[1]);
 
-    return memory.free(values);
+    let numbers: ptr<i32> = memory.malloc(8);
+    numbers[0] = 20;
+    numbers[1] = 22;
+    print("%d\n", numbers[0] + numbers[1]);
+
+    memory.free(values);
+    return memory.free(numbers);
 }
 
 /** -- test
 - .stdout
 first second
+42
 - .exit
 0
 -- */

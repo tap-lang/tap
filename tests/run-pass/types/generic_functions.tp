@@ -1,0 +1,54 @@
+enum Direction {
+    Up,
+    Down
+}
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+fn identity<T>(value: T): T {
+    return value;
+}
+
+fn replace<T>(target: ptr<T>, value: T): i32 {
+    target[0] = value;
+    return 0;
+}
+
+fn first<T, U>(left: T, right: U): T {
+    return left;
+}
+
+fn countdown<T>(value: T): T {
+    if (value > 0) {
+        return countdown(value - 1);
+    }
+    return value;
+}
+
+fn main(): i32 {
+    let number: i32 = identity(41);
+    let text: string = identity<string>("generic");
+    let wide: i64 = identity<i64>(7);
+    let selected: string = first("multi", 10);
+
+    replace(&number, 42);
+    replace<string>(&text, "works");
+
+    let point: Point = identity(Point { x: 4, y: 2 });
+    let direction: Direction = identity(Direction.Down);
+
+    print("%d %s %lld %s %d %d %d\n",
+          number, text, wide, selected, countdown(3),
+          point.x + point.y, direction);
+    return 0;
+}
+
+/** -- test
+- .stdout
+42 works 7 multi 0 6 1
+- .exit
+0
+-- */

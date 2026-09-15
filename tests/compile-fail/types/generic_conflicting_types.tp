@@ -1,0 +1,15 @@
+fn choose<T>(left: T, right: T): T {
+    return left;
+}
+
+fn main(): i32 {
+    let value: i32 = choose(1, "wrong");
+    return value;
+}
+
+/** -- test
+- .stderr
+cannot infer compatible generic arguments for 'choose'
+- .exit
+1
+-- */

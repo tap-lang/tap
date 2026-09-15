@@ -563,6 +563,21 @@ static FunctionNode *resolve_method_call(
     return function;
 }
 
+// 判断调用是否返回使用 LLVM opaque pointer 的底层内存地址。
+static int is_runtime_memory_pointer_result(const FunctionCallNode *call) {
+    return call &&
+        (strcmp(call->name, "__4yue_malloc") == 0 ||
+         strcmp(call->name, "__4yue_realloc") == 0);
+}
+
+// 判断底层内存 ABI 的参数是否允许接收任意元素类型的裸指针。
+static int is_runtime_memory_pointer_argument(
+    const FunctionCallNode *call, unsigned index) {
+    if (!call || index != 0) return 0;
+    return strcmp(call->name, "__4yue_realloc") == 0 ||
+           strcmp(call->name, "__4yue_free") == 0;
+}
+
 // 检查取地址表达式的目标类型是否与指针元素类型一致。
 static int reference_assignable_to(
     CodeGenContext *context, const ReferenceNode *reference,
@@ -603,6 +618,10 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                                     const VarTypeNode *target_type) {
     if (!target_type || target_type->is_array) return 0;
     if (target_type->is_pointer) {
+        if (expression && expression->type == NODE_FUNCTION_CALL &&
+            is_runtime_memory_pointer_result((FunctionCallNode *)expression)) {
+            return 1;
+        }
         if (expression && expression->type == NODE_REFERENCE) {
             return reference_assignable_to(
                 context, (ReferenceNode *)expression, target_type);
@@ -1520,7 +1539,10 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     ASTNode *argument = call->arguments;
     for (unsigned i = 0; i < count; i++, argument = argument->next) {
         const VarTypeNode *param_type = function_param_var_type(function, i);
-        if (param_type &&
+        int erased_pointer_argument =
+            is_runtime_memory_pointer_argument(call, i) &&
+            param_type && param_type->is_pointer;
+        if (!erased_pointer_argument && param_type &&
             (param_type->enum_name || param_type->struct_name || param_type->is_pointer) &&
             !expression_assignable_to(context, argument, param_type)) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
@@ -1529,7 +1551,9 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
             free(arguments);
             exit(1);
         }
-        arguments[i] = param_type
+        arguments[i] = erased_pointer_argument
+            ? generate_expression(context, argument)
+            : param_type
             ? generate_expression_for_type(context, argument, param_type)
             : generate_expression_as(context, argument, function_param_type(function, i));
     }

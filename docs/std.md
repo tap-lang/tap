@@ -57,9 +57,9 @@ fn main(): i32 {
 | `std.math` | `PI: f64` | 圆周率常量，值为 `3.141592653589793` |
 | `std.math` | `square(value: i32): i32` | 返回平方值 |
 | `std.math` | `abs(value: i32): i32` | 返回绝对值 |
-| `std.memory` | `malloc(size: uint): ptr<string>` | 分配指定字节数的堆内存 |
-| `std.memory` | `realloc(pointer: ptr<string>, size: uint): ptr<string>` | 调整已有堆内存大小 |
-| `std.memory` | `free(pointer: ptr<string>): i32` | 释放堆内存，成功返回 `0` |
+| `std.memory` | `malloc<T>(size: uint): ptr<T>` | 分配指定字节数的堆内存 |
+| `std.memory` | `realloc<T>(pointer: ptr<T>, size: uint): ptr<T>` | 调整已有堆内存大小 |
+| `std.memory` | `free<T>(pointer: ptr<T>): i32` | 释放堆内存，成功返回 `0` |
 | `std.vec_string` | `StringVec` | 可变长度字符串数组结构体 |
 | `std.vec_string` | `new(): StringVec` | 创建空字符串动态数组，初始容量为 8 |
 | `std.vec_string` | `len(vec: StringVec): i32` | 返回当前元素数量 |
@@ -95,16 +95,24 @@ fn main(): i32 {
 import std.memory as memory;
 
 fn main(): i32 {
-    let values: ptr<string> = memory.malloc(16);
+    // 显式指定 T 为 string。
+    let values: ptr<string> = memory.malloc<string>(16);
     values[0] = "hello";
     values = memory.realloc(values, 32);
     values[1] = "4yue";
-    return memory.free(values);
+
+    // 根据变量的 ptr<i32> 类型推断 T。
+    let numbers: ptr<i32> = memory.malloc(8);
+
+    memory.free(values);
+    return memory.free(numbers);
 }
 ```
 
-当前语言还没有泛型或 `void` 指针，因此 `std.memory` 暂时使用 `ptr<string>` 作为裸内存指针
-类型。分配大小和扩容大小的单位都是字节，释放后不能继续访问原指针。
+泛型类型实参直接写在函数名后的尖括号中，不使用 `::`。`malloc` 可以通过
+`memory.malloc<i32>(8)` 显式指定元素类型，也可以根据变量声明中的 `ptr<i32>` 推断类型。
+`realloc` 和 `free` 会从传入的指针推断类型。分配大小和扩容大小的单位都是字节，调用方需要
+按元素大小正确计算容量；释放后不能继续访问原指针。
 
 `std.vec_string` 示例：
 
@@ -145,9 +153,9 @@ extern fn __4yue_arg(index: i32): string;
 extern fn __4yue_env_var(name: string): string;
 extern fn __4yue_envc(): i32;
 extern fn __4yue_env(index: i32): string;
-extern fn __4yue_malloc(size: uint): ptr<string>;
-extern fn __4yue_realloc(pointer: ptr<string>, size: uint): ptr<string>;
-extern fn __4yue_free(pointer: ptr<string>): i32;
+extern fn __4yue_malloc(size: uint): ptr<i8>;
+extern fn __4yue_realloc(pointer: ptr<i8>, size: uint): ptr<i8>;
+extern fn __4yue_free(pointer: ptr<i8>): i32;
 // 内存 ABI 由 std.memory 统一声明和封装。
 ```
 

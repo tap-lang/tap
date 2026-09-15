@@ -71,6 +71,38 @@ static ASTNode *parse_loop_control_statement(Parser *parser);
 static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name);
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
+// 前瞻检查 `<...>` 后是否紧跟左括号，用于区分泛型调用和比较表达式。
+static int looks_like_generic_call(Parser *parser) {
+    if (parser->current_token->type != TOKEN_LESS_THAN) return 0;
+
+    char *saved_current = parser->lexer->current;
+    int saved_line = parser->lexer->line;
+    int saved_column = parser->lexer->column;
+    int depth = 1;
+    int result = 0;
+
+    while (depth > 0) {
+        Token *token = get_next_token(parser->lexer);
+        if (token->type == TOKEN_EOF) {
+            free_token(token);
+            break;
+        }
+        if (token->type == TOKEN_LESS_THAN) depth++;
+        if (token->type == TOKEN_GREATER_THAN) depth--;
+        free_token(token);
+    }
+    if (depth == 0) {
+        Token *token = get_next_token(parser->lexer);
+        result = token->type == TOKEN_LPAREN;
+        free_token(token);
+    }
+
+    parser->lexer->current = saved_current;
+    parser->lexer->line = saved_line;
+    parser->lexer->column = saved_column;
+    return result;
+}
+
 static int is_module_component(const Token *token) {
     if ((token->type == TOKEN_STRING && token->value.string_value) ||
         !token->lexeme ||
@@ -461,6 +493,28 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     function->column = function_column;
     function->is_extern = is_extern;
     free(function_name);
+
+    // 解析函数名后的泛型类型参数，例如 fn identity<T, U>(...)。
+    if (parser->current_token->type == TOKEN_LESS_THAN) {
+        consume(parser, TOKEN_LESS_THAN);
+        for (;;) {
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "expected generic type parameter"); // 中文：期望泛型类型参数
+            }
+            for (ASTNode *node = function->type_params; node; node = node->next) {
+                if (strcmp(((IdentifierNode *)node)->name,
+                           parser->current_token->lexeme) == 0) {
+                    parser_error(parser, "duplicate generic type parameter"); // 中文：重复的泛型类型参数
+                }
+            }
+            add_type_param(
+                function, create_identifier(parser->current_token->lexeme));
+            consume(parser, TOKEN_IDENTIFIER);
+            if (parser->current_token->type != TOKEN_COMMA) break;
+            consume(parser, TOKEN_COMMA);
+        }
+        consume(parser, TOKEN_GREATER_THAN);
+    }
     
     // 解析参数列表
     consume(parser, TOKEN_LPAREN);
@@ -600,6 +654,17 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
 static ASTNode *parse_function_call(Parser *parser, char *function_name) {
     // 创建函数调用节点
     FunctionCallNode *function_call = create_function_call(function_name);
+
+    // 解析显式泛型实参，例如 malloc<i32>(...)。
+    if (parser->current_token->type == TOKEN_LESS_THAN) {
+        consume(parser, TOKEN_LESS_THAN);
+        add_type_argument(function_call, parse_type(parser));
+        while (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            add_type_argument(function_call, parse_type(parser));
+        }
+        consume(parser, TOKEN_GREATER_THAN);
+    }
     
     // 解析参数列表
     consume(parser, TOKEN_LPAREN);
@@ -842,7 +907,8 @@ static ASTNode *parse_primary(Parser *parser) {
             consume(parser, parser->current_token->type);
         }
 
-        if (parser->current_token->type == TOKEN_LPAREN) {
+        if (parser->current_token->type == TOKEN_LPAREN ||
+            looks_like_generic_call(parser)) {
             ASTNode *function_call = parse_function_call(parser, name);
             FunctionCallNode *call = (FunctionCallNode *)function_call;
             call->filename = strdup(parser->lexer->filename);

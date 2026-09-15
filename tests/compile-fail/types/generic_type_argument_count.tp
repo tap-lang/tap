@@ -1,0 +1,14 @@
+fn first<T, U>(left: T, right: U): T {
+    return left;
+}
+
+fn main(): i32 {
+    return first<i32>(1, 2);
+}
+
+/** -- test
+- .stderr
+error: generic function type argument count mismatch for 'first'
+- .exit
+1
+-- */

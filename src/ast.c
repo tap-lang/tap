@@ -147,7 +147,16 @@ static void dump_expr(ASTNode *n, int depth) {
     case NODE_FUNCTION_CALL: {
         FunctionCallNode *fc = (FunctionCallNode *)n;
         print_indent(depth);
-        printf("Call: %s(\n", fc->name);
+        printf("Call: %s", fc->name);
+        if (fc->type_arguments) {
+            printf("<");
+            for (ASTNode *type = fc->type_arguments; type; type = type->next) {
+                print_var_type((VarTypeNode *)type);
+                if (type->next) printf(", ");
+            }
+            printf(">");
+        }
+        printf("(\n");
         for (ASTNode *a = fc->arguments; a; a = a->next) {
             dump_expr(a, depth + 2);
         }
@@ -338,6 +347,14 @@ void print_ast(const ProgramNode *program) {
         }
         FunctionNode *f = (FunctionNode *)fn;
         printf("  %sFunction: %s", f->is_extern ? "Extern " : "", f->name);
+        if (f->type_params) {
+            printf("<");
+            for (ASTNode *type = f->type_params; type; type = type->next) {
+                printf("%s", ((IdentifierNode *)type)->name);
+                if (type->next) printf(", ");
+            }
+            printf(">");
+        }
         if (f->return_type) {
             printf(" -> ");
             print_var_type(f->return_type);
@@ -417,6 +434,7 @@ FunctionNode *create_function(char *name) {
     function->line = 0;
     function->column = 0;
     function->is_extern = 0;
+    function->type_params = NULL;
     function->params = NULL;
     function->param_types = NULL;
     function->body = NULL;
@@ -826,6 +844,7 @@ FunctionCallNode *create_function_call(char *name) {
     function_call->line = 0;
     function_call->column = 0;
     function_call->name = strdup(name);
+    function_call->type_arguments = NULL;
     function_call->arguments = NULL;
     return function_call;
 }
@@ -939,6 +958,17 @@ void add_param(FunctionNode *function, IdentifierNode *param) {
     }
 }
 
+// 向函数声明追加一个泛型类型参数。
+void add_type_param(FunctionNode *function, IdentifierNode *type_param) {
+    if (!function->type_params) {
+        function->type_params = (ASTNode *)type_param;
+        return;
+    }
+    ASTNode *current = function->type_params;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)type_param;
+}
+
 // 添加参数类型到函数
 void add_param_type(FunctionNode *function, VarTypeNode *type) {
     if (!function->param_types) {
@@ -976,6 +1006,17 @@ void add_argument(FunctionCallNode *function_call, ASTNode *argument) {
         }
         current->next = argument;
     }
+}
+
+// 向函数调用追加一个显式泛型类型实参。
+void add_type_argument(FunctionCallNode *function_call, VarTypeNode *type_argument) {
+    if (!function_call->type_arguments) {
+        function_call->type_arguments = (ASTNode *)type_argument;
+        return;
+    }
+    ASTNode *current = function_call->type_arguments;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)type_argument;
 }
 
 // 创建条件语句节点
@@ -1057,6 +1098,7 @@ void free_ast(ASTNode *node) {
             FunctionNode *function = (FunctionNode *)node;
             free(function->name);
             free(function->filename);
+            free_ast(function->type_params);
             free_ast(function->params);
             free_ast(function->param_types);
             free_ast(function->body);
@@ -1168,6 +1210,7 @@ void free_ast(ASTNode *node) {
             FunctionCallNode *function_call = (FunctionCallNode *)node;
             free(function_call->name);
             free(function_call->filename);
+            free_ast(function_call->type_arguments);
             free_ast(function_call->arguments);
             break;
         }

@@ -164,6 +164,32 @@ fn main(): i32 {
 普通程序优先使用标准库封装，例如 `std.memory` 和 `std.vec_string`，只有编写底层库、引用传参
 或对接 C ABI 时才建议直接使用 `ptr<T>`。
 
+### 泛型函数
+
+函数名后使用 `<T>` 声明类型参数，调用时可以显式指定类型，也可以由函数实参或目标返回类型
+推断。类型实参直接写成 `identity<i32>(value)`，不需要 `::`：
+
+```text
+fn identity<T>(value: T): T {
+    return value;
+}
+
+fn first<T, U>(left: T, right: U): T {
+    return left;
+}
+
+fn main(): i32 {
+    let inferred: i32 = identity(42);
+    let explicit: string = identity<string>("4yue");
+    let selected: string = first("left", 10);
+    return inferred;
+}
+```
+
+编译器会在 LLVM Codegen 前按实际类型为每组调用生成具体函数，即编译期单态化；运行时不保存
+泛型类型信息。同一个泛型参数在一次调用中必须推断为兼容类型，无法推断或显式类型实参数量
+不匹配时会报错。当前只支持泛型函数，不支持泛型结构体、类型约束和默认类型实参。
+
 ### 动态字符串数组
 
 当前标准库提供了第一版专用动态数组 `std.vec_string.StringVec`，用于保存可变数量的
@@ -183,5 +209,5 @@ fn main(): i32 {
 ```
 
 `StringVec` 通过堆内存保存元素，`push` 会在容量不足时自动扩容。`values.push(...)`
-和 `values.set(...)` 作为语句使用时会自动把返回的结构体写回 `values`。当前还没有泛型
-`Vec<T>`。
+和 `values.set(...)` 作为语句使用时会自动把返回的结构体写回 `values`。泛型函数已经可用，
+但泛型结构体尚未实现，因此当前仍没有 `Vec<T>`。

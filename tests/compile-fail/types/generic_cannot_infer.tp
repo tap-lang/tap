@@ -1,0 +1,13 @@
+import std.memory as memory;
+
+fn main(): i32 {
+    let pointer = memory.malloc(8);
+    return 0;
+}
+
+/** -- test
+- .stderr
+cannot infer generic type parameter 'T'
+- .exit
+1
+-- */

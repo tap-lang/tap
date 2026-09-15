@@ -44,6 +44,7 @@ add_executable(4yue
     src/ast.c
     src/parser.c
     src/module.c
+    src/generics.c
     src/prelude.c
     src/lexer.c
     src/token.c

@@ -155,6 +155,7 @@ typedef struct {
     int line;              // 函数名所在行
     int column;            // 函数名所在列
     int is_extern;         // 外部函数只生成 LLVM 声明
+    ASTNode *type_params;  // 泛型类型参数列表（IdentifierNode）
     ASTNode *params;       // 参数列表
     ASTNode *param_types;  // 参数类型列表
     ASTNode *body;         // 函数体语句列表
@@ -251,6 +252,7 @@ typedef struct {
     int line;
     int column;
     char *name;            // 函数名
+    ASTNode *type_arguments; // 显式泛型实参列表（VarTypeNode）
     ASTNode *arguments;    // 参数列表
 } FunctionCallNode;
 
@@ -303,9 +305,11 @@ void add_struct_field(StructNode *struct_node, StructFieldNode *field);
 void add_struct_init_field(StructLiteralNode *literal, StructInitFieldNode *field);
 void add_import(ProgramNode *program, ImportNode *import_node);
 void add_param(FunctionNode *function, IdentifierNode *param);
+void add_type_param(FunctionNode *function, IdentifierNode *type_param);
 void add_param_type(FunctionNode *function, VarTypeNode *type);
 void add_statement(FunctionNode *function, ASTNode *statement);
 void add_argument(FunctionCallNode *function_call, ASTNode *argument);
+void add_type_argument(FunctionCallNode *function_call, VarTypeNode *type_argument);
 
 // 条件语句节点
 typedef struct {
