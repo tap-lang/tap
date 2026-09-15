@@ -1,6 +1,7 @@
 #ifndef FOUR_YUE_RUNTIME_H
 #define FOUR_YUE_RUNTIME_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 // Shared-library builds export the stable C ABI on Windows.
@@ -20,5 +21,8 @@ FOUR_YUE_RUNTIME_API const char *__4yue_arg(int32_t index);
 FOUR_YUE_RUNTIME_API const char *__4yue_env_var(const char *name);
 FOUR_YUE_RUNTIME_API int32_t __4yue_envc(void);
 FOUR_YUE_RUNTIME_API const char *__4yue_env(int32_t index);
+FOUR_YUE_RUNTIME_API void *__4yue_malloc(size_t size);
+FOUR_YUE_RUNTIME_API void *__4yue_realloc(void *pointer, size_t size);
+FOUR_YUE_RUNTIME_API void __4yue_free(void *pointer);
 
 #endif

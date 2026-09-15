@@ -96,6 +96,9 @@ extern fn __4yue_arg(index: i32): string;
 extern fn __4yue_env_var(name: string): string;
 extern fn __4yue_envc(): i32;
 extern fn __4yue_env(index: i32): string;
+// 内存 ABI 当前只供编译器和未来容器库使用，语言侧暂未提供稳定指针类型包装。
+// void* 在 4yue 中尚无对应公共类型，因此普通程序不要直接声明这些函数。
+// __4yue_malloc / __4yue_realloc / __4yue_free 见 runtime.md。
 ```
 
 普通程序应调用 Prelude 封装后的 `read_key`、`sleep_ms`、`clear_screen`

@@ -34,3 +34,16 @@ extern fn __4yue_sleep_ms(milliseconds: i32): i32;
 
 Runtime 的公开 ABI 声明位于 [`runtime/include/4yue_runtime.h`](../runtime/include/4yue_runtime.h)，
 跨平台实现位于 [`runtime/src/runtime.c`](../runtime/src/runtime.c)。
+
+## 底层内存 ABI
+
+Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或容器标准库使用：
+
+| C ABI | 行为 |
+|---|---|
+| `__4yue_malloc(size)` | 分配堆内存；`size == 0` 时按 1 字节处理 |
+| `__4yue_realloc(pointer, size)` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
+| `__4yue_free(pointer)` | 释放堆内存；`NULL` 指针安全无操作 |
+
+这些函数目前只作为 Runtime ABI 暴露；4yue 语言侧还没有稳定的指针类型，
+因此暂不在标准库中提供直接包装。

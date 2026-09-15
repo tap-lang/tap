@@ -143,6 +143,21 @@ const char *__4yue_env(int32_t index) {
     return FOUR_YUE_ENVIRON[index];
 }
 
+// 分配堆内存；size 为 0 时仍申请 1 字节，避免不同 C 库对 malloc(0) 的差异。
+void *__4yue_malloc(size_t size) {
+    return malloc(size == 0 ? 1 : size);
+}
+
+// 调整堆内存大小；size 为 0 时仍保留 1 字节，调用者可用返回 NULL 判断失败。
+void *__4yue_realloc(void *pointer, size_t size) {
+    return realloc(pointer, size == 0 ? 1 : size);
+}
+
+// 释放由 4yue Runtime 分配的堆内存；NULL 指针安全无操作。
+void __4yue_free(void *pointer) {
+    free(pointer);
+}
+
 int32_t __4yue_read_key(void) {
 #ifdef _WIN32
     // Windows arrow and function keys use a prefix byte followed by a scan code.
