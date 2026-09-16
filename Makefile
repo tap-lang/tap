@@ -7,6 +7,7 @@ LIBS = -lLLVM-21 -lm
 
 # Sanitizers are opt-in because their VM reservation conflicts with macOS nano malloc.
 SANITIZE ?= 0
+TEST_JOBS ?= 4
 ifeq ($(SANITIZE),1)
     SANITIZER_FLAGS = -fsanitize=address -fno-omit-frame-pointer
 endif
@@ -128,10 +129,14 @@ clean:
 
 # 运行测试
 test: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
-	sh tests/run-tests.sh $(TARGET)
+	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=fast sh tests/run-tests.sh $(TARGET)
+
+# 所有运行用例都生成并链接原生可执行文件，用于完整检查目标代码和链接路径。
+test-native: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
+	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=native sh tests/run-tests.sh $(TARGET)
 
 test_hello: $(TARGET)
 	$(TARGET) tests/run-pass/basics/hello.tp -o ./build/hello
 	./build/hello
 
-.PHONY: all clean test test_hello
+.PHONY: all clean test test-native test_hello

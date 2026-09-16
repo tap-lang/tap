@@ -15,6 +15,22 @@ TEST_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$TEST_ROOT/.." && pwd)
 COMPILER=${1:-"$PROJECT_ROOT/build/tap"}
 FILTER=${TEST_FILTER:-${2:-}}
+TEST_JOBS=${TEST_JOBS:-4}
+TEST_RUN_MODE=${TEST_RUN_MODE:-fast}
+
+case "$TEST_JOBS" in
+    ''|*[!0-9]*|0)
+        printf 'TEST_JOBS must be a positive integer: %s\n' "$TEST_JOBS" >&2
+        exit 2
+        ;;
+esac
+case "$TEST_RUN_MODE" in
+    fast|native) ;;
+    *)
+        printf 'TEST_RUN_MODE must be fast or native: %s\n' "$TEST_RUN_MODE" >&2
+        exit 2
+        ;;
+esac
 
 case "$COMPILER" in
     /*|[A-Za-z]:/*) ;;
@@ -27,7 +43,29 @@ if [ ! -x "$COMPILER" ]; then
 fi
 
 TEMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/tap-tests.XXXXXX") || exit 2
-trap 'rm -rf "$TEMP_ROOT"' EXIT HUP INT TERM
+BATCH_FILE="$TEMP_ROOT/workers"
+
+cleanup() {
+    if [ -f "$BATCH_FILE" ]; then
+        while IFS= read -r worker_pid; do
+            [ -n "$worker_pid" ] && kill "$worker_pid" 2>/dev/null || true
+        done < "$BATCH_FILE"
+    fi
+    rm -rf "$TEMP_ROOT"
+}
+trap cleanup EXIT HUP INT TERM
+
+# Native test workers reuse one SDK lookup instead of running xcrun for every link.
+if [ "$(uname -s)" = "Darwin" ]; then
+    if [ -z "${TAP_MACOS_SDK_PATH:-}" ]; then
+        TAP_MACOS_SDK_PATH=$(xcrun --sdk macosx --show-sdk-path) || exit 2
+        export TAP_MACOS_SDK_PATH
+    fi
+    if [ -z "${TAP_MACOS_SDK_VERSION:-}" ]; then
+        TAP_MACOS_SDK_VERSION=$(xcrun --sdk macosx --show-sdk-version) || exit 2
+        export TAP_MACOS_SDK_VERSION
+    fi
+fi
 
 MODULE_PATH="$TEST_ROOT/fixtures"
 STD_PATH="$PROJECT_ROOT/std"
@@ -145,22 +183,15 @@ check_stderr() {
 run_case() {
     case_mode=$1
     case_file=$2
+    case_id=$3
     relative_file=${case_file#"$PROJECT_ROOT/"}
 
-    if [ -n "$FILTER" ]; then
-        case "$relative_file" in
-            *"$FILTER"*) ;;
-            *) return ;;
-        esac
-    fi
-
-    total=$((total + 1))
-    stdout_file="$TEMP_ROOT/$total.stdout"
-    stderr_file="$TEMP_ROOT/$total.stderr"
-    expected_stdout_file="$TEMP_ROOT/$total.expected.stdout"
-    expected_stderr_file="$TEMP_ROOT/$total.expected.stderr"
-    expected_exit_file="$TEMP_ROOT/$total.expected.exit"
-    expected_args_file="$TEMP_ROOT/$total.expected.args"
+    stdout_file="$TEMP_ROOT/$case_id.stdout"
+    stderr_file="$TEMP_ROOT/$case_id.stderr"
+    expected_stdout_file="$TEMP_ROOT/$case_id.expected.stdout"
+    expected_stderr_file="$TEMP_ROOT/$case_id.expected.stderr"
+    expected_exit_file="$TEMP_ROOT/$case_id.expected.exit"
+    expected_args_file="$TEMP_ROOT/$case_id.expected.args"
     case_failed=0
 
     if load_expectation stdout "$case_file" "$expected_stdout_file"; then
@@ -193,16 +224,26 @@ run_case() {
 
     if [ "$case_mode" = "compile-fail" ]; then
         env "TAP_MODULE_PATH=$MODULE_PATH" "TAP_STD_PATH=$STD_PATH" \
-            "$COMPILER" -ir -o "$TEMP_ROOT/$total.ll" "$relative_file" \
+            "$COMPILER" -ir -o "$TEMP_ROOT/$case_id.ll" "$relative_file" \
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?
     else
-        set -- "$COMPILER" run -o "$TEMP_ROOT/$total-program$EXE_SUFFIX" "$relative_file"
-        if [ "$has_program_args" -eq 1 ]; then
-            set -- "$@" --
-            while IFS= read -r program_arg || [ -n "$program_arg" ]; do
-                set -- "$@" "$program_arg"
-            done < "$expected_args_file"
+        use_native=0
+        if [ "$TEST_RUN_MODE" = "native" ] || [ "$has_program_args" -eq 1 ] ||
+           [ "$relative_file" = "tests/run-pass/basics/hello.tp" ]; then
+            use_native=1
+        fi
+
+        if [ "$use_native" -eq 1 ]; then
+            set -- "$COMPILER" run -o "$TEMP_ROOT/$case_id-program$EXE_SUFFIX" "$relative_file"
+            if [ "$has_program_args" -eq 1 ]; then
+                set -- "$@" --
+                while IFS= read -r program_arg || [ -n "$program_arg" ]; do
+                    set -- "$@" "$program_arg"
+                done < "$expected_args_file"
+            fi
+        else
+            set -- "$COMPILER" -run-lli "$relative_file"
         fi
         env "TAP_MODULE_PATH=$MODULE_PATH" "TAP_STD_PATH=$STD_PATH" \
             "$@" \
@@ -218,11 +259,44 @@ run_case() {
     check_stderr
 
     if [ "$case_failed" -eq 0 ]; then
-        passed=$((passed + 1))
         printf 'PASS %s\n' "$relative_file"
+        return 0
     else
-        failed=$((failed + 1))
         printf 'FAIL %s\n' "$relative_file" >&2
+        return 1
+    fi
+}
+
+active_workers=0
+
+wait_for_batch() {
+    [ -s "$BATCH_FILE" ] || return
+    while IFS= read -r worker_pid; do
+        wait "$worker_pid" || true
+    done < "$BATCH_FILE"
+    : > "$BATCH_FILE"
+    active_workers=0
+}
+
+launch_case() {
+    launch_mode=$1
+    launch_file=$2
+    total=$((total + 1))
+    launch_id=$total
+
+    (
+        trap - EXIT HUP INT TERM
+        if run_case "$launch_mode" "$launch_file" "$launch_id"; then
+            worker_status=0
+        else
+            worker_status=1
+        fi
+        printf '%s\n' "$worker_status" > "$TEMP_ROOT/$launch_id.status"
+    ) > "$TEMP_ROOT/$launch_id.result" 2>&1 &
+    printf '%s\n' "$!" >> "$BATCH_FILE"
+    active_workers=$((active_workers + 1))
+    if [ "$active_workers" -ge "$TEST_JOBS" ]; then
+        wait_for_batch
     fi
 }
 
@@ -233,7 +307,14 @@ run_group() {
 
     find "$TEST_ROOT/$group_directory" -type f -name '*.tp' | LC_ALL=C sort > "$list_file"
     while IFS= read -r test_file; do
-        run_case "$group_mode" "$test_file"
+        relative_file=${test_file#"$PROJECT_ROOT/"}
+        if [ -n "$FILTER" ]; then
+            case "$relative_file" in
+                *"$FILTER"*) ;;
+                *) continue ;;
+            esac
+        fi
+        launch_case "$group_mode" "$test_file"
     done < "$list_file"
 }
 
@@ -241,11 +322,29 @@ cd "$PROJECT_ROOT" || exit 2
 run_group run-pass run-pass
 run_group run-fail run-fail
 run_group compile-fail compile-fail
+wait_for_batch
 
 if [ "$total" -eq 0 ]; then
     printf 'no tests matched filter: %s\n' "$FILTER" >&2
     exit 2
 fi
+
+case_id=1
+while [ "$case_id" -le "$total" ]; do
+    if [ -f "$TEMP_ROOT/$case_id.result" ]; then
+        cat "$TEMP_ROOT/$case_id.result"
+    fi
+    if [ -f "$TEMP_ROOT/$case_id.status" ] &&
+       [ "$(sed -n '1p' "$TEMP_ROOT/$case_id.status")" = "0" ]; then
+        passed=$((passed + 1))
+    else
+        failed=$((failed + 1))
+        if [ ! -f "$TEMP_ROOT/$case_id.result" ]; then
+            printf 'FAIL test worker %d did not produce a result\n' "$case_id" >&2
+        fi
+    fi
+    case_id=$((case_id + 1))
+done
 
 printf '\n%d tests: %d passed, %d failed\n' "$total" "$passed" "$failed"
 [ "$failed" -eq 0 ]

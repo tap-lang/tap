@@ -290,6 +290,22 @@ static int read_command_line(const char *command, char *output, size_t output_si
     }
     return 0;
 }
+
+// 优先读取测试进程预先查询的 SDK 信息，避免批量链接时重复启动 xcrun。
+static int macos_sdk_value(
+    const char *environment_name, const char *command,
+    char *output, size_t output_size) {
+    const char *configured = getenv(environment_name);
+    if (!configured || !*configured) {
+        return read_command_line(command, output, output_size);
+    }
+    int length = snprintf(output, output_size, "%s", configured);
+    if (length < 0 || (size_t)length >= output_size) {
+        fprintf(stderr, "%s is too long\n", environment_name);
+        return 1;
+    }
+    return 0;
+}
 #endif
 
 // 把目标文件和 Runtime 静态库链接成可执行文件。
@@ -318,10 +334,12 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     // macOS 直接调用 ld 时必须显式传入 SDK、架构和平台版本。
     char sdk_path[RUN_PATH_MAX];
     char sdk_version[64];
-    if (read_command_line("xcrun --sdk macosx --show-sdk-path",
-                          sdk_path, sizeof(sdk_path)) != 0 ||
-        read_command_line("xcrun --sdk macosx --show-sdk-version",
-                          sdk_version, sizeof(sdk_version)) != 0) {
+    if (macos_sdk_value(
+            "TAP_MACOS_SDK_PATH", "xcrun --sdk macosx --show-sdk-path",
+            sdk_path, sizeof(sdk_path)) != 0 ||
+        macos_sdk_value(
+            "TAP_MACOS_SDK_VERSION", "xcrun --sdk macosx --show-sdk-version",
+            sdk_version, sizeof(sdk_version)) != 0) {
         return 1;
     }
 #if defined(__aarch64__)

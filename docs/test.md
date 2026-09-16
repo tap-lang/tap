@@ -59,9 +59,14 @@ tests/compile-fail/lexer/unterminated_block_comment.stderr
 
 ```sh
 make test
+make test-native
+make test TEST_JOBS=8
 TEST_FILTER=module make test
 ./tests/run-tests.sh ./build/tap
 ./tests/run-tests.sh ./build/tap hello
 ```
 
-测试脚本当前按文件名串行执行。编译器内部使用独立临时目录，并发执行时不会共享中间文件。
+`make test` 默认使用 4 个并行 worker。普通 `run-pass`、`run-fail` 用例通过 `lli` 执行，
+带 `.args` 的用例和 `tests/run-pass/basics/hello.tp` 原生编译并链接，持续覆盖程序参数和链接路径。
+`make test-native` 会让全部运行用例生成原生可执行文件。可以用 `TEST_JOBS=N` 调整并行度，
+或设为 `1` 排查依赖执行顺序的问题；最终结果始终按文件名顺序输出。
