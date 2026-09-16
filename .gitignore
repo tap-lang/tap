@@ -1,14 +1,10 @@
 .vscode/
 .cache/
-src/version.h
-
+tmp/
 build/
-4yue
+
+src/version.h
 *.ll
 output
-hello
 a.out
 *.exe
-
-*.dSYM/
-tmp/
