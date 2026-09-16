@@ -5,10 +5,9 @@
 ## 依赖
 
 - **C 编译器**：GCC 或 Clang  
-- **LLVM**：**21**（CMake 与 Makefile 均会链接 `libLLVM`；`-run-lli` 会调用 `lli`）
+- **LLVM**：**21**（CMake 与 Makefile 均会链接 `libLLVM`）
 - **构建**：GNU Make 或 CMake ≥ 3.10  
 
-macOS（Homebrew）示例：`brew install llvm`，并保证能解析到对应 `include` / `lib`（仓库里的 Makefile 已按常见路径配置，若版本或前缀不同请自行改 `CFLAGS` / `LDFLAGS`）。
 
 ## 构建
 
