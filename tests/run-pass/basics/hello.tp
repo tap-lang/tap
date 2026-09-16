@@ -2,13 +2,13 @@
  * 主函数
  */
 fn main() {
-    print("Hello tap ~ 😀\n"); // 输出
+    print("Hello tap! 你好，世界！😀\n"); // 输出
 }
 
 
 /** -- test
 - .stdout
-Hello tap ~ 😀
+Hello tap! 你好，世界！😀
 
 - .exit
 0
