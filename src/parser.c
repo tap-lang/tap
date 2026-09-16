@@ -954,21 +954,33 @@ static ASTNode *parse_factor(Parser *parser) {
         }
 
         // 标识符接收者会在 parse_primary 中解析为限定调用（例如 s.len()）。
-        // 此处处理字符串字面量、数组元素和函数返回值后面的 len()。
+        // 此处处理字符串字面量、数组元素和函数返回值的内建方法。
         if (parser->current_token->type == TOKEN_DOT) {
             int line = parser->current_token->line;
             int column = parser->current_token->column;
             consume(parser, TOKEN_DOT);
-            if (parser->current_token->type != TOKEN_IDENTIFIER ||
-                strcmp(parser->current_token->lexeme, "len") != 0) {
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
                 free_ast(expression);
-                parser_error(parser, "only the string method 'len' is supported");
+                parser_error(parser, "expected string method name");
+            }
+            const char *method_name = parser->current_token->lexeme;
+            const char *internal_name = NULL;
+            if (strcmp(method_name, "len") == 0) {
+                internal_name = "__tap_builtin_string_len";
+            } else if (strcmp(method_name, "byte_at") == 0) {
+                internal_name = "__tap_builtin_string_byte_at";
+            } else if (strcmp(method_name, "slice") == 0) {
+                internal_name = "__tap_builtin_string_slice";
+            } else {
+                free_ast(expression);
+                parser_error(parser,
+                    "only string methods 'len', 'byte_at', and 'slice' are supported");
             }
             consume(parser, TOKEN_IDENTIFIER);
             consume(parser, TOKEN_LPAREN);
 
-            // 将接收者作为第一个内部参数保存，后端据此生成字符串长度计算。
-            FunctionCallNode *call = create_function_call("__tap_builtin_string_len");
+            // 将接收者作为第一个内部参数保存。
+            FunctionCallNode *call = create_function_call(internal_name);
             call->filename = strdup(parser->lexer->filename);
             call->line = line;
             call->column = column;

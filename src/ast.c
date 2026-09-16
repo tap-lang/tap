@@ -831,7 +831,7 @@ IndexAssignmentNode *create_index_assignment(
     return assignment;
 }
 
-FunctionCallNode *create_function_call(char *name) {
+FunctionCallNode *create_function_call(const char *name) {
     FunctionCallNode *function_call = (FunctionCallNode *)malloc(sizeof(FunctionCallNode));
     if (!function_call) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败

@@ -293,7 +293,7 @@ void set_array_repeat(ArrayLiteralNode *array, uint64_t repeat_count);
 IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index);
 IndexAssignmentNode *create_index_assignment(
     IndexExpressionNode *target, ASTNode *expression);
-FunctionCallNode *create_function_call(char *name);
+FunctionCallNode *create_function_call(const char *name);
 
 // 添加子节点的函数
 void add_function(ProgramNode *program, FunctionNode *function);

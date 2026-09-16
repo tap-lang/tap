@@ -637,7 +637,11 @@ static int rewrite_statement_list(
 static int rewrite_call(
     FunctionCallNode *call, LoadedModule *current_module, ImportBinding *bindings) {
     // 内建字符串方法不是模块函数，不参与模块导出名称重写。
-    if (strcmp(call->name, "__tap_builtin_string_len") == 0) return 0;
+    if (strcmp(call->name, "__tap_builtin_string_len") == 0 ||
+        strcmp(call->name, "__tap_builtin_string_byte_at") == 0 ||
+        strcmp(call->name, "__tap_builtin_string_slice") == 0) {
+        return 0;
+    }
 
     char *dot = strchr(call->name, '.');
     ModuleExport *export = NULL;

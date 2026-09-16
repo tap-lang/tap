@@ -728,6 +728,14 @@ static VarTypeNode *process_call(GenericContext *context,
         strstr(call->name, ".len")) {
         return create_var_type(LITERAL_UINT);
     }
+    if (strcmp(call->name, "__tap_builtin_string_byte_at") == 0 ||
+        strstr(call->name, ".byte_at")) {
+        return create_var_type(LITERAL_U8);
+    }
+    if (strcmp(call->name, "__tap_builtin_string_slice") == 0 ||
+        strstr(call->name, ".slice")) {
+        return create_var_type(LITERAL_STRING);
+    }
     return expected ? clone_type(expected) : create_var_type(LITERAL_I32);
 }
 

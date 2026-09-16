@@ -153,14 +153,19 @@ extern fn __tap_arg(index: i32): string;
 extern fn __tap_env_var(name: string): string;
 extern fn __tap_envc(): i32;
 extern fn __tap_env(index: i32): string;
+// 字符串 ABI 由内建方法和比较运算符调用。
+extern fn __tap_string_byte_at(value: string, index: i64): u8;
+extern fn __tap_string_slice(value: string, start: i64, end: i64): string;
+extern fn __tap_string_compare(left: string, right: string): i32;
 extern fn __tap_malloc(size: uint): *i8;
 extern fn __tap_realloc(pointer: *i8, size: uint): *i8;
 extern fn __tap_free(pointer: *i8): i32;
 // 内存 ABI 由 std.memory 统一声明和封装。
 ```
 
-普通程序应调用 Prelude 封装后的 `read_key`、`sleep_ms`、`clear_screen`
-和 `random`，以及 `std.env`、`std.memory` 封装后的函数，不要直接调用 `__tap_` 前缀函数。
+普通程序应使用内建字符串操作、Prelude 封装后的 `read_key`、`sleep_ms`、
+`clear_screen` 和 `random`，以及 `std.env`、`std.memory` 封装后的函数，不要直接调用
+`__tap_` 前缀函数。
 
 Runtime 的 C ABI 声明位于
 [`runtime/include/tap_runtime.h`](../runtime/include/tap_runtime.h)，实现位于
@@ -196,8 +201,8 @@ Runtime 的 C ABI 声明位于
 ## Current Limits
 
 - 标准库函数目前只覆盖 `i32` 相关能力。
-- `string` 已是可用的语言类型并提供内建 `.len()` 方法，但还没有稳定的字符串标准库
-  API；语言层能力见[字符串文档](data-type-string.md)。
+- `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()` 和内容比较，但还没有
+  字符串拼接、查找、数值转换和 Unicode 码点级 API；详见[字符串文档](data-type-string.md)。
 - 内建数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
   `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。动态字符串数组请使用
   `std.vec_string`。

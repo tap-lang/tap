@@ -35,6 +35,18 @@ extern fn __tap_sleep_ms(milliseconds: i32): i32;
 Runtime 的公开 ABI 声明位于 [`runtime/include/tap_runtime.h`](../runtime/include/tap_runtime.h)，
 跨平台实现位于 [`runtime/src/runtime.c`](../runtime/src/runtime.c)。
 
+## 底层字符串 ABI
+
+内建字符串方法和比较运算符由编译器生成对以下 Runtime ABI 的调用：
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_string_byte_at(value, index): u8` | 读取 UTF-8 原始字节；越界时终止程序 |
+| `__tap_string_slice(value, start, end): string` | 复制 `[start, end)` 字节区间；无效边界时终止程序 |
+| `__tap_string_compare(left, right): i32` | 按 UTF-8 无符号字节序返回 `-1`、`0` 或 `1` |
+
+`slice` 结果由 Runtime 跟踪，进程退出时统一释放。普通程序不应直接调用这些符号。
+
 ## 底层内存 ABI
 
 Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或容器标准库使用：

@@ -1,0 +1,43 @@
+fn returned_string(): string {
+    return "returned";
+}
+
+fn identity<T>(value: T): T {
+    return value;
+}
+
+fn main(): i32 {
+    let value: string = "hello";
+    print("%u %u\n", value.byte_at(0), value.byte_at(4));
+    print("%s|%s|%s\n", value.slice(1, 4), "world".slice(0, 5),
+          returned_string().slice(0, 6));
+
+    let utf8: string = "你好";
+    print("%u %u %s\n", utf8.byte_at(0), utf8.byte_at(3), utf8.slice(0, 3));
+
+    let values: [string; 1] = ["array"];
+    print("%u %s\n", values[0].byte_at(0), values[0].slice(1, 4));
+    print("%s\n", identity("generic").slice(0, 3));
+
+    let copied: string = value.slice(0, value.len());
+    print("%d %d %d %d %d %d\n",
+          copied == "hello",
+          copied != "world",
+          "apple" < "banana",
+          "banana" > "apple",
+          "apple" <= "apple",
+          "banana" >= "banana");
+    return 0;
+}
+
+/** -- test
+- .stdout
+104 111
+ell|world|return
+228 229 你
+97 rra
+gen
+1 1 1 1 1 1
+- .exit
+0
+-- */

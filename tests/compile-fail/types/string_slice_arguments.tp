@@ -1,0 +1,14 @@
+fn main(): i32 {
+    let value: string = "hello";
+    let part = value.slice(1);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'slice' expects 2 arguments, but got 1
+--> tests/compile-fail/types/string_slice_arguments.tp:3:16
+-> 3      let part = value.slice(1);
+- .exit
+1
+-- */

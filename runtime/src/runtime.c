@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #ifdef _WIN32
@@ -101,6 +102,41 @@ static int read_escape_sequence_key(void) {
 static int32_t saved_argc = 0;
 static char **saved_argv = NULL;
 
+typedef struct TapOwnedString {
+    struct TapOwnedString *next;
+    char value[];
+} TapOwnedString;
+
+static TapOwnedString *owned_strings = NULL;
+static int owned_string_cleanup_registered = 0;
+
+static void free_owned_strings(void) {
+    while (owned_strings) {
+        TapOwnedString *next = owned_strings->next;
+        free(owned_strings);
+        owned_strings = next;
+    }
+}
+
+static char *allocate_owned_string(size_t length) {
+    TapOwnedString *allocation = malloc(sizeof(*allocation) + length + 1);
+    if (!allocation) {
+        fprintf(stderr, "failed to allocate string slice\n");
+        exit(1);
+    }
+    if (!owned_string_cleanup_registered) {
+        if (atexit(free_owned_strings) != 0) {
+            free(allocation);
+            fprintf(stderr, "failed to register string cleanup\n");
+            exit(1);
+        }
+        owned_string_cleanup_registered = 1;
+    }
+    allocation->next = owned_strings;
+    owned_strings = allocation;
+    return allocation->value;
+}
+
 void __tap_init_args(int32_t argc, char **argv) {
     saved_argc = argc;
     saved_argv = argv;
@@ -141,6 +177,37 @@ const char *__tap_env(int32_t index) {
         if (!TAP_ENVIRON[current]) return "";
     }
     return TAP_ENVIRON[index];
+}
+
+uint8_t __tap_string_byte_at(const char *value, int64_t index) {
+    size_t length = strlen(value);
+    if (index < 0 || (uint64_t)index >= (uint64_t)length) {
+        fprintf(stderr, "String byte index out of bounds: index=%lld, length=%llu\n",
+                (long long)index, (unsigned long long)length);
+        exit(1);
+    }
+    return (uint8_t)(unsigned char)value[index];
+}
+
+const char *__tap_string_slice(const char *value, int64_t start, int64_t end) {
+    size_t length = strlen(value);
+    if (start < 0 || end < start || (uint64_t)end > (uint64_t)length) {
+        fprintf(stderr,
+                "String slice out of bounds: start=%lld, end=%lld, length=%llu\n",
+                (long long)start, (long long)end, (unsigned long long)length);
+        exit(1);
+    }
+
+    size_t slice_length = (size_t)(end - start);
+    char *result = allocate_owned_string(slice_length);
+    memcpy(result, value + start, slice_length);
+    result[slice_length] = '\0';
+    return result;
+}
+
+int32_t __tap_string_compare(const char *left, const char *right) {
+    int result = strcmp(left, right);
+    return result < 0 ? -1 : result > 0 ? 1 : 0;
 }
 
 // 分配堆内存；size 为 0 时仍申请 1 字节，避免不同 C 库对 malloc(0) 的差异。

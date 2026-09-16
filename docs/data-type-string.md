@@ -1,7 +1,8 @@
 # 字符串
 
 本文档描述 tap 当前已经实现的 `string` 类型，包括字符串字面量、变量、函数传递、
-输出、固定长度字符串数组和标准库动态字符串数组。尚未实现的能力集中列在[当前限制](#当前限制)中。
+字节访问、切片、内容比较、输出和字符串数组。尚未实现的能力集中列在
+[当前限制](#当前限制)中。
 
 ## 字符串字面量
 
@@ -102,6 +103,43 @@ print("hello".len());
 `"你好".len()` 返回 `6`，而不是 `2`。当前实现从字符串开头扫描到结尾空字节，因此
 时间复杂度为 O(n)。
 
+## 字节访问
+
+`byte_at(index)` 按 UTF-8 原始字节读取字符串，返回 `u8`：
+
+```text
+let value: string = "hello";
+let first: u8 = value.byte_at(0); // 104
+```
+
+下标从 `0` 开始，必须是最多 64 位的整数。负数或大于等于 `.len()` 的下标会输出
+越界错误并以状态 `1` 终止程序。多字节 Unicode 字符需要读取多个字节；例如
+`"你".byte_at(0)` 返回 `228` (`0xE4`)。
+
+## 字节切片
+
+`slice(start, end)` 返回左闭右开区间 `[start, end)` 的新字符串：
+
+```text
+let value: string = "hello";
+let part: string = value.slice(1, 4); // "ell"
+```
+
+`start` 和 `end` 都是 UTF-8 字节偏移，必须满足 `0 <= start <= end <= value.len()`。
+边界非法时程序会输出错误并以状态 `1` 终止。为了保持有效 UTF-8，调用者应确保
+两个偏移都位于字符边界。切片结果由 Runtime 管理，在进程退出时统一释放。
+
+## 内容比较
+
+`==`、`!=`、`<`、`<=`、`>` 和 `>=` 均按字符串内容比较，不比较指针地址。
+顺序比较使用 UTF-8 编码的无符号字节序：
+
+```text
+let copied: string = "hello".slice(0, 5);
+assert(copied == "hello");
+assert("apple" < "banana");
+```
+
 ## 输出字符串
 
 `print` 的第一个参数是字符串字面量时，该参数会作为格式字符串处理。使用 `%s` 输出
@@ -127,9 +165,10 @@ assert(result == 0, "result must be zero");
 
 ## 与标准库的关系
 
-`string` 是内建语言类型，无需导入模块即可使用。`.len()` 也是内建方法，不属于标准库
-函数。当前标准库尚未提供字符串拼接、比较、查找或转换函数；语言层面的字符串支持
-不依赖这些标准库 API。标准库的现状见[标准库文档](std.md#current-limits)。
+`string` 是内建语言类型，无需导入模块即可使用。`.len()`、`.byte_at()` 和 `.slice()`
+都是内建方法，不属于标准库函数。当前标准库尚未提供字符串拼接、查找或数值转换函数；
+语言层面的字符串支持不依赖这些标准库 API。标准库的现状见
+[标准库文档](std.md#current-limits)。
 
 ## 字符串数组
 
@@ -200,10 +239,9 @@ fn main(): i32 {
 当前语言和标准库尚未提供以下字符串能力：
 
 - 字符串拼接与插值。
-- 具有明确内容语义的字符串相等、大小或字典序比较；不要依赖指针比较结果。
-- Unicode 字符数量查询、字符串下标和切片。
+- Unicode 字符数量查询、码点下标和码点切片。
 - 可变字符串及字符替换。
-- 动态创建、复制或释放单个字符串的标准库 API。
+- 显式释放单个动态字符串的 API。
 - 字符与 Unicode 码点级别的处理 API。
 
 ## 测试
@@ -216,6 +254,8 @@ fn main(): i32 {
   初始化、下标读取、元素替换和重复初始化。
 - [`tests/run-pass/types/string_length.tp`](../tests/run-pass/types/string_length.tp)：字节长度、
   返回类型、空字符串、UTF-8 字符串和不同形式的接收者。
+- [`tests/run-pass/types/string_methods.tp`](../tests/run-pass/types/string_methods.tp)：字节访问、
+  切片、UTF-8 偏移和六种内容比较运算符。
 
 可以只运行这些测试：
 
@@ -223,4 +263,5 @@ fn main(): i32 {
 TEST_FILTER=types/strings.tp sh tests/run-tests.sh build/tap
 TEST_FILTER=types/string_arrays.tp sh tests/run-tests.sh build/tap
 TEST_FILTER=types/string_length.tp sh tests/run-tests.sh build/tap
+TEST_FILTER=types/string_methods.tp sh tests/run-tests.sh build/tap
 ```
