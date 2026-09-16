@@ -265,7 +265,7 @@ static int run_process(char *const argv[]) {
 #endif
 }
 
-#if !defined(_WIN32)
+#if defined(__APPLE__)
 // 执行外部查询命令并读取首行输出。
 static int read_command_line(const char *command, char *output, size_t output_size) {
     FILE *pipe = popen(command, "r");
@@ -292,35 +292,7 @@ static int read_command_line(const char *command, char *output, size_t output_si
 }
 #endif
 
-#if !defined(_WIN32) && !defined(__APPLE__)
-// 使用 gcc 查询系统启动文件的实际安装路径。
-static int gcc_file_path(const char *filename, char *output, size_t output_size) {
-    char command[128];
-    int length = snprintf(command, sizeof(command), "gcc -print-file-name=%s", filename);
-    if (length < 0 || (size_t)length >= sizeof(command)) {
-        fprintf(stderr, "gcc query command is too long: %s\n", filename); // 中文：gcc 查询命令过长
-        return 1;
-    }
-    if (read_command_line(command, output, output_size) != 0) return 1;
-    if (!runtime_file_exists(output)) {
-        fprintf(stderr, "gcc could not find required file: %s\n", filename); // 中文：gcc 找不到必需文件
-        return 1;
-    }
-    return 0;
-}
-#endif
-
-#if !defined(_WIN32) && !defined(__APPLE__)
-// 在若干候选路径中选择第一个存在的文件。
-static const char *first_existing_file(const char *const paths[]) {
-    for (size_t index = 0; paths[index]; index++) {
-        if (runtime_file_exists(paths[index])) return paths[index];
-    }
-    return NULL;
-}
-#endif
-
-// 使用 ld 把目标文件和 Runtime 静态库链接成可执行文件。
+// 把目标文件和 Runtime 静态库链接成可执行文件。
 static int link_object_file(const char *object_file, const char *exe_file, int static_link) {
     if (!runtime_static_path[0]) {
         fprintf(stderr,
@@ -372,98 +344,17 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     };
     result = run_process(argv);
 #else
-    if (static_link) {
-        // Linux 静态链接需要启动文件，路径由 gcc 查询后交给 ld 使用。
-        char crt1[RUN_PATH_MAX];
-        char crti[RUN_PATH_MAX];
-        char crtn[RUN_PATH_MAX];
-        char crtbegin[RUN_PATH_MAX];
-        char crtend[RUN_PATH_MAX];
-        if (gcc_file_path("crt1.o", crt1, sizeof(crt1)) != 0 ||
-            gcc_file_path("crti.o", crti, sizeof(crti)) != 0 ||
-            gcc_file_path("crtn.o", crtn, sizeof(crtn)) != 0 ||
-            gcc_file_path("crtbeginT.o", crtbegin, sizeof(crtbegin)) != 0 ||
-            gcc_file_path("crtend.o", crtend, sizeof(crtend)) != 0) {
-            return 1;
-        }
-
-        char *const argv[] = {
-            "ld",
-            "-static",
-            "-o", (char *)exe_file,
-            crt1,
-            crti,
-            crtbegin,
-            (char *)object_file,
-            runtime_static_path,
-            "-L/usr/lib/x86_64-linux-gnu",
-            "-L/lib/x86_64-linux-gnu",
-            "-L/usr/lib/aarch64-linux-gnu",
-            "-L/lib/aarch64-linux-gnu",
-            "-L/usr/lib64",
-            "-L/lib64",
-            "-lc",
-            crtend,
-            crtn,
-            NULL
-        };
-        result = run_process(argv);
-    } else {
-        // Linux 动态链接需要手动补齐 C 运行时入口文件和动态链接器。
-        const char *const crt1_candidates[] = {
-            "/usr/lib/x86_64-linux-gnu/Scrt1.o",
-            "/usr/lib64/Scrt1.o",
-            "/usr/lib/Scrt1.o",
-            NULL
-        };
-        const char *const crti_candidates[] = {
-            "/usr/lib/x86_64-linux-gnu/crti.o",
-            "/usr/lib64/crti.o",
-            "/usr/lib/crti.o",
-            NULL
-        };
-        const char *const crtn_candidates[] = {
-            "/usr/lib/x86_64-linux-gnu/crtn.o",
-            "/usr/lib64/crtn.o",
-            "/usr/lib/crtn.o",
-            NULL
-        };
-        const char *const dynamic_linker_candidates[] = {
-            "/lib64/ld-linux-x86-64.so.2",
-            "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
-            "/lib/ld-linux-aarch64.so.1",
-            "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
-            NULL
-        };
-        const char *crt1 = first_existing_file(crt1_candidates);
-        const char *crti = first_existing_file(crti_candidates);
-        const char *crtn = first_existing_file(crtn_candidates);
-        const char *dynamic_linker = first_existing_file(dynamic_linker_candidates);
-        if (!crt1 || !crti || !crtn || !dynamic_linker) {
-            fprintf(stderr,
-                "error: system CRT files for direct ld linking were not found\n"); // 中文：找不到直接 ld 链接所需的系统 CRT 文件
-            return 1;
-        }
-        char *const argv[] = {
-            "ld",
-            "-dynamic-linker", (char *)dynamic_linker,
-            "-o", (char *)exe_file,
-            (char *)crt1,
-            (char *)crti,
-            (char *)object_file,
-            runtime_static_path,
-            "-L/usr/lib/x86_64-linux-gnu",
-            "-L/lib/x86_64-linux-gnu",
-            "-L/usr/lib/aarch64-linux-gnu",
-            "-L/lib/aarch64-linux-gnu",
-            "-L/usr/lib64",
-            "-L/lib64",
-            "-lc",
-            (char *)crtn,
-            NULL
-        };
-        result = run_process(argv);
-    }
+    // 由 C 编译器驱动选择当前架构的 CRT、动态链接器和 compiler runtime。
+    const char *linker = "cc";
+    char *const dynamic_argv[] = {
+        (char *)linker, "-no-pie", (char *)object_file, runtime_static_path,
+        "-o", (char *)exe_file, NULL
+    };
+    char *const static_argv[] = {
+        (char *)linker, "-static", "-no-pie", (char *)object_file,
+        runtime_static_path, "-o", (char *)exe_file, NULL
+    };
+    result = run_process(static_link ? static_argv : dynamic_argv);
 #endif
     if (result != 0) {
         fprintf(stderr, "link failed with linker exit code: %d\n", result); // 中文：链接失败，链接器退出码
