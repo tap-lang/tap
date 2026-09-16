@@ -1,7 +1,7 @@
 import std.memory as memory;
 
 fn main(): i32 {
-    let values: ptr<string> = memory.malloc(64);
+    let values: *string = memory.malloc(64);
     values[0] = "alpha";
     values[1] = "beta";
     print("%s %s\n", values[0], values[1]);

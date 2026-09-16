@@ -41,8 +41,8 @@ Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或
 
 | C ABI | 行为 |
 |---|---|
-| `__4yue_malloc(size): ptr<T>` | 分配堆内存；`size == 0` 时按 1 字节处理 |
-| `__4yue_realloc(pointer, size): ptr<T>` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
+| `__4yue_malloc(size): *T` | 分配堆内存；`size == 0` 时按 1 字节处理 |
+| `__4yue_realloc(pointer, size): *T` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
 | `__4yue_free(pointer): i32` | 释放堆内存；`NULL` 指针安全无操作；返回 `0` |
 
 这些函数由 `std.memory` 封装，底层 ABI 声明不需要出现在普通程序或其他容器模块中。

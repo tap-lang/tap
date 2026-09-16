@@ -1,14 +1,14 @@
 import std.memory as memory;
 
 fn main(): i32 {
-    let values: ptr<string> = memory.malloc<string>(16);
+    let values: *string = memory.malloc<string>(16);
     values[0] = "first";
 
     values = memory.realloc(values, 32);
     values[1] = "second";
     print("%s %s\n", values[0], values[1]);
 
-    let numbers: ptr<i32> = memory.malloc(8);
+    let numbers: *i32 = memory.malloc(8);
     numbers[0] = 20;
     numbers[1] = 22;
     print("%d\n", numbers[0] + numbers[1]);

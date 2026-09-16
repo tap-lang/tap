@@ -783,7 +783,7 @@ static VarTypeNode *copy_var_type(const VarTypeNode *source) {
     return create_var_type(source->type);
 }
 
-// 根据可寻址目标推断 `&target` 的完整 ptr<T> 类型。
+// 根据可寻址目标推断 `&target` 的完整 *T 类型。
 static VarTypeNode *infer_reference_type(
     CodeGenContext *context, const ReferenceNode *reference) {
     ASTNode *target = reference ? reference->target : NULL;

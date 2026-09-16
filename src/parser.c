@@ -173,6 +173,12 @@ static ImportNode *parse_import(Parser *parser) {
 }
 
 static VarTypeNode *parse_type(Parser *parser) {
+    if (parser->current_token->type == TOKEN_MULTIPLY) {
+        consume(parser, TOKEN_MULTIPLY);
+        VarTypeNode *element_type = parse_type(parser);
+        return create_pointer_type(element_type);
+    }
+
     if (parser->current_token->type == TOKEN_LBRACKET) {
         consume(parser, TOKEN_LBRACKET);
         VarTypeNode *element_type = parse_type(parser);
@@ -195,15 +201,6 @@ static VarTypeNode *parse_type(Parser *parser) {
 
     enum LiteralType type;
     enum TokenType token_type = parser->current_token->type;
-
-    if (token_type == TOKEN_IDENTIFIER &&
-        strcmp(parser->current_token->lexeme, "ptr") == 0) {
-        consume(parser, TOKEN_IDENTIFIER);
-        consume(parser, TOKEN_LESS_THAN);
-        VarTypeNode *element_type = parse_type(parser);
-        consume(parser, TOKEN_GREATER_THAN);
-        return create_pointer_type(element_type);
-    }
 
     switch (token_type) {
         case TOKEN_INT: type = LITERAL_INT; break;

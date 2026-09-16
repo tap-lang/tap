@@ -1,6 +1,6 @@
 import std.vec_string as vec;
 
-fn accept_values(values: ptr<StringVec>): i32 {
+fn accept_values(values: *StringVec): i32 {
     return 0;
 }
 

@@ -182,7 +182,7 @@ fn main(): i32 {
 }
 ```
 
-`StringVec` 内部使用 `ptr<string>` 和 Runtime 内存函数实现。`push` 和 `set` 作为语句调用时
+`StringVec` 内部使用 `*string` 和 Runtime 内存函数实现。`push` 和 `set` 作为语句调用时
 会自动把返回的结构体写回接收者；使用完后调用 `values.free()` 释放内部缓冲区。
 
 ## 实现模型

@@ -12,7 +12,7 @@ fn identity<T>(value: T): T {
     return value;
 }
 
-fn replace<T>(target: ptr<T>, value: T): i32 {
+fn replace<T>(target: *T, value: T): i32 {
     target[0] = value;
     return 0;
 }

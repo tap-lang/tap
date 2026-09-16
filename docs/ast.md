@@ -155,7 +155,7 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 `VarTypeNode` 当前也复用 `LiteralType` 表示声明类型。需要区分：`LiteralNode.literal_type`
 描述表达式中的值，`VarTypeNode.type` 描述变量、参数或函数返回值的类型注解。
 `VarTypeNode.is_array` 和 `VarTypeNode.is_pointer` 通过 `element_type` 递归描述 `[T; N]`
-和 `ptr<T>`，数组额外记录 `array_length`。
+和 `*T`，数组额外记录 `array_length`。
 
 十进制整数字面量默认创建为 `LITERAL_I32`，同时在 `integer_text` 中保留原文，使 Codegen
 可以直接构造超过 64 位的 `i128/u128` 常量。浮点和布尔构造函数已经存在，但尚未接入对应的

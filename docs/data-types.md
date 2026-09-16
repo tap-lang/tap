@@ -57,7 +57,7 @@ const VALUES: [i32; 4] = [0; 4];
 | 类型 | 描述 |
 | --- | --- |
 | `[T; N]` | 固定长度数组 |
-| `ptr<T>` | 指向 `T` 的裸指针 |
+| `*T` | 指向 `T` 的裸指针 |
 | `struct` | 结构体 |
 | `enum` | 枚举 |
 | `tuple` | 元组 |
@@ -132,14 +132,14 @@ print("%d\n", matrix[1][0]);
 
 ### 指针类型
 
-`ptr<T>` 表示指向 `T` 的裸指针，主要用于 Runtime ABI、引用传参和标准库容器。指针可以作为
+`*T` 表示指向 `T` 的裸指针，主要用于 Runtime ABI、引用传参和标准库容器。指针可以作为
 变量、函数参数和函数返回值使用，也可以通过下标读写元素。`&value` 取得可写变量的地址并
-产生 `ptr<T>`：
+产生 `*T`：
 
 ```text
 import std.memory as memory;
 
-fn increment(value: ptr<i32>): i32 {
+fn increment(value: *i32): i32 {
     value[0] = value[0] + 1;
     return 0;
 }
@@ -148,7 +148,7 @@ fn main(): i32 {
     let count: i32 = 0;
     increment(&count);
 
-    let values: ptr<string> = memory.malloc(64);
+    let values: *string = memory.malloc(64);
     values[0] = "hello";
     values[1] = "4yue";
     print("%s %s\n", values[0], values[1]);
@@ -162,7 +162,7 @@ fn main(): i32 {
 `&values[index]`；`let value_ref = &value;` 可以自动推断出对应的指针类型。因为尚未实现
 只读指针类型，`const` 常量不能取地址。指针下标不会自动检查边界，调用方必须保证容量足够。
 普通程序优先使用标准库封装，例如 `std.memory` 和 `std.vec_string`，只有编写底层库、引用传参
-或对接 C ABI 时才建议直接使用 `ptr<T>`。
+或对接 C ABI 时才建议直接使用 `*T`。
 
 ### 泛型函数
 

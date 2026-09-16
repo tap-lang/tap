@@ -36,9 +36,8 @@ static void print_var_type(const VarTypeNode *type) {
         print_var_type(type->element_type);
         printf("; %" PRIu64 "]", type->array_length);
     } else if (type->is_pointer) {
-        printf("ptr<");
+        printf("*");
         print_var_type(type->element_type);
-        printf(">");
     } else if (type->enum_name) {
         printf("%s", type->enum_name);
     } else if (type->struct_name) {

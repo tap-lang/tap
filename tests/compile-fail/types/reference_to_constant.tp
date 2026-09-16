@@ -1,6 +1,6 @@
 fn main(): i32 {
     const VALUE: i32 = 42;
-    let value_ref: ptr<i32> = &VALUE;
+    let value_ref: *i32 = &VALUE;
     value_ref[0] = 7;
     return 0;
 }
