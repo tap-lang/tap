@@ -34,6 +34,12 @@ TAP_RUNTIME_API const char *__tap_string_slice(
     const char *value, int64_t start, int64_t end);
 // 按 UTF-8 编码字节序比较两个字符串。
 TAP_RUNTIME_API int32_t __tap_string_compare(const char *left, const char *right);
+// 把字符串的指定字节数复制到调用方提供的缓冲区；调用方保证两端空间足够。
+TAP_RUNTIME_API int32_t __tap_string_copy_bytes(
+    const char *value, uint8_t *destination, size_t length);
+// 把指定长度的字节复制为 Runtime 管理的零结尾字符串；内容不能包含 NUL。
+TAP_RUNTIME_API const char *__tap_bytes_to_string(
+    const uint8_t *data, size_t length);
 
 // 分配堆内存；size 为 0 时 Runtime 会按 1 字节处理。
 TAP_RUNTIME_API void *__tap_malloc(size_t size);

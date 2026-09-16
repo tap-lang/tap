@@ -1,0 +1,27 @@
+import std.string_builder as builder;
+
+fn main(): i32 {
+    let output: StringBuilder = builder.with_capacity(1);
+    output.append("{\"name\":\"");
+    output.append("tap");
+    output.append("\"");
+    output.append_byte(125);
+
+    print("%llu\n", output.len());
+    print("%s\n", output.to_string());
+
+    let snapshot: string = output.to_string();
+    output.clear();
+    output.append("reset");
+    print("%s | %s\n", snapshot, output.to_string());
+    return output.free();
+}
+
+/** -- test
+- .stdout
+14
+{"name":"tap"}
+{"name":"tap"} | reset
+- .exit
+0
+-- */

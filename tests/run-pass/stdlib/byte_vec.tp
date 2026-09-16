@@ -1,0 +1,30 @@
+import std.byte_vec as bytes;
+
+fn main(): i32 {
+    let buffer: ByteVec = bytes.with_capacity(1);
+    buffer.extend("hello");
+    buffer.push(32);
+    buffer.extend("tap");
+    buffer.set(0, 72);
+
+    print("%llu %llu\n", buffer.len(), buffer.capacity());
+    print("%u %u %s\n", buffer.get(0), buffer.get(5), buffer.to_string());
+
+    let snapshot: string = buffer.to_string();
+    buffer.clear();
+    print("%llu %llu %s\n", buffer.len(), buffer.capacity(), snapshot);
+
+    buffer.extend("reset");
+    print("%s\n", buffer.to_string());
+    return buffer.free();
+}
+
+/** -- test
+- .stdout
+9 16
+72 32 Hello tap
+0 16 Hello tap
+reset
+- .exit
+0
+-- */

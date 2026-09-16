@@ -1,12 +1,12 @@
-
+// 圆周率的 f64 近似值。
 const PI: f64 = 3.141592653589793;
 
-// 平方
+// 返回 value 的平方。
 fn square(value: i32): i32 {
     return value * value;
 }
 
-// 绝对值
+// 返回 value 的绝对值。
 fn abs(value: i32): i32 {
     if (value < 0) {
         return -value;

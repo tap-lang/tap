@@ -212,3 +212,10 @@ fn main(): i32 {
 `StringVec` 通过堆内存保存元素，`push` 会在容量不足时自动扩容。`values.push(...)`
 和 `values.set(...)` 作为语句使用时会自动把返回的结构体写回 `values`。泛型函数已经可用，
 但泛型结构体尚未实现，因此当前仍没有 `Vec<T>`。
+
+### 动态字节与字符串构建
+
+`std.byte_vec.ByteVec` 提供可扩容的字节缓冲区，支持追加字符串或单个 `u8`、按下标读写、
+清空并复用容量，以及复制为 `string`。`std.string_builder.StringBuilder` 在它之上提供面向
+字符串构建的 `append()` 和 `append_byte()`。两个容器都持有堆内存，使用结束后应调用
+`free()`；详细 API 和示例见[标准库文档](std.md)。

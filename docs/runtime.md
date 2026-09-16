@@ -44,8 +44,11 @@ Runtime 的公开 ABI 声明位于 [`runtime/include/tap_runtime.h`](../runtime/
 | `__tap_string_byte_at(value, index): u8` | 读取 UTF-8 原始字节；越界时终止程序 |
 | `__tap_string_slice(value, start, end): string` | 复制 `[start, end)` 字节区间；无效边界时终止程序 |
 | `__tap_string_compare(left, right): i32` | 按 UTF-8 无符号字节序返回 `-1`、`0` 或 `1` |
+| `__tap_string_copy_bytes(value, destination, length): i32` | 把字符串字节批量复制到已有缓冲区 |
+| `__tap_bytes_to_string(data, length): string` | 把字节复制为零结尾字符串；内部 NUL 会终止程序 |
 
-`slice` 结果由 Runtime 跟踪，进程退出时统一释放。普通程序不应直接调用这些符号。
+`slice` 和 `bytes_to_string` 结果由 Runtime 跟踪，进程退出时统一释放。
+普通程序不应直接调用这些符号。
 
 ## 底层内存 ABI
 

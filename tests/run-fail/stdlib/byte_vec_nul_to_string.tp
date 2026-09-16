@@ -1,0 +1,15 @@
+import std.byte_vec as bytes;
+
+fn main(): i32 {
+    let buffer: ByteVec = bytes.new();
+    buffer.push(0);
+    print("%s\n", buffer.to_string());
+    return buffer.free();
+}
+
+/** -- test
+- .stderr
+ByteVec cannot convert bytes containing NUL to string
+- .exit
+1
+-- */

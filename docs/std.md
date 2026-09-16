@@ -60,6 +60,13 @@ fn main(): i32 {
 | `std.memory` | `malloc<T>(size: uint): *T` | 分配指定字节数的堆内存 |
 | `std.memory` | `realloc<T>(pointer: *T, size: uint): *T` | 调整已有堆内存大小 |
 | `std.memory` | `free<T>(pointer: *T): i32` | 释放堆内存，成功返回 `0` |
+| `std.byte_vec` | `ByteVec` | 可扩容的 `u8` 字节容器 |
+| `std.byte_vec` | `new()/with_capacity(capacity)` | 创建字节容器 |
+| `std.byte_vec` | `push/extend/get/set/clear` | 追加、读写和清空字节 |
+| `std.byte_vec` | `to_string(): string` | 复制有效字节为 Runtime 管理的字符串 |
+| `std.string_builder` | `StringBuilder` | 基于 `ByteVec` 的可增量字符串构建器 |
+| `std.string_builder` | `append/append_byte/clear` | 追加字符串或字节并复用容量 |
+| `std.string_builder` | `to_string(): string` | 获取与后续 Builder 修改无关的字符串快照 |
 | `std.vec_string` | `StringVec` | 可变长度字符串数组结构体 |
 | `std.vec_string` | `new(): StringVec` | 创建空字符串动态数组，初始容量为 8 |
 | `std.vec_string` | `len(vec: StringVec): i32` | 返回当前元素数量 |
@@ -136,6 +143,43 @@ fn main(): i32 {
 时，编译器会把返回的 `StringVec` 自动写回 `values`。`free` 只释放内部缓冲区，
 不会清空原结构体字段；释放后不要继续访问同一个 `StringVec`。
 
+`std.byte_vec` 示例：
+
+```text
+import std.byte_vec as bytes;
+
+fn main(): i32 {
+    let buffer: ByteVec = bytes.with_capacity(4);
+    buffer.extend("hello");
+    buffer.push(33);
+    print("%s\n", buffer.to_string());
+    return buffer.free();
+}
+```
+
+`ByteVec` 容量不足时按倍数扩容。`clear()` 只将长度置零并保留容量；
+`free()` 后不能继续访问容器。`to_string()` 会复制当前字节，因此之后清空或修改
+`ByteVec` 不会改变已返回的字符串。由于 tap `string` 使用结尾 NUL，包含 `0` 字节的
+`ByteVec` 不能转换为字符串。
+
+`std.string_builder` 示例：
+
+```text
+import std.string_builder as builder;
+
+fn main(): i32 {
+    let output: StringBuilder = builder.new();
+    output.append("{\"name\":\"");
+    output.append("tap");
+    output.append("\"}");
+    print("%s\n", output.to_string());
+    return output.free();
+}
+```
+
+`StringBuilder` 内部使用 `ByteVec`。`append()` 追加字符串的 UTF-8 字节，
+`append_byte()` 追加单个字节，`to_string()` 返回独立快照。
+
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
 
 ## Runtime ABI
@@ -157,6 +201,8 @@ extern fn __tap_env(index: i32): string;
 extern fn __tap_string_byte_at(value: string, index: i64): u8;
 extern fn __tap_string_slice(value: string, start: i64, end: i64): string;
 extern fn __tap_string_compare(left: string, right: string): i32;
+extern fn __tap_string_copy_bytes(value: string, destination: *u8, length: uint): i32;
+extern fn __tap_bytes_to_string(data: *u8, length: uint): string;
 extern fn __tap_malloc(size: uint): *i8;
 extern fn __tap_realloc(pointer: *i8, size: uint): *i8;
 extern fn __tap_free(pointer: *i8): i32;
@@ -201,8 +247,8 @@ Runtime 的 C ABI 声明位于
 ## Current Limits
 
 - 标准库函数目前只覆盖 `i32` 相关能力。
-- `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()` 和内容比较，但还没有
-  字符串拼接、查找、数值转换和 Unicode 码点级 API；详见[字符串文档](data-type-string.md)。
+- `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()` 和内容比较，动态构建可使用
+  `std.string_builder`；尚无 `+` 拼接、查找、数值转换和 Unicode 码点级 API。
 - 内建数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
   `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。动态字符串数组请使用
   `std.vec_string`。

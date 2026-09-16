@@ -1,11 +1,13 @@
 import std.memory as memory;
 
+// 使用堆内存保存可变数量的字符串引用；len 是元素数，cap 是已分配容量。
 struct StringVec {
     data: *string,
     len: i32,
     cap: i32,
 }
 
+// 使用默认容量 8 创建空字符串数组。
 fn new(): StringVec {
     return StringVec {
         data: memory.malloc(64),
@@ -14,10 +16,12 @@ fn new(): StringVec {
     };
 }
 
+// 返回当前保存的字符串数量。
 fn len(vec: StringVec): i32 {
     return vec.len;
 }
 
+// 在末尾追加字符串引用；容量不足时按 2 倍扩容。
 fn push(vec: StringVec, value: string): StringVec {
     if (vec.len == vec.cap) {
         vec.cap = vec.cap * 2;
@@ -28,6 +32,7 @@ fn push(vec: StringVec, value: string): StringVec {
     return vec;
 }
 
+// 返回指定位置的字符串；索引越界时输出错误并返回空字符串。
 fn get(vec: StringVec, index: i32): string {
     if (index < 0) {
         print("StringVec index out of bounds: index=%d, length=%d\n", index, vec.len);
@@ -40,6 +45,7 @@ fn get(vec: StringVec, index: i32): string {
     return vec.data[index];
 }
 
+// 替换指定位置的字符串；索引越界时输出错误并保持内容不变。
 fn set(vec: StringVec, index: i32, value: string): StringVec {
     if (index < 0) {
         print("StringVec index out of bounds: index=%d, length=%d\n", index, vec.len);
@@ -53,6 +59,7 @@ fn set(vec: StringVec, index: i32, value: string): StringVec {
     return vec;
 }
 
+// 释放内部指针数组；字符串本身不由 StringVec 持有，调用后不能继续使用此容器。
 fn free(vec: StringVec): i32 {
     return memory.free(vec.data);
 }

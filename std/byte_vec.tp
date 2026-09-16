@@ -1,0 +1,110 @@
+import std.memory as memory;
+
+// ByteVec 与 string 之间批量复制所需的内部 Runtime ABI。
+extern fn __tap_bytes_to_string(data: *u8, length: uint): string;
+extern fn __tap_string_copy_bytes(value: string, destination: *u8, length: uint): i32;
+
+// 使用堆内存保存可变长度字节；len 是有效长度，cap 是已分配容量。
+struct ByteVec {
+    data: *u8,
+    len: uint,
+    cap: uint,
+}
+
+// 创建至少具有一个字节容量的空缓冲区。
+fn with_capacity(capacity: uint): ByteVec {
+    if (capacity == 0) {
+        capacity = 1;
+    }
+    return ByteVec {
+        data: memory.malloc(capacity),
+        len: 0,
+        cap: capacity,
+    };
+}
+
+// 使用默认容量 16 创建空缓冲区。
+fn new(): ByteVec {
+    return with_capacity(16);
+}
+
+// 返回当前有效字节数。
+fn len(vec: ByteVec): uint {
+    return vec.len;
+}
+
+// 返回无需重新分配即可容纳的字节数。
+fn capacity(vec: ByteVec): uint {
+    return vec.cap;
+}
+
+// 确保容量不小于 minimum；需要扩容时按 2 倍增长。
+fn reserve(vec: ByteVec, minimum: uint): ByteVec {
+    if (minimum <= vec.cap) {
+        return vec;
+    }
+
+    let next_capacity: uint = vec.cap;
+    for (; next_capacity < minimum;) {
+        next_capacity = next_capacity * 2;
+    }
+    vec.data = memory.realloc(vec.data, next_capacity);
+    vec.cap = next_capacity;
+    return vec;
+}
+
+// 在末尾追加一个字节。
+fn push(vec: ByteVec, value: u8): ByteVec {
+    if (vec.len == vec.cap) {
+        vec = reserve(vec, vec.cap * 2);
+    }
+    vec.data[vec.len] = value;
+    vec.len++;
+    return vec;
+}
+
+// 在末尾批量追加 string 的 UTF-8 原始字节。
+fn extend(vec: ByteVec, value: string): ByteVec {
+    let value_length: uint = value.len();
+    vec = reserve(vec, vec.len + value_length);
+    if (value_length > 0) {
+        __tap_string_copy_bytes(value, &vec.data[vec.len], value_length);
+        vec.len = vec.len + value_length;
+    }
+    return vec;
+}
+
+// 读取指定字节；越界时输出错误并返回 0。
+fn get(vec: ByteVec, index: uint): u8 {
+    if (index >= vec.len) {
+        print("ByteVec index out of bounds: index=%llu, length=%llu\n", index, vec.len);
+        return 0;
+    }
+    return vec.data[index];
+}
+
+// 修改指定字节；越界时输出错误并保持内容不变。
+fn set(vec: ByteVec, index: uint, value: u8): ByteVec {
+    if (index >= vec.len) {
+        print("ByteVec index out of bounds: index=%llu, length=%llu\n", index, vec.len);
+        return vec;
+    }
+    vec.data[index] = value;
+    return vec;
+}
+
+// 清空有效内容但保留已分配容量，方便后续复用。
+fn clear(vec: ByteVec): ByteVec {
+    vec.len = 0;
+    return vec;
+}
+
+// 复制有效字节并返回独立字符串；内容包含 NUL 时 Runtime 会终止程序。
+fn to_string(vec: ByteVec): string {
+    return __tap_bytes_to_string(vec.data, vec.len);
+}
+
+// 释放内部缓冲区；调用后不能继续使用这个 ByteVec。
+fn free(vec: ByteVec): i32 {
+    return memory.free(vec.data);
+}

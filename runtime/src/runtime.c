@@ -102,6 +102,7 @@ static int read_escape_sequence_key(void) {
 static int32_t saved_argc = 0;
 static char **saved_argv = NULL;
 
+// Runtime 生成的字符串串成单向链表，在进程退出时统一释放。
 typedef struct TapOwnedString {
     struct TapOwnedString *next;
     char value[];
@@ -110,6 +111,7 @@ typedef struct TapOwnedString {
 static TapOwnedString *owned_strings = NULL;
 static int owned_string_cleanup_registered = 0;
 
+// 释放 slice、ByteVec.to_string 等 Runtime API 创建的全部字符串。
 static void free_owned_strings(void) {
     while (owned_strings) {
         TapOwnedString *next = owned_strings->next;
@@ -118,10 +120,11 @@ static void free_owned_strings(void) {
     }
 }
 
+// 分配带链表节点的字符串缓冲区，并只注册一次退出清理函数。
 static char *allocate_owned_string(size_t length) {
     TapOwnedString *allocation = malloc(sizeof(*allocation) + length + 1);
     if (!allocation) {
-        fprintf(stderr, "failed to allocate string slice\n");
+        fprintf(stderr, "failed to allocate runtime string\n");
         exit(1);
     }
     if (!owned_string_cleanup_registered) {
@@ -179,6 +182,7 @@ const char *__tap_env(int32_t index) {
     return TAP_ENVIRON[index];
 }
 
+// 按 UTF-8 原始字节读取；负数或超过 strlen(value) 的索引均为错误。
 uint8_t __tap_string_byte_at(const char *value, int64_t index) {
     size_t length = strlen(value);
     if (index < 0 || (uint64_t)index >= (uint64_t)length) {
@@ -189,6 +193,7 @@ uint8_t __tap_string_byte_at(const char *value, int64_t index) {
     return (uint8_t)(unsigned char)value[index];
 }
 
+// 复制半开区间 [start, end)，结果由 Runtime 持有到进程退出。
 const char *__tap_string_slice(const char *value, int64_t start, int64_t end) {
     size_t length = strlen(value);
     if (start < 0 || end < start || (uint64_t)end > (uint64_t)length) {
@@ -205,9 +210,29 @@ const char *__tap_string_slice(const char *value, int64_t start, int64_t end) {
     return result;
 }
 
+// 把 strcmp 的结果归一化，避免向 tap 暴露平台相关的具体返回值。
 int32_t __tap_string_compare(const char *left, const char *right) {
     int result = strcmp(left, right);
     return result < 0 ? -1 : result > 0 ? 1 : 0;
+}
+
+// ByteVec.extend 的批量复制入口；调用方保证源长度和目标容量均足够。
+int32_t __tap_string_copy_bytes(
+    const char *value, uint8_t *destination, size_t length) {
+    memcpy(destination, value, length);
+    return 0;
+}
+
+// 复制 ByteVec 的有效字节并补 NUL；内部 NUL 无法用 tap string 表示。
+const char *__tap_bytes_to_string(const uint8_t *data, size_t length) {
+    if (memchr(data, 0, length)) {
+        fprintf(stderr, "ByteVec cannot convert bytes containing NUL to string\n");
+        exit(1);
+    }
+    char *result = allocate_owned_string(length);
+    memcpy(result, data, length);
+    result[length] = '\0';
+    return result;
 }
 
 // 分配堆内存；size 为 0 时仍申请 1 字节，避免不同 C 库对 malloc(0) 的差异。

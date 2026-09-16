@@ -1,26 +1,30 @@
-// Runtime ABI declarations use a prefix so they never collide with libc symbols.
+// 跨平台终端、计时和随机数功能所需的内部 Runtime ABI。
 extern fn __tap_read_key(): i32;
 extern fn __tap_sleep_ms(milliseconds: i32): i32;
 extern fn __tap_clear_screen(): i32;
 extern fn __tap_random(maximum: i32): i32;
 
-// Public wrappers keep operating-system details outside normal tap programs.
+// 非阻塞读取一个按键；当前无按键或输入不是终端时返回 -1。
 fn read_key(): i32 {
     return __tap_read_key();
 }
 
+// 暂停指定毫秒数；参数为负数或系统调用失败时返回 -1。
 fn sleep_ms(milliseconds: i32): i32 {
     return __tap_sleep_ms(milliseconds);
 }
 
+// 清空终端并把光标移到左上角；操作成功时返回 0。
 fn clear_screen(): i32 {
     return __tap_clear_screen();
 }
 
+// 返回 [0, maximum) 范围内的伪随机整数；maximum 不大于 0 时返回 0。
 fn random(maximum: i32): i32 {
     return __tap_random(maximum);
 }
 
+// 返回两个 i32 中较小的值。
 fn min(a: i32, b: i32): i32 {
     if (a < b) {
         return a;
@@ -29,6 +33,7 @@ fn min(a: i32, b: i32): i32 {
     }
 }
 
+// 返回两个 i32 中较大的值。
 fn max(a: i32, b: i32): i32 {
     if (a > b) {
         return a;
@@ -36,4 +41,3 @@ fn max(a: i32, b: i32): i32 {
         return b;
     }
 }
-
