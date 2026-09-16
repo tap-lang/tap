@@ -1,0 +1,83 @@
+import std.memory as memory;
+
+// 保存同一类型的可变数量元素；data 指向堆缓冲区，len/cap 以元素为单位。
+struct Vec<T> {
+    data: *T,
+    len: uint,
+    cap: uint,
+}
+
+// 使用默认容量 8 创建空 Vec<T>；T 可由返回值目标类型推断。
+fn new<T>(): Vec<T> {
+    return with_capacity<T>(8);
+}
+
+// 使用指定初始容量创建空 Vec<T>，容量可以为 0。
+fn with_capacity<T>(capacity: uint): Vec<T> {
+    return Vec<T> {
+        data: memory.malloc<T>(sizeof(T) * capacity),
+        len: 0,
+        cap: capacity,
+    };
+}
+
+// 返回当前保存的元素数量。
+fn len<T>(vec: Vec<T>): uint {
+    return vec.len;
+}
+
+// 返回当前无需再次分配即可容纳的元素数量。
+fn capacity<T>(vec: Vec<T>): uint {
+    return vec.cap;
+}
+
+// 确保 Vec<T> 还能追加 additional 个元素，必要时按 2 倍扩容。
+fn reserve<T>(vec: Vec<T>, additional: uint): Vec<T> {
+    let required: uint = vec.len + additional;
+    if (required <= vec.cap) {
+        return vec;
+    }
+
+    let next_capacity: uint = vec.cap;
+    if (next_capacity == 0) {
+        next_capacity = 1;
+    }
+    while (next_capacity < required) {
+        next_capacity = next_capacity * 2;
+    }
+    vec.data = memory.realloc<T>(vec.data, sizeof(T) * next_capacity);
+    vec.cap = next_capacity;
+    return vec;
+}
+
+// 在末尾追加一个元素，并在容量不足时自动扩容。
+fn push<T>(vec: Vec<T>, value: T): Vec<T> {
+    vec = reserve<T>(vec, 1);
+    vec.data[vec.len] = value;
+    vec.len++;
+    return vec;
+}
+
+// 返回指定索引的元素；索引越界时终止程序。
+fn get<T>(vec: Vec<T>, index: uint): T {
+    assert(index < vec.len, "Vec index out of bounds");
+    return vec.data[index];
+}
+
+// 替换指定索引的元素；索引越界时终止程序。
+fn set<T>(vec: Vec<T>, index: uint, value: T): Vec<T> {
+    assert(index < vec.len, "Vec index out of bounds");
+    vec.data[index] = value;
+    return vec;
+}
+
+// 清空所有元素并保留已经分配的容量。
+fn clear<T>(vec: Vec<T>): Vec<T> {
+    vec.len = 0;
+    return vec;
+}
+
+// 释放内部缓冲区；元素拥有的其他资源不会被递归释放。
+fn free<T>(vec: Vec<T>): i32 {
+    return memory.free<T>(vec.data);
+}

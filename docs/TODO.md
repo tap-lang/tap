@@ -4,6 +4,6 @@
 1. [x] string.byte_at()、slice()、内容比较。
 2. [x] StringBuilder 和动态 ByteVec。
 3. [x] sizeof(T)。
-4. 泛型 Vec<T>。
+4. [x] 泛型 Vec<T>。
 5. 带载荷枚举或 tagged union。
 6. parse_f64、整数转换和 JSON 转义 API。

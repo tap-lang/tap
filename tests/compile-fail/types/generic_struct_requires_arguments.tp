@@ -1,0 +1,15 @@
+struct Box<T> {
+    value: T,
+}
+
+fn main(): i32 {
+    let box: Box = Box { value: 1 };
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: generic struct 'Box' requires type arguments
+- .exit
+1
+-- */

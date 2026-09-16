@@ -60,6 +60,10 @@ fn main(): i32 {
 | `std.memory` | `malloc<T>(size: uint): *T` | 分配指定字节数的堆内存 |
 | `std.memory` | `realloc<T>(pointer: *T, size: uint): *T` | 调整已有堆内存大小 |
 | `std.memory` | `free<T>(pointer: *T): i32` | 释放堆内存，成功返回 `0` |
+| `std.vec` | `Vec<T>` | 可扩容的泛型动态数组 |
+| `std.vec` | `new<T>()/with_capacity<T>(capacity)` | 创建空动态数组 |
+| `std.vec` | `len/capacity/reserve/push/get/set/clear` | 容量管理、追加、读写和清空元素 |
+| `std.vec` | `free<T>(vec): i32` | 释放内部缓冲区，不递归释放元素资源 |
 | `std.byte_vec` | `ByteVec` | 可扩容的 `u8` 字节容器 |
 | `std.byte_vec` | `new()/with_capacity(capacity)` | 创建字节容器 |
 | `std.byte_vec` | `push/extend/get/set/clear` | 追加、读写和清空字节 |
@@ -120,6 +124,26 @@ fn main(): i32 {
 `memory.malloc<i32>(8)` 显式指定元素类型，也可以根据变量声明中的 `*i32` 推断类型。
 `realloc` 和 `free` 会从传入的指针推断类型。分配大小和扩容大小的单位都是字节，调用方需要
 按元素大小正确计算容量；释放后不能继续访问原指针。
+
+`std.vec` 示例：
+
+```text
+import std.vec as vec;
+
+fn main(): i32 {
+    let values: Vec<i32> = vec.new();
+    values.push(10);
+    values.push(20);
+    values.set(1, 22);
+    print("%llu %d\n", values.len(), values.get(1));
+    return values.free();
+}
+```
+
+`Vec<T>` 的 `len` 和 `capacity` 使用 `uint`，索引也使用 `uint`。`get()` 和 `set()` 会在
+索引越界时终止程序。`clear()` 只把长度归零并保留容量；`free()`
+只释放 Vec 自己的元素缓冲区，不会递归释放元素持有的资源。`push()`、`set()`、`clear()`
+和 `reserve()` 作为方法语句调用时会自动把返回的新结构体写回接收者。
 
 `std.vec_string` 示例：
 

@@ -23,6 +23,17 @@ typedef struct {
     TypeSymbol *symbols;
 } GenericContext;
 
+static char *type_key(const VarTypeNode *type);
+static VarTypeNode *clone_type(const VarTypeNode *source);
+
+// 复制具名类型携带的泛型实参。
+static void clone_type_arguments(VarTypeNode *destination, ASTNode *arguments) {
+    for (ASTNode *argument = arguments; argument; argument = argument->next) {
+        add_var_type_argument(
+            destination, clone_type((VarTypeNode *)argument));
+    }
+}
+
 // 深拷贝一个完整类型节点。
 static VarTypeNode *clone_type(const VarTypeNode *source) {
     if (!source) return NULL;
@@ -33,8 +44,16 @@ static VarTypeNode *clone_type(const VarTypeNode *source) {
         return create_array_type(
             clone_type(source->element_type), source->array_length);
     }
-    if (source->struct_name) return create_struct_type(source->struct_name);
-    if (source->enum_name) return create_enum_type(source->enum_name);
+    if (source->struct_name) {
+        VarTypeNode *copy = create_struct_type(source->struct_name);
+        clone_type_arguments(copy, source->type_arguments);
+        return copy;
+    }
+    if (source->enum_name) {
+        VarTypeNode *copy = create_enum_type(source->enum_name);
+        clone_type_arguments(copy, source->type_arguments);
+        return copy;
+    }
     return create_var_type(source->type);
 }
 
@@ -55,7 +74,16 @@ static int type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     const char *left_name = left->struct_name ? left->struct_name : left->enum_name;
     const char *right_name = right->struct_name ? right->struct_name : right->enum_name;
     if (left_name || right_name) {
-        return left_name && right_name && strcmp(left_name, right_name) == 0;
+        if (!left_name || !right_name || strcmp(left_name, right_name) != 0) return 0;
+        ASTNode *left_argument = left->type_arguments;
+        ASTNode *right_argument = right->type_arguments;
+        while (left_argument && right_argument) {
+            if (!type_equal((VarTypeNode *)left_argument,
+                            (VarTypeNode *)right_argument)) return 0;
+            left_argument = left_argument->next;
+            right_argument = right_argument->next;
+        }
+        return !left_argument && !right_argument;
     }
     return left->type == right->type;
 }
@@ -205,6 +233,31 @@ static int unify_type(FunctionNode *function, const VarTypeNode *pattern,
                unify_type(function, pattern->element_type, actual->element_type,
                           bindings, only_unbound);
     }
+    const char *pattern_name = pattern->struct_name
+        ? pattern->struct_name : pattern->enum_name;
+    const char *actual_name = actual->struct_name
+        ? actual->struct_name : actual->enum_name;
+    if (pattern_name || actual_name) {
+        int same_name = pattern_name && actual_name &&
+            strcmp(pattern_name, actual_name) == 0;
+        int actual_is_specialization = pattern_name && actual_name &&
+            actual->type_arguments && actual->struct_name &&
+            strncmp(actual_name, pattern_name, strlen(pattern_name)) == 0 &&
+            actual_name[strlen(pattern_name)] == '$';
+        if (!same_name && !actual_is_specialization) {
+            return 0;
+        }
+        ASTNode *pattern_argument = pattern->type_arguments;
+        ASTNode *actual_argument = actual->type_arguments;
+        while (pattern_argument && actual_argument) {
+            if (!unify_type(function, (VarTypeNode *)pattern_argument,
+                            (VarTypeNode *)actual_argument, bindings,
+                            only_unbound)) return 0;
+            pattern_argument = pattern_argument->next;
+            actual_argument = actual_argument->next;
+        }
+        return !pattern_argument && !actual_argument;
+    }
     // 不含类型参数的具体类型仍交给现有类型检查器处理转换和诊断。
     return 1;
 }
@@ -228,7 +281,17 @@ static VarTypeNode *substitute_type(FunctionNode *function,
             substitute_type(function, source->element_type, bindings),
             source->array_length);
     }
-    return clone_type(source);
+    VarTypeNode *copy = source->struct_name
+        ? create_struct_type(source->struct_name)
+        : source->enum_name
+            ? create_enum_type(source->enum_name)
+            : create_var_type(source->type);
+    for (ASTNode *argument = source->type_arguments; argument;
+         argument = argument->next) {
+        add_var_type_argument(copy, substitute_type(
+            function, (VarTypeNode *)argument, bindings));
+    }
+    return copy;
 }
 
 // 声明泛型 AST 克隆入口，供表达式链表和语句克隆相互调用。
@@ -307,6 +370,10 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
         case NODE_STRUCT_LITERAL: {
             StructLiteralNode *literal = (StructLiteralNode *)source;
             StructLiteralNode *copy = create_struct_literal(literal->struct_name);
+            for (ASTNode *type = literal->type_arguments; type; type = type->next) {
+                add_struct_literal_type_argument(copy, substitute_type(
+                    template, (VarTypeNode *)type, bindings));
+            }
             for (ASTNode *node = literal->fields; node; node = node->next) {
                 StructInitFieldNode *field = (StructInitFieldNode *)node;
                 add_struct_init_field(copy, create_struct_init_field(
@@ -451,15 +518,270 @@ static char *type_key(const VarTypeNode *type) {
     const char *name = type->struct_name ? type->struct_name : type->enum_name;
     if (name) {
         size_t size = strlen(name) + 3;
+        for (ASTNode *argument = type->type_arguments; argument;
+             argument = argument->next) {
+            char *argument_key = type_key((VarTypeNode *)argument);
+            size += strlen(argument_key) + 1;
+            free(argument_key);
+        }
         char *key = (char *)malloc(size);
         if (!key) {
             fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             exit(1);
         }
         snprintf(key, size, "n_%s", name);
+        for (ASTNode *argument = type->type_arguments; argument;
+             argument = argument->next) {
+            char *argument_key = type_key((VarTypeNode *)argument);
+            strcat(key, "_");
+            strcat(key, argument_key);
+            free(argument_key);
+        }
         return key;
     }
     return strdup(scalar_names[type->type]);
+}
+
+static void materialize_type(GenericContext *context, VarTypeNode *type);
+
+// 为泛型结构体的具体实参组合生成稳定名称。
+static char *specialized_struct_name(
+    StructNode *template, ASTNode *type_arguments) {
+    size_t size = strlen(template->name) + 1;
+    for (ASTNode *argument = type_arguments; argument; argument = argument->next) {
+        char *key = type_key((VarTypeNode *)argument);
+        size += strlen(key) + 1;
+        free(key);
+    }
+    char *name = malloc(size);
+    if (!name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    strcpy(name, template->name);
+    for (ASTNode *argument = type_arguments; argument; argument = argument->next) {
+        char *key = type_key((VarTypeNode *)argument);
+        strcat(name, "$");
+        strcat(name, key);
+        free(key);
+    }
+    return name;
+}
+
+// 按具体类型实参克隆结构体字段，并把嵌套泛型类型一并实例化。
+static char *instantiate_struct(
+    GenericContext *context, StructNode *template, ASTNode *type_arguments) {
+    if (node_count(template->type_params) != node_count(type_arguments)) {
+        fprintf(stderr, "error: generic struct type argument count mismatch for '%s'\n",
+                template->name); // 中文：泛型结构体类型实参数量不匹配
+        exit(1);
+    }
+
+    char *name = specialized_struct_name(template, type_arguments);
+    StructNode *existing = find_struct(context->program, name);
+    if (existing) return name;
+
+    StructNode *copy = create_struct(name);
+    add_struct(context->program, copy);
+
+    TypeBinding *bindings = NULL;
+    ASTNode *parameter = template->type_params;
+    ASTNode *argument = type_arguments;
+    while (parameter && argument) {
+        bind_type(&bindings, ((IdentifierNode *)parameter)->name,
+                  (VarTypeNode *)argument);
+        parameter = parameter->next;
+        argument = argument->next;
+    }
+
+    FunctionNode substitution_scope = {0};
+    substitution_scope.type_params = template->type_params;
+    for (ASTNode *field = template->fields; field; field = field->next) {
+        StructFieldNode *source = (StructFieldNode *)field;
+        VarTypeNode *field_type = substitute_type(
+            &substitution_scope, source->field_type, bindings);
+        materialize_type(context, field_type);
+        add_struct_field(copy, create_struct_field(source->name, field_type));
+    }
+    free_bindings(bindings);
+    return name;
+}
+
+// 把 Vec<i32> 形式的类型引用改写为后端可直接使用的具体结构体名。
+static void materialize_type(GenericContext *context, VarTypeNode *type) {
+    if (!type) return;
+    if (type->is_pointer || type->is_array) {
+        materialize_type(context, type->element_type);
+        return;
+    }
+    for (ASTNode *argument = type->type_arguments; argument;
+         argument = argument->next) {
+        materialize_type(context, (VarTypeNode *)argument);
+    }
+
+    const char *name = type->struct_name ? type->struct_name : type->enum_name;
+    if (!name) return;
+    StructNode *structure = find_struct(context->program, name);
+    if (!structure) {
+        if (type->type_arguments) {
+            fprintf(stderr, "error: undefined generic struct type '%s'\n", name);
+            exit(1);
+        }
+        return;
+    }
+    if (!structure->type_params) {
+        if (type->type_arguments && !type->struct_name) {
+            fprintf(stderr, "error: struct '%s' is not generic\n", name);
+            exit(1);
+        }
+        if (!type->struct_name) {
+            type->struct_name = type->enum_name;
+            type->enum_name = NULL;
+        }
+        return;
+    }
+    if (!type->type_arguments) {
+        fprintf(stderr, "error: generic struct '%s' requires type arguments\n", name);
+        exit(1);
+    }
+
+    char *concrete_name = instantiate_struct(
+        context, structure, type->type_arguments);
+    free(type->enum_name);
+    free(type->struct_name);
+    type->enum_name = NULL;
+    type->struct_name = concrete_name;
+}
+
+static void materialize_expression(GenericContext *context, ASTNode *expression);
+
+// 递归实例化语句中出现的泛型结构体类型。
+static void materialize_statements(GenericContext *context, ASTNode *statement) {
+    for (; statement; statement = statement->next) {
+        switch (statement->type) {
+            case NODE_VAR_DECL: {
+                VarDeclNode *declaration = (VarDeclNode *)statement;
+                materialize_type(context, declaration->type);
+                materialize_expression(context, declaration->expression);
+                break;
+            }
+            case NODE_ASSIGNMENT:
+                materialize_expression(
+                    context, ((AssignmentNode *)statement)->expression);
+                break;
+            case NODE_INDEX_ASSIGNMENT: {
+                IndexAssignmentNode *assignment = (IndexAssignmentNode *)statement;
+                materialize_expression(context, (ASTNode *)assignment->target);
+                materialize_expression(context, assignment->expression);
+                break;
+            }
+            case NODE_RETURN:
+                materialize_expression(
+                    context, ((ReturnNode *)statement)->expression);
+                break;
+            case NODE_PRINT:
+                for (ASTNode *argument = ((PrintNode *)statement)->arguments;
+                     argument; argument = argument->next) {
+                    materialize_expression(context, argument);
+                }
+                break;
+            case NODE_FUNCTION_CALL:
+                materialize_expression(context, statement);
+                break;
+            case NODE_IF_STATEMENT: {
+                IfStatementNode *node = (IfStatementNode *)statement;
+                materialize_expression(context, node->condition);
+                materialize_statements(context, node->consequence);
+                materialize_statements(context, node->alternative);
+                break;
+            }
+            case NODE_FOR_STATEMENT: {
+                ForStatementNode *node = (ForStatementNode *)statement;
+                materialize_statements(context, node->initializer);
+                materialize_expression(context, node->condition);
+                materialize_statements(context, node->update);
+                materialize_statements(context, node->body);
+                break;
+            }
+            default:
+                break;
+        }
+    }
+}
+
+// 递归实例化表达式中的类型实参和结构体字面量。
+static void materialize_expression(GenericContext *context, ASTNode *expression) {
+    if (!expression) return;
+    switch (expression->type) {
+        case NODE_BINARY_OP: {
+            BinaryOpNode *node = (BinaryOpNode *)expression;
+            materialize_expression(context, node->left);
+            materialize_expression(context, node->right);
+            break;
+        }
+        case NODE_REFERENCE:
+            materialize_expression(
+                context, ((ReferenceNode *)expression)->target);
+            break;
+        case NODE_SIZEOF:
+            materialize_type(context, ((SizeofNode *)expression)->operand_type);
+            break;
+        case NODE_ARRAY_LITERAL:
+            for (ASTNode *element = ((ArrayLiteralNode *)expression)->elements;
+                 element; element = element->next) {
+                materialize_expression(context, element);
+            }
+            break;
+        case NODE_INDEX_EXPRESSION: {
+            IndexExpressionNode *node = (IndexExpressionNode *)expression;
+            materialize_expression(context, node->array);
+            materialize_expression(context, node->index);
+            break;
+        }
+        case NODE_FUNCTION_CALL: {
+            FunctionCallNode *call = (FunctionCallNode *)expression;
+            for (ASTNode *type = call->type_arguments; type; type = type->next) {
+                materialize_type(context, (VarTypeNode *)type);
+            }
+            for (ASTNode *argument = call->arguments; argument;
+                 argument = argument->next) {
+                materialize_expression(context, argument);
+            }
+            break;
+        }
+        case NODE_STRUCT_LITERAL: {
+            StructLiteralNode *literal = (StructLiteralNode *)expression;
+            VarTypeNode *type = create_enum_type(literal->struct_name);
+            for (ASTNode *argument = literal->type_arguments; argument;
+                 argument = argument->next) {
+                add_var_type_argument(type, clone_type((VarTypeNode *)argument));
+            }
+            materialize_type(context, type);
+            free(literal->struct_name);
+            literal->struct_name = strdup(
+                type->struct_name ? type->struct_name : type->enum_name);
+            free_ast(literal->type_arguments);
+            literal->type_arguments = NULL;
+            free_ast((ASTNode *)type);
+            for (ASTNode *field = literal->fields; field; field = field->next) {
+                materialize_expression(
+                    context, ((StructInitFieldNode *)field)->expression);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+// 实例化函数签名和函数体中出现的泛型结构体。
+static void materialize_function(
+    GenericContext *context, FunctionNode *function) {
+    for (ASTNode *type = function->param_types; type; type = type->next) {
+        materialize_type(context, (VarTypeNode *)type);
+    }
+    materialize_type(context, function->return_type);
+    materialize_statements(context, function->body);
 }
 
 // 根据模板名称和类型参数生成单态化函数名。
@@ -680,10 +1002,131 @@ static FunctionNode *specialize_call(GenericContext *context,
     FunctionNode *specialized = find_function(context->program, name);
     if (!specialized) {
         specialized = instantiate_function(template, bindings, name);
+        materialize_function(context, specialized);
         add_function(context->program, specialized);
     }
     free(call->name);
     call->name = strdup(name);
+    free(name);
+    free_ast(call->type_arguments);
+    call->type_arguments = NULL;
+    free_bindings(bindings);
+    return specialized;
+}
+
+// 返回模块内部函数名的最后一段，并忽略单态化后缀。
+static int function_base_matches(const char *function_name, const char *method_name) {
+    const char *base = strrchr(function_name, '.');
+    base = base ? base + 1 : function_name;
+    const char *suffix = strchr(base, '$');
+    size_t length = suffix ? (size_t)(suffix - base) : strlen(base);
+    return strlen(method_name) == length && strncmp(base, method_name, length) == 0;
+}
+
+// 查找 receiver.method(...) 对应的泛型函数模板。
+static FunctionNode *find_generic_method_template(
+    GenericContext *context, const char *method_name,
+    const VarTypeNode *receiver_type) {
+    for (ASTNode *node = context->program->functions; node; node = node->next) {
+        FunctionNode *function = (FunctionNode *)node;
+        if (function->type_params && function->param_types &&
+            function_base_matches(function->name, method_name)) {
+            TypeBinding *bindings = NULL;
+            int matches = unify_type(
+                function, (VarTypeNode *)function->param_types,
+                receiver_type, &bindings, 0);
+            free_bindings(bindings);
+            if (matches) return function;
+        }
+    }
+    return NULL;
+}
+
+// 根据结构体接收者和用户参数实例化泛型方法，调用名保留为 receiver.method。
+static FunctionNode *specialize_method_call(
+    GenericContext *context, FunctionCallNode *call,
+    const VarTypeNode *expected) {
+    const char *dot = strchr(call->name, '.');
+    if (!dot || dot == call->name || strchr(dot + 1, '.')) return NULL;
+
+    size_t receiver_length = (size_t)(dot - call->name);
+    char *receiver_name = malloc(receiver_length + 1);
+    if (!receiver_name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(receiver_name, call->name, receiver_length);
+    receiver_name[receiver_length] = '\0';
+    TypeSymbol *receiver = find_symbol(context, receiver_name);
+    free(receiver_name);
+    if (!receiver) return NULL;
+
+    FunctionNode *template = find_generic_method_template(
+        context, dot + 1, receiver->type);
+    if (!template) return NULL;
+    if (node_count(call->arguments) + 1 != node_count(template->params)) {
+        generic_call_error(call,
+            "generic method argument count mismatch for '%s'", dot + 1);
+    }
+
+    unsigned type_param_count = node_count(template->type_params);
+    unsigned explicit_count = node_count(call->type_arguments);
+    if (explicit_count > 0 && explicit_count != type_param_count) {
+        generic_call_error(call,
+            "generic function type argument count mismatch for '%s'", dot + 1);
+    }
+
+    TypeBinding *bindings = NULL;
+    ASTNode *type_parameter = template->type_params;
+    ASTNode *type_argument = call->type_arguments;
+    while (type_parameter && type_argument) {
+        if (!bind_type(&bindings, ((IdentifierNode *)type_parameter)->name,
+                       (VarTypeNode *)type_argument)) {
+            generic_call_error(call,
+                "conflicting generic type arguments for '%s'", dot + 1);
+        }
+        type_parameter = type_parameter->next;
+        type_argument = type_argument->next;
+    }
+
+    if (!unify_type(template, (VarTypeNode *)template->param_types,
+                    receiver->type, &bindings, 0)) {
+        generic_call_error(call,
+            "cannot infer compatible generic receiver for '%s'", dot + 1);
+    }
+
+    ASTNode *argument = call->arguments;
+    ASTNode *parameter_type = template->param_types->next;
+    while (argument && parameter_type) {
+        VarTypeNode *actual = process_expression(context, argument, NULL);
+        if (!actual || !unify_type(template, (VarTypeNode *)parameter_type,
+                                   actual, &bindings, 0)) {
+            free_ast((ASTNode *)actual);
+            generic_call_error(call,
+                "cannot infer compatible generic arguments for '%s'", dot + 1);
+        }
+        free_ast((ASTNode *)actual);
+        argument = argument->next;
+        parameter_type = parameter_type->next;
+    }
+    if (expected && template->return_type) {
+        unify_type(template, template->return_type, expected, &bindings, 1);
+    }
+    for (ASTNode *node = template->type_params; node; node = node->next) {
+        const char *name = ((IdentifierNode *)node)->name;
+        if (!find_binding(bindings, name)) {
+            generic_call_error(call,
+                "cannot infer generic type parameter '%s'", name);
+        }
+    }
+
+    char *name = specialized_name(template, bindings);
+    FunctionNode *specialized = find_function(context->program, name);
+    if (!specialized) {
+        specialized = instantiate_function(template, bindings, name);
+        materialize_function(context, specialized);
+        add_function(context->program, specialized);
+    }
     free(name);
     free_ast(call->type_arguments);
     call->type_arguments = NULL;
@@ -714,6 +1157,10 @@ static VarTypeNode *process_call(GenericContext *context,
     if (function && function->type_params) {
         function = specialize_call(context, call, function, expected);
         return clone_type(function->return_type);
+    }
+    if (!function) {
+        function = specialize_method_call(context, call, expected);
+        if (function) return clone_type(function->return_type);
     }
     if (call->type_arguments) {
         generic_call_error(call, "function '%s' is not generic", call->name);
@@ -798,7 +1245,12 @@ static VarTypeNode *process_expression(GenericContext *context,
                     definition ? definition->field_type : NULL);
                 free_ast((ASTNode *)ignored);
             }
-            return create_enum_type(literal->struct_name);
+            VarTypeNode *type = create_enum_type(literal->struct_name);
+            for (ASTNode *argument = literal->type_arguments; argument;
+                 argument = argument->next) {
+                add_var_type_argument(type, clone_type((VarTypeNode *)argument));
+            }
+            return type;
         }
         default:
             return expected ? clone_type(expected) : NULL;
@@ -911,6 +1363,22 @@ static void remove_templates(ProgramNode *program) {
     }
 }
 
+// 从程序中移除仅供单态化使用的泛型结构体模板。
+static void remove_struct_templates(ProgramNode *program) {
+    ASTNode **link = &program->structs;
+    while (*link) {
+        StructNode *structure = (StructNode *)*link;
+        if (!structure->type_params) {
+            link = &(*link)->next;
+            continue;
+        }
+        ASTNode *removed = *link;
+        *link = removed->next;
+        removed->next = NULL;
+        free_ast(removed);
+    }
+}
+
 // 在 LLVM 代码生成前实例化所有被调用的泛型函数。
 int specialize_generics(ProgramNode *program) {
     GenericContext context = {.program = program, .symbols = NULL};
@@ -919,7 +1387,29 @@ int specialize_generics(ProgramNode *program) {
         FunctionNode *function = (FunctionNode *)node;
         if (!function->type_params) process_function(&context, function);
     }
+    for (ASTNode *node = program ? program->structs : NULL;
+         node; node = node->next) {
+        StructNode *structure = (StructNode *)node;
+        if (!structure->type_params) {
+            for (ASTNode *field = structure->fields; field; field = field->next) {
+                materialize_type(
+                    &context, ((StructFieldNode *)field)->field_type);
+            }
+        }
+    }
+    for (ASTNode *node = program ? program->constants : NULL;
+         node; node = node->next) {
+        VarDeclNode *constant = (VarDeclNode *)node;
+        materialize_type(&context, constant->type);
+        materialize_expression(&context, constant->expression);
+    }
+    for (ASTNode *node = program ? program->functions : NULL;
+         node; node = node->next) {
+        FunctionNode *function = (FunctionNode *)node;
+        if (!function->type_params) materialize_function(&context, function);
+    }
     free_symbols(context.symbols);
     remove_templates(program);
+    remove_struct_templates(program);
     return 0;
 }

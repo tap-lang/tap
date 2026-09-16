@@ -1,0 +1,44 @@
+import std.vec as vec;
+
+struct Pair {
+    left: i32,
+    right: i32,
+}
+
+fn main(): i32 {
+    let numbers: Vec<i32> = vec.with_capacity(1);
+    numbers.push(10);
+    numbers.push(20);
+    numbers.push(30);
+    numbers.set(1, 22);
+    print("%llu %llu %d %d\n",
+          numbers.len(), numbers.capacity(), numbers.get(0), numbers.get(1));
+
+    numbers.clear();
+    numbers.push(40);
+    print("%llu %d\n", numbers.len(), numbers.get(0));
+
+    let words: Vec<string> = vec.new();
+    words.push("tap");
+    words.push("lang");
+    print("%s %s\n", words.get(0), words.get(1));
+
+    let pairs: Vec<Pair> = vec.new<Pair>();
+    pairs.push(Pair { left: 4, right: 2 });
+    let pair: Pair = pairs.get(0);
+    print("%d\n", pair.left + pair.right);
+
+    numbers.free();
+    words.free();
+    return pairs.free();
+}
+
+/** -- test
+- .stdout
+3 4 10 22
+1 40
+tap lang
+6
+- .exit
+0
+-- */

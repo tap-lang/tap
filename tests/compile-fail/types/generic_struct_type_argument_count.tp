@@ -1,0 +1,15 @@
+struct Box<T> {
+    value: T,
+}
+
+fn main(): i32 {
+    let box: Box<i32, string> = Box<i32, string> { value: 1 };
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: generic struct type argument count mismatch for 'Box'
+- .exit
+1
+-- */

@@ -107,6 +107,7 @@ typedef struct VarTypeNode {
     enum LiteralType type;  // 标量类型，数组节点中保留最终元素类型
     char *enum_name;        // 非空时表示枚举类型，后端按 i32 降低
     char *struct_name;      // 非空时表示结构体类型
+    ASTNode *type_arguments; // 泛型具名类型的实参列表（VarTypeNode）
     int is_array;
     int is_pointer;
     uint64_t array_length;
@@ -124,6 +125,7 @@ typedef struct {
 typedef struct {
     ASTNode base;
     char *name;            // 结构体类型名
+    ASTNode *type_params;  // 泛型类型参数列表（IdentifierNode）
     ASTNode *fields;       // 字段声明列表（StructFieldNode）
 } StructNode;
 
@@ -138,6 +140,7 @@ typedef struct {
 typedef struct {
     ASTNode base;
     char *struct_name;     // 结构体类型名
+    ASTNode *type_arguments; // 泛型结构体实参列表（VarTypeNode）
     ASTNode *fields;       // 初始化字段列表（StructInitFieldNode）
 } StructLiteralNode;
 
@@ -309,7 +312,11 @@ void add_constant(ProgramNode *program, VarDeclNode *constant);
 void add_enum(ProgramNode *program, EnumNode *enum_node);
 void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant);
 void add_struct(ProgramNode *program, StructNode *struct_node);
+void add_struct_type_param(StructNode *struct_node, IdentifierNode *type_param);
 void add_struct_field(StructNode *struct_node, StructFieldNode *field);
+void add_var_type_argument(VarTypeNode *type, VarTypeNode *type_argument);
+void add_struct_literal_type_argument(
+    StructLiteralNode *literal, VarTypeNode *type_argument);
 void add_struct_init_field(StructLiteralNode *literal, StructInitFieldNode *field);
 void add_import(ProgramNode *program, ImportNode *import_node);
 void add_param(FunctionNode *function, IdentifierNode *param);

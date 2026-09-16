@@ -535,6 +535,14 @@ static const char *function_base_name(const char *name) {
     return dot ? dot + 1 : name;
 }
 
+// 泛型函数单态化后带有 `$...` 后缀，方法查找只比较源语言中的基础名称。
+static int method_name_matches(const char *function_name, const char *method_name) {
+    const char *base = function_base_name(function_name);
+    const char *suffix = strchr(base, '$');
+    size_t length = suffix ? (size_t)(suffix - base) : strlen(base);
+    return strlen(method_name) == length && strncmp(base, method_name, length) == 0;
+}
+
 // 根据接收者完整类型和方法名查找可作为方法调用的函数。
 static FunctionNode *find_method_function(
     CodeGenContext *context, const VarTypeNode *receiver_type,
@@ -545,7 +553,7 @@ static FunctionNode *find_method_function(
         FunctionNode *function = (FunctionNode *)node;
         const VarTypeNode *first_param = function_param_var_type(function, 0);
         if (first_param && var_type_equal(first_param, receiver_type) &&
-            strcmp(function_base_name(function->name), method_name) == 0) {
+            method_name_matches(function->name, method_name)) {
             return function;
         }
     }
@@ -677,6 +685,11 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                 field_access_info(context, name, NULL, NULL, NULL);
             return field && var_type_equal(field->field_type, target_type);
         }
+        if (expression && expression->type == NODE_INDEX_EXPRESSION) {
+            const VarTypeNode *element_type =
+                indexed_value_type(context, expression);
+            return element_type && var_type_equal(element_type, target_type);
+        }
         return 0;
     }
     if (target_type->struct_name) {
@@ -707,6 +720,11 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
             return return_type && return_type->struct_name &&
                    strcmp(return_type->struct_name, target_type->struct_name) == 0;
         }
+        if (expression && expression->type == NODE_INDEX_EXPRESSION) {
+            const VarTypeNode *element_type =
+                indexed_value_type(context, expression);
+            return element_type && var_type_equal(element_type, target_type);
+        }
         return 0;
     }
     if (target_type->enum_name) {
@@ -734,6 +752,11 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
             const VarTypeNode *return_type = function_return_var_type(function);
             return return_type && return_type->enum_name &&
                    strcmp(return_type->enum_name, target_type->enum_name) == 0;
+        }
+        if (expression && expression->type == NODE_INDEX_EXPRESSION) {
+            const VarTypeNode *element_type =
+                indexed_value_type(context, expression);
+            return element_type && var_type_equal(element_type, target_type);
         }
         return 0;
     }

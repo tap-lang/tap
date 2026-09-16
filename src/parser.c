@@ -103,6 +103,38 @@ static int looks_like_generic_call(Parser *parser) {
     return result;
 }
 
+// 前瞻检查 `<...>` 后是否紧跟左花括号，用于识别泛型结构体字面量。
+static int looks_like_generic_struct_literal(Parser *parser) {
+    if (parser->current_token->type != TOKEN_LESS_THAN) return 0;
+
+    char *saved_current = parser->lexer->current;
+    int saved_line = parser->lexer->line;
+    int saved_column = parser->lexer->column;
+    int depth = 1;
+    int result = 0;
+
+    while (depth > 0) {
+        Token *token = get_next_token(parser->lexer);
+        if (token->type == TOKEN_EOF) {
+            free_token(token);
+            break;
+        }
+        if (token->type == TOKEN_LESS_THAN) depth++;
+        if (token->type == TOKEN_GREATER_THAN) depth--;
+        free_token(token);
+    }
+    if (depth == 0) {
+        Token *token = get_next_token(parser->lexer);
+        result = token->type == TOKEN_LBRACE;
+        free_token(token);
+    }
+
+    parser->lexer->current = saved_current;
+    parser->lexer->line = saved_line;
+    parser->lexer->column = saved_column;
+    return result;
+}
+
 static int is_module_component(const Token *token) {
     if ((token->type == TOKEN_STRING && token->value.string_value) ||
         !token->lexeme ||
@@ -221,11 +253,20 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_BOOL: type = LITERAL_BOOL; break;
         case TOKEN_STRING: type = LITERAL_STRING; break;
         case TOKEN_IDENTIFIER: {
-            char *enum_name = strdup(parser->current_token->lexeme);
+            char *type_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
-            VarTypeNode *enum_type = create_enum_type(enum_name);
-            free(enum_name);
-            return enum_type;
+            VarTypeNode *named_type = create_enum_type(type_name);
+            free(type_name);
+            if (parser->current_token->type == TOKEN_LESS_THAN) {
+                consume(parser, TOKEN_LESS_THAN);
+                add_var_type_argument(named_type, parse_type(parser));
+                while (parser->current_token->type == TOKEN_COMMA) {
+                    consume(parser, TOKEN_COMMA);
+                    add_var_type_argument(named_type, parse_type(parser));
+                }
+                consume(parser, TOKEN_GREATER_THAN);
+            }
+            return named_type;
         }
         default:
             parser_error(parser, "expected type"); // 中文：期望类型
@@ -319,6 +360,27 @@ static StructNode *parse_struct(Parser *parser) {
     consume(parser, TOKEN_IDENTIFIER);
     StructNode *struct_node = create_struct(struct_name);
     free(struct_name);
+
+    if (parser->current_token->type == TOKEN_LESS_THAN) {
+        consume(parser, TOKEN_LESS_THAN);
+        for (;;) {
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "expected generic type parameter"); // 中文：期望泛型类型参数
+            }
+            for (ASTNode *node = struct_node->type_params; node; node = node->next) {
+                if (strcmp(((IdentifierNode *)node)->name,
+                           parser->current_token->lexeme) == 0) {
+                    parser_error(parser, "duplicate generic type parameter"); // 中文：重复的泛型类型参数
+                }
+            }
+            add_struct_type_param(
+                struct_node, create_identifier(parser->current_token->lexeme));
+            consume(parser, TOKEN_IDENTIFIER);
+            if (parser->current_token->type != TOKEN_COMMA) break;
+            consume(parser, TOKEN_COMMA);
+        }
+        consume(parser, TOKEN_GREATER_THAN);
+    }
 
     consume(parser, TOKEN_LBRACE);
     if (parser->current_token->type == TOKEN_RBRACE) {
@@ -825,6 +887,15 @@ static ASTNode *parse_array_literal(Parser *parser) {
 // 解析结构体字面量：Type { field: value, ... }。
 static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name) {
     StructLiteralNode *literal = create_struct_literal((char *)struct_name);
+    if (parser->current_token->type == TOKEN_LESS_THAN) {
+        consume(parser, TOKEN_LESS_THAN);
+        add_struct_literal_type_argument(literal, parse_type(parser));
+        while (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            add_struct_literal_type_argument(literal, parse_type(parser));
+        }
+        consume(parser, TOKEN_GREATER_THAN);
+    }
     consume(parser, TOKEN_LBRACE);
 
     if (parser->current_token->type != TOKEN_RBRACE) {
@@ -900,7 +971,8 @@ static ASTNode *parse_primary(Parser *parser) {
         char *name = strdup(token->lexeme);
         consume(parser, token_type);
 
-        if (parser->current_token->type == TOKEN_LBRACE) {
+        if (parser->current_token->type == TOKEN_LBRACE ||
+            looks_like_generic_struct_literal(parser)) {
             ASTNode *literal = parse_struct_literal(parser, name);
             free(name);
             return literal;

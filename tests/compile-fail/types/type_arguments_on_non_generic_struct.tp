@@ -1,0 +1,15 @@
+struct Point {
+    x: i32,
+}
+
+fn main(): i32 {
+    let point: Point<i32> = Point<i32> { x: 1 };
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: struct 'Point' is not generic
+- .exit
+1
+-- */

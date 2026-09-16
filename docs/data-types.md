@@ -87,8 +87,8 @@ fn main(): i32 {
 
 ### 结构体类型
 
-结构体使用 `struct Name { ... }` 声明字段，字段通过 `value.field` 访问。第一版结构体是值类型，
-可以用于局部变量、函数参数和函数返回值。
+结构体使用 `struct Name { ... }` 声明字段，字段通过 `value.field` 访问。结构体是值类型，
+可以用于局部变量、函数参数和函数返回值。泛型结构体在名称后声明类型参数。
 
 ```text
 struct Point {
@@ -99,12 +99,20 @@ struct Point {
 fn move(point: Point): Point {
     return Point { x: point.x + 1, y: point.y + 1 };
 }
+
+struct Box<T> {
+    value: T,
+}
+
+let number: Box<i32> = Box<i32> { value: 42 };
 ```
 
 - 结构体字面量使用 `TypeName { field: value, ... }`。
 - 初始化时必须提供所有字段，字段名不能重复，也不能写不存在的字段。
 - 可对非 `const` 结构体变量的字段赋值，例如 `point.x = 10;`。
-- 当前不支持结构体方法和默认字段值。模块中的结构体可以被导入，但类型名会进入全局类型命名空间，
+- 泛型结构体必须提供全部类型实参；编译器按实际使用的类型组合生成具体结构体。
+- 当前不支持结构体内声明方法和默认字段值。模块级函数可以用结构体作为首个参数，之后通过
+  `value.method(...)` 调用。模块中的结构体可以被导入，但类型名会进入全局类型命名空间，
   还不支持 `module.TypeName` 这种限定类型名。
 
 ### 枚举类型
@@ -211,18 +219,18 @@ fn main(): i32 {
 
 编译器会在 LLVM Codegen 前按实际类型为每组调用生成具体函数，即编译期单态化；运行时不保存
 泛型类型信息。同一个泛型参数在一次调用中必须推断为兼容类型，无法推断或显式类型实参数量
-不匹配时会报错。当前只支持泛型函数，不支持泛型结构体、类型约束和默认类型实参。
+不匹配时会报错。泛型结构体使用相同的尖括号语法，例如 `Box<i32>`。当前不支持类型约束
+和默认类型实参。
 
-### 动态字符串数组
+### 泛型动态数组
 
-当前标准库提供了第一版专用动态数组 `std.vec_string.StringVec`，用于保存可变数量的
-`string`：
+标准库通过 `std.vec.Vec<T>` 提供泛型动态数组：
 
 ```text
-import std.vec_string as vec;
+import std.vec as vec;
 
 fn main(): i32 {
-    let values: StringVec = vec.new();
+    let values: Vec<string> = vec.new();
     values.push("hello");
     values.push("tap");
     print("%s\n", values.get(1));
@@ -231,9 +239,9 @@ fn main(): i32 {
 }
 ```
 
-`StringVec` 通过堆内存保存元素，`push` 会在容量不足时自动扩容。`values.push(...)`
-和 `values.set(...)` 作为语句使用时会自动把返回的结构体写回 `values`。泛型函数已经可用，
-但泛型结构体尚未实现，因此当前仍没有 `Vec<T>`。
+`Vec<T>` 通过堆内存保存元素，`push` 会在容量不足时自动扩容。`values.push(...)`
+和 `values.set(...)` 作为语句使用时会自动把返回的结构体写回 `values`。`get` 和 `set`
+会检查索引是否小于 `len`。原有的 `std.vec_string.StringVec` 仍然保留。
 
 ### 动态字节与字符串构建
 

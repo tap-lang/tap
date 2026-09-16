@@ -45,6 +45,15 @@ static void print_var_type(const VarTypeNode *type) {
     } else {
         printf("%s", literal_type_str(type->type));
     }
+    if (!type->is_array && !type->is_pointer && type->type_arguments) {
+        printf("<");
+        for (ASTNode *argument = type->type_arguments; argument;
+             argument = argument->next) {
+            print_var_type((VarTypeNode *)argument);
+            if (argument->next) printf(", ");
+        }
+        printf(">");
+    }
 }
 
 static const char *binary_op_str(enum BinaryOpType op) {
@@ -172,7 +181,16 @@ static void dump_expr(ASTNode *n, int depth) {
     case NODE_STRUCT_LITERAL: {
         StructLiteralNode *literal = (StructLiteralNode *)n;
         print_indent(depth);
-        printf("StructLiteral: %s {\n", literal->struct_name);
+        printf("StructLiteral: %s", literal->struct_name);
+        if (literal->type_arguments) {
+            printf("<");
+            for (ASTNode *type = literal->type_arguments; type; type = type->next) {
+                print_var_type((VarTypeNode *)type);
+                if (type->next) printf(", ");
+            }
+            printf(">");
+        }
+        printf(" {\n");
         for (ASTNode *field = literal->fields; field; field = field->next) {
             StructInitFieldNode *init = (StructInitFieldNode *)field;
             print_indent(depth + 2);
@@ -334,7 +352,16 @@ void print_ast(const ProgramNode *program) {
     for (ASTNode *node = program->structs; node; node = node->next) {
         if (node->type == NODE_STRUCT) {
             StructNode *struct_node = (StructNode *)node;
-            printf("  Struct: %s\n", struct_node->name);
+            printf("  Struct: %s", struct_node->name);
+            if (struct_node->type_params) {
+                printf("<");
+                for (ASTNode *type = struct_node->type_params; type; type = type->next) {
+                    printf("%s", ((IdentifierNode *)type)->name);
+                    if (type->next) printf(", ");
+                }
+                printf(">");
+            }
+            printf("\n");
             for (ASTNode *field = struct_node->fields; field; field = field->next) {
                 if (field->type == NODE_STRUCT_FIELD) {
                     StructFieldNode *struct_field = (StructFieldNode *)field;
@@ -471,6 +498,7 @@ StructNode *create_struct(char *name) {
     struct_node->base.type = NODE_STRUCT;
     struct_node->base.next = NULL;
     struct_node->name = strdup(name);
+    struct_node->type_params = NULL;
     struct_node->fields = NULL;
     return struct_node;
 }
@@ -499,6 +527,7 @@ StructLiteralNode *create_struct_literal(char *struct_name) {
     literal->base.type = NODE_STRUCT_LITERAL;
     literal->base.next = NULL;
     literal->struct_name = strdup(struct_name);
+    literal->type_arguments = NULL;
     literal->fields = NULL;
     return literal;
 }
@@ -693,6 +722,7 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->type = type;
     var_type->enum_name = NULL;
     var_type->struct_name = NULL;
+    var_type->type_arguments = NULL;
     var_type->is_array = 0;
     var_type->is_pointer = 0;
     var_type->array_length = 0;
@@ -916,6 +946,40 @@ void add_struct(ProgramNode *program, StructNode *struct_node) {
     current->next = (ASTNode *)struct_node;
 }
 
+// 向泛型结构体声明追加一个类型参数。
+void add_struct_type_param(StructNode *struct_node, IdentifierNode *type_param) {
+    if (!struct_node->type_params) {
+        struct_node->type_params = (ASTNode *)type_param;
+        return;
+    }
+    ASTNode *current = struct_node->type_params;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)type_param;
+}
+
+// 向具名类型追加一个泛型实参。
+void add_var_type_argument(VarTypeNode *type, VarTypeNode *type_argument) {
+    if (!type->type_arguments) {
+        type->type_arguments = (ASTNode *)type_argument;
+        return;
+    }
+    ASTNode *current = type->type_arguments;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)type_argument;
+}
+
+// 向结构体字面量追加一个泛型实参。
+void add_struct_literal_type_argument(
+    StructLiteralNode *literal, VarTypeNode *type_argument) {
+    if (!literal->type_arguments) {
+        literal->type_arguments = (ASTNode *)type_argument;
+        return;
+    }
+    ASTNode *current = literal->type_arguments;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)type_argument;
+}
+
 // 添加字段到结构体声明，保持源码中的字段顺序。
 void add_struct_field(StructNode *struct_node, StructFieldNode *field) {
     if (!struct_node->fields) {
@@ -1132,6 +1196,7 @@ void free_ast(ASTNode *node) {
         case NODE_STRUCT: {
             StructNode *struct_node = (StructNode *)node;
             free(struct_node->name);
+            free_ast(struct_node->type_params);
             free_ast(struct_node->fields);
             break;
         }
@@ -1144,6 +1209,7 @@ void free_ast(ASTNode *node) {
         case NODE_STRUCT_LITERAL: {
             StructLiteralNode *literal = (StructLiteralNode *)node;
             free(literal->struct_name);
+            free_ast(literal->type_arguments);
             free_ast(literal->fields);
             break;
         }
@@ -1194,6 +1260,7 @@ void free_ast(ASTNode *node) {
             VarTypeNode *var_type = (VarTypeNode *)node;
             free(var_type->enum_name);
             free(var_type->struct_name);
+            free_ast(var_type->type_arguments);
             free_ast((ASTNode *)var_type->element_type);
             break;
         }

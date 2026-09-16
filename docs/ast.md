@@ -13,7 +13,7 @@ AST 位于 Parser 和 LLVM Codegen 之间：
 
 - Parser 创建并连接 AST 节点。
 - `-parse` 通过 `print_ast()` 将 AST 打印到标准输出。
-- 泛型单态化处理泛型调用，生成具体函数并移除泛型模板。
+- 泛型单态化处理泛型调用和泛型结构体，生成具体声明并移除泛型模板。
 - Codegen 遍历不含泛型类型参数的 AST，生成函数、表达式和控制流对应的 LLVM IR。
 - 编译流程结束后，调用 `free_ast()` 释放 AST。
 
@@ -43,6 +43,8 @@ typedef struct ASTNode {
 | `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
 | `NODE_IMPORT` | `ImportNode` | 模块名、名称空间别名及导入声明的源文件位置 |
 | `NODE_FUNCTION` | `FunctionNode` | 函数名、泛型类型参数、普通参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明 |
+| `NODE_STRUCT` | `StructNode` | 结构体名、泛型类型参数和字段声明链表 |
+| `NODE_STRUCT_LITERAL` | `StructLiteralNode` | 结构体名、泛型类型实参和字段初始化链表 |
 | `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
@@ -60,7 +62,7 @@ typedef struct ASTNode {
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
 | `NODE_CONTINUE_STATEMENT` | `ASTNode` | 跳到当前循环的更新块 |
-| `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举类型，或通过 `element_type` 递归表示固定长度数组和指针 |
+| `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举和泛型类型实参，或通过 `element_type` 递归表示固定长度数组和指针 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或
 Parser 产物。
@@ -157,7 +159,8 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 `VarTypeNode` 当前也复用 `LiteralType` 表示声明类型。需要区分：`LiteralNode.literal_type`
 描述表达式中的值，`VarTypeNode.type` 描述变量、参数或函数返回值的类型注解。
 `VarTypeNode.is_array` 和 `VarTypeNode.is_pointer` 通过 `element_type` 递归描述 `[T; N]`
-和 `*T`，数组额外记录 `array_length`。
+和 `*T`，数组额外记录 `array_length`。具名类型的 `type_arguments` 保存 `Vec<i32>` 中的
+`i32` 等泛型实参。
 
 十进制整数字面量默认创建为 `LITERAL_I32`，同时在 `integer_text` 中保留原文，使 Codegen
 可以直接构造超过 64 位的 `i128/u128` 常量。浮点和布尔构造函数已经存在，但尚未接入对应的
@@ -173,11 +176,15 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 | `ProgramNode.functions` | `FunctionNode` |
 | `FunctionNode.params` | `IdentifierNode` |
 | `FunctionNode.type_params` | `IdentifierNode` |
+| `StructNode.type_params` | `IdentifierNode` |
+| `StructNode.fields` | `StructFieldNode` |
 | `FunctionNode.param_types` | `VarTypeNode` |
 | `FunctionNode.body` | 语句节点 |
 | `PrintNode.arguments` | 表达式节点 |
 | `FunctionCallNode.arguments` | 表达式节点 |
 | `FunctionCallNode.type_arguments` | `VarTypeNode` |
+| `VarTypeNode.type_arguments` | `VarTypeNode` |
+| `StructLiteralNode.type_arguments` | `VarTypeNode` |
 | `IfStatementNode.consequence` | 语句节点 |
 | `IfStatementNode.alternative` | 语句链表或单个 `IfStatementNode` |
 
@@ -238,13 +245,16 @@ Program
 ## 泛型单态化
 
 Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`，把
-`identity<i32>(...)` 中的 `i32` 保存到 `FunctionCallNode.type_arguments`。模块与 Prelude
+`identity<i32>(...)` 中的 `i32` 保存到 `FunctionCallNode.type_arguments`。泛型结构体的
+参数和实参分别保存在 `StructNode.type_params`、`VarTypeNode.type_arguments` 以及
+`StructLiteralNode.type_arguments`。模块与 Prelude
 加载完成后，`specialize_generics()` 根据显式类型实参、普通实参类型和调用目标类型推断绑定，
 克隆并替换函数 AST。例如 `identity<i32>(1)` 会生成内部函数 `identity$i32` 并改写调用名称。
 克隆 `SizeofNode` 时也会替换 `operand_type`，因此泛型函数可以使用 `sizeof(T)`。
 
-相同类型组合只生成一个具体函数，递归泛型调用也会指向同一个具体实例。全部可达调用处理完成后，
-泛型模板会从 `ProgramNode.functions` 删除，因此 Codegen 只接收具体类型。
+相同类型组合只生成一个具体函数或结构体，递归泛型调用也会指向同一个具体实例。例如
+`Vec<i32>` 会生成带稳定内部名称的具体结构体。全部可达调用处理完成后，泛型模板会从
+`ProgramNode.functions` 和 `ProgramNode.structs` 删除，因此 Codegen 只接收具体类型。
 
 ## Codegen 如何消费 AST
 
