@@ -49,6 +49,7 @@ typedef struct ASTNode {
 | `NODE_PRINT` | `PrintNode` | `arguments` 指向打印参数链表 |
 | `NODE_BINARY_OP` | `BinaryOpNode` | 操作符、左操作数和右操作数 |
 | `NODE_REFERENCE` | `ReferenceNode` | `target` 指向被取地址的变量、结构体字段或索引表达式 |
+| `NODE_SIZEOF` | `SizeofNode` | `operand_type` 保存 `sizeof(T)` 中的完整类型 |
 | `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型、初始化表达式，以及 `is_const` 声明标记 |
 | `NODE_ASSIGNMENT` | `AssignmentNode` | 被赋值变量名和新的值表达式 |
 | `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
@@ -124,6 +125,7 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 - 二元算术与比较表达式。
 - 可嵌套的固定长度数组字面量、多维数组索引表达式和指针索引表达式。
 - 取地址表达式；`&value` 使用 `ReferenceNode` 保存可寻址目标。
+- 类型大小表达式；`sizeof(T)` 使用 `SizeofNode` 保存完整类型并产生 `uint` 常量。
 - 一元负号；Parser 将 `-value` 转换成 `0 - value` 的 `BinaryOpNode`。
 
 `BinaryOpType` 定义了以下操作符：
@@ -239,6 +241,7 @@ Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`
 `identity<i32>(...)` 中的 `i32` 保存到 `FunctionCallNode.type_arguments`。模块与 Prelude
 加载完成后，`specialize_generics()` 根据显式类型实参、普通实参类型和调用目标类型推断绑定，
 克隆并替换函数 AST。例如 `identity<i32>(1)` 会生成内部函数 `identity$i32` 并改写调用名称。
+克隆 `SizeofNode` 时也会替换 `operand_type`，因此泛型函数可以使用 `sizeof(T)`。
 
 相同类型组合只生成一个具体函数，递归泛型调用也会指向同一个具体实例。全部可达调用处理完成后，
 泛型模板会从 `ProgramNode.functions` 删除，因此 Codegen 只接收具体类型。

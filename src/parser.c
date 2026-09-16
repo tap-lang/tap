@@ -852,9 +852,21 @@ static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name) {
     return (ASTNode *)literal;
 }
 
+// 解析 sizeof(T)；T 使用与变量声明相同的完整类型语法。
+static ASTNode *parse_sizeof_expression(Parser *parser) {
+    consume(parser, TOKEN_SIZEOF);
+    consume(parser, TOKEN_LPAREN);
+    VarTypeNode *operand_type = parse_type(parser);
+    consume(parser, TOKEN_RPAREN);
+    return (ASTNode *)create_sizeof(operand_type);
+}
+
 static ASTNode *parse_primary(Parser *parser) {
     Token *token = parser->current_token;
 
+    if (token->type == TOKEN_SIZEOF) {
+        return parse_sizeof_expression(parser);
+    }
     if (token->type == TOKEN_I32 && isdigit((unsigned char)token->lexeme[0])) {
         LiteralNode *int_literal = create_int_literal_text(token->lexeme);
         consume(parser, TOKEN_I32);

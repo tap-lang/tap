@@ -1,0 +1,11 @@
+fn main(): i32 {
+    let size: uint = sizeof<i32>;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: expected token `(`, but got `<`
+- .exit
+1
+-- */

@@ -1,0 +1,43 @@
+import std.memory as memory;
+
+enum Kind {
+    First,
+    Second,
+}
+
+struct Layout {
+    tag: u8,
+    value: i32,
+    tail: u16,
+}
+
+fn type_size<T>(): uint {
+    return sizeof(T);
+}
+
+fn main(): i32 {
+    print("%llu %llu %llu %llu %llu\n",
+          sizeof(u8), sizeof(u16), sizeof(i32), sizeof(i64), sizeof(i128));
+    print("%llu %llu %llu %llu\n",
+          sizeof(bool), sizeof(Kind), sizeof([u16; 3]), sizeof(Layout));
+
+    assert(sizeof(string) == sizeof(*u8), "string must have pointer size");
+    assert(sizeof(int) == sizeof(*i8), "int must have pointer size");
+    assert(type_size<Layout>() == sizeof(Layout), "generic sizeof must be substituted");
+
+    let values: *i32 = memory.malloc(sizeof(i32) * 3);
+    values[0] = 10;
+    values[1] = 20;
+    values[2] = 12;
+    print("%d\n", values[0] + values[1] + values[2]);
+    return memory.free(values);
+}
+
+/** -- test
+- .stdout
+1 2 4 8 16
+1 4 6 12
+42
+- .exit
+0
+-- */

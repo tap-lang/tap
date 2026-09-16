@@ -63,6 +63,28 @@ const VALUES: [i32; 4] = [0; 4];
 | `enum` | 枚举 |
 | `tuple` | 元组 |
 
+### 类型大小
+
+`sizeof(T)` 是编译期表达式，返回类型为 `uint`，表示 `T` 在输出目标 ABI 下占用的字节数。
+`T` 可以是标量、`string`、指针、固定长度数组、枚举、结构体或泛型类型参数：
+
+```text
+import std.memory as memory;
+
+fn type_size<T>(): uint {
+    return sizeof(T);
+}
+
+fn main(): i32 {
+    print("%llu %llu\n", sizeof(i32), sizeof([u16; 3]));
+    let values: *i32 = memory.malloc(sizeof(i32) * 8);
+    return memory.free(values);
+}
+```
+
+数组大小包含全部元素，结构体大小包含字段对齐产生的填充。`string` 保存字符串引用，因此
+`sizeof(string)` 等于目标平台的指针大小。`sizeof(T)` 不创建值，也不会分配运行时内存。
+
 ### 结构体类型
 
 结构体使用 `struct Name { ... }` 声明字段，字段通过 `value.field` 访问。第一版结构体是值类型，

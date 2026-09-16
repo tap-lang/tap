@@ -881,6 +881,8 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             }
             return type->type;
         }
+        case NODE_SIZEOF:
+            return LITERAL_UINT;
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             const char *receiver_name = NULL;
@@ -1787,6 +1789,12 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
         }
         case NODE_REFERENCE:
             return generate_reference(context, (ReferenceNode *)expression);
+        case NODE_SIZEOF: {
+            SizeofNode *size_expression = (SizeofNode *)expression;
+            validate_var_type(context, size_expression->operand_type);
+            return LLVMSizeOf(get_llvm_var_type(
+                context, size_expression->operand_type));
+        }
         case NODE_ARRAY_LITERAL:
             fprintf(stderr, "error: array literals can only be used to initialize array variables\n"); // 中文：数组字面量只能用于数组变量初始化
             exit(1);

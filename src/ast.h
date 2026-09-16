@@ -19,6 +19,7 @@ enum NodeType {
     NODE_PRINT,                     // 打印语句节点
     NODE_BINARY_OP,                 // 二元操作符节点
     NODE_REFERENCE,                 // 取地址表达式节点
+    NODE_SIZEOF,                    // 编译期类型大小表达式节点
     NODE_VAR_DECL,                  // 变量声明节点
     NODE_ASSIGNMENT,                // 赋值语句节点
     NODE_ARRAY_LITERAL,             // 数组字面量节点
@@ -207,6 +208,12 @@ typedef struct {
     ASTNode *target;       // 被取地址的可寻址表达式
 } ReferenceNode;
 
+// 编译期类型大小表达式节点
+typedef struct {
+    ASTNode base;
+    VarTypeNode *operand_type; // 要计算 ABI 大小的完整类型
+} SizeofNode;
+
 
 // 变量声明节点
 typedef struct {
@@ -284,6 +291,7 @@ PrintNode *create_print();
 void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 ReferenceNode *create_reference(ASTNode *target);
+SizeofNode *create_sizeof(VarTypeNode *operand_type);
 VarDeclNode *create_var_decl(
     char *name, VarTypeNode *type, ASTNode *expression, int is_const);
 AssignmentNode *create_assignment(const char *name, ASTNode *expression);

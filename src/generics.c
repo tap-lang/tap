@@ -286,6 +286,9 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
         case NODE_REFERENCE:
             return (ASTNode *)create_reference(clone_expression(
                 ((ReferenceNode *)source)->target, template, bindings));
+        case NODE_SIZEOF:
+            return (ASTNode *)create_sizeof(substitute_type(
+                template, ((SizeofNode *)source)->operand_type, bindings));
         case NODE_ARRAY_LITERAL: {
             ArrayLiteralNode *array = (ArrayLiteralNode *)source;
             ArrayLiteralNode *copy = create_array_literal();
@@ -760,6 +763,8 @@ static VarTypeNode *process_expression(GenericContext *context,
                 context, ((ReferenceNode *)expression)->target, NULL);
             return target ? create_pointer_type(target) : NULL;
         }
+        case NODE_SIZEOF:
+            return create_var_type(LITERAL_UINT);
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
             VarTypeNode *left = process_expression(context, binary->left, NULL);

@@ -120,6 +120,12 @@ static void dump_expr(ASTNode *n, int depth) {
         printf("Reference: &\n");
         dump_expr(((ReferenceNode *)n)->target, depth + 2);
         break;
+    case NODE_SIZEOF:
+        print_indent(depth);
+        printf("Sizeof: ");
+        print_var_type(((SizeofNode *)n)->operand_type);
+        printf("\n");
+        break;
     case NODE_ARRAY_LITERAL: {
         ArrayLiteralNode *array = (ArrayLiteralNode *)n;
         print_indent(depth);
@@ -662,6 +668,19 @@ ReferenceNode *create_reference(ASTNode *target) {
     return reference;
 }
 
+// 创建 sizeof(T) 表达式节点，并接管 operand_type 的所有权。
+SizeofNode *create_sizeof(VarTypeNode *operand_type) {
+    SizeofNode *size_expression = (SizeofNode *)malloc(sizeof(SizeofNode));
+    if (!size_expression) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    size_expression->base.type = NODE_SIZEOF;
+    size_expression->base.next = NULL;
+    size_expression->operand_type = operand_type;
+    return size_expression;
+}
+
 // 创建变量类型节点
 VarTypeNode *create_var_type(enum LiteralType type) {
     VarTypeNode *var_type = (VarTypeNode *)malloc(sizeof(VarTypeNode));
@@ -1166,6 +1185,9 @@ void free_ast(ASTNode *node) {
         }
         case NODE_REFERENCE:
             free_ast(((ReferenceNode *)node)->target);
+            break;
+        case NODE_SIZEOF:
+            free_ast((ASTNode *)((SizeofNode *)node)->operand_type);
             break;
         case NODE_VAR_TYPE: {
             // 数组类型递归拥有它的元素类型。
