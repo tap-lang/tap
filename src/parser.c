@@ -968,7 +968,7 @@ static ASTNode *parse_factor(Parser *parser) {
             consume(parser, TOKEN_LPAREN);
 
             // 将接收者作为第一个内部参数保存，后端据此生成字符串长度计算。
-            FunctionCallNode *call = create_function_call("__4yue_builtin_string_len");
+            FunctionCallNode *call = create_function_call("__tap_builtin_string_len");
             call->filename = strdup(parser->lexer->filename);
             call->line = line;
             call->column = column;

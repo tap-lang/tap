@@ -90,7 +90,7 @@ void configure_runtime(const char *compiler_path) {
 
     char compiler_dir[RUN_PATH_MAX];
     compiler_directory(compiler_path, compiler_dir, sizeof(compiler_dir));
-    const char *configured_dir = getenv("4YUE_RUNTIME_PATH");
+    const char *configured_dir = getenv("TAP_RUNTIME_PATH");
     const char *directories[3] = {
         configured_dir && *configured_dir ? configured_dir : compiler_dir,
         compiler_dir,
@@ -101,14 +101,14 @@ void configure_runtime(const char *compiler_path) {
     directories[2] = installed_dir;
 
 #ifdef _WIN32
-    const char *static_names[] = {"lib4yue_runtime.a", "4yue_runtime.lib", NULL};
-    const char *shared_names[] = {"4yue_runtime.dll", "lib4yue_runtime.dll", NULL};
+    const char *static_names[] = {"libtap_runtime.a", "tap_runtime.lib", NULL};
+    const char *shared_names[] = {"tap_runtime.dll", "libtap_runtime.dll", NULL};
 #elif defined(__APPLE__)
-    const char *static_names[] = {"lib4yue_runtime.a", NULL};
-    const char *shared_names[] = {"lib4yue_runtime.dylib", NULL};
+    const char *static_names[] = {"libtap_runtime.a", NULL};
+    const char *shared_names[] = {"libtap_runtime.dylib", NULL};
 #else
-    const char *static_names[] = {"lib4yue_runtime.a", NULL};
-    const char *shared_names[] = {"lib4yue_runtime.so", NULL};
+    const char *static_names[] = {"libtap_runtime.a", NULL};
+    const char *shared_names[] = {"libtap_runtime.so", NULL};
 #endif
 
     // 按配置目录、开发目录、安装目录的优先级搜索 Runtime。
@@ -183,7 +183,7 @@ static int create_temp_workspace(TempWorkspace *workspace) {
 
     const char *separator = temp_root[strlen(temp_root) - 1] == '/' ? "" : "/";
     int path_length = snprintf(workspace->directory, sizeof(workspace->directory),
-                               "%s%s4yue-XXXXXX", temp_root, separator);
+                               "%s%stap-XXXXXX", temp_root, separator);
     if (path_length < 0 || (size_t)path_length >= sizeof(workspace->directory) ||
         !mkdtemp(workspace->directory)) {
         fprintf(stderr, "failed to create temporary directory: %s\n", strerror(errno)); // 中文：创建临时目录失败
@@ -324,7 +324,7 @@ static const char *first_existing_file(const char *const paths[]) {
 static int link_object_file(const char *object_file, const char *exe_file, int static_link) {
     if (!runtime_static_path[0]) {
         fprintf(stderr,
-            "error: 4yue Runtime static library not found; set 4YUE_RUNTIME_PATH\n"); // 中文：找不到 4yue Runtime 静态库；请设置 4YUE_RUNTIME_PATH
+            "error: tap Runtime static library not found; set TAP_RUNTIME_PATH\n"); // 中文：找不到 tap Runtime 静态库；请设置 TAP_RUNTIME_PATH
         return 1;
     }
 
@@ -521,7 +521,7 @@ static int execute_file(const char *exe_file, int program_argc, char **program_a
     }
 #endif
 
-    // argv[0] 是程序路径，后续元素原样转发给 4yue 程序。
+    // argv[0] 是程序路径，后续元素原样转发给 tap 程序。
     char **argv = malloc(sizeof(char *) * ((size_t)program_argc + 2));
     if (!argv) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -573,7 +573,7 @@ int run_with_lli(CodeGenContext *context) {
         result = 1;
     } else if (!runtime_shared_path[0]) {
         fprintf(stderr,
-            "error: 4yue Runtime shared library not found; set 4YUE_RUNTIME_PATH\n"); // 中文：找不到 4yue Runtime 共享库；请设置 4YUE_RUNTIME_PATH
+            "error: tap Runtime shared library not found; set TAP_RUNTIME_PATH\n"); // 中文：找不到 tap Runtime 共享库；请设置 TAP_RUNTIME_PATH
         result = 1;
     } else {
         // lli 通过加载 Runtime 动态库向 extern 声明暴露符号。

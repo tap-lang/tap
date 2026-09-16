@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(4yue C)
+project(tap C)
 
 # Homebrew GCC uses its own fixed macOS headers; CMake's SDK sysroot mixes in
 # incompatible CommandLineTools headers and breaks standard includes.
@@ -19,16 +19,16 @@ option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 # Build both Runtime forms: native executables use the archive and lli loads the shared library.
-add_library(4yue_runtime STATIC runtime/src/runtime.c)
-target_include_directories(4yue_runtime PUBLIC runtime/include)
-set_target_properties(4yue_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(tap_runtime STATIC runtime/src/runtime.c)
+target_include_directories(tap_runtime PUBLIC runtime/include)
+set_target_properties(tap_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(4yue_runtime_shared SHARED runtime/src/runtime.c)
-target_include_directories(4yue_runtime_shared PUBLIC runtime/include)
-target_compile_definitions(4yue_runtime_shared PRIVATE FOUR_YUE_RUNTIME_SHARED=1)
-set_target_properties(4yue_runtime_shared PROPERTIES
-    OUTPUT_NAME 4yue_runtime
-    ARCHIVE_OUTPUT_NAME 4yue_runtime_shared
+add_library(tap_runtime_shared SHARED runtime/src/runtime.c)
+target_include_directories(tap_runtime_shared PUBLIC runtime/include)
+target_compile_definitions(tap_runtime_shared PRIVATE TAP_RUNTIME_SHARED=1)
+set_target_properties(tap_runtime_shared PROPERTIES
+    OUTPUT_NAME tap_runtime
+    ARCHIVE_OUTPUT_NAME tap_runtime_shared
 )
 
 # 设置C++标准
@@ -38,7 +38,7 @@ set_target_properties(4yue_runtime_shared PROPERTIES
 # 添加可执行文件
 add_executable(get_version src/scripts/get_version.c)
 
-add_executable(4yue
+add_executable(tap
     src/main.c
     src/helpers.c
     src/ast.c
@@ -52,8 +52,8 @@ add_executable(4yue
     src/run.c
     src/version.c
 )
-set_target_properties(4yue PROPERTIES LINKER_LANGUAGE C)
-add_dependencies(4yue 4yue_runtime 4yue_runtime_shared)
+set_target_properties(tap PROPERTIES LINKER_LANGUAGE C)
+add_dependencies(tap tap_runtime tap_runtime_shared)
 
 # 查找LLVM 限制版本大于21
 find_package(LLVM REQUIRED CONFIG)
@@ -88,23 +88,23 @@ add_custom_command(
 add_custom_target(generate_version DEPENDS ${CMAKE_SOURCE_DIR}/src/version.h)
 
 # 确保版本文件在构建前生成
-add_dependencies(4yue generate_version)
+add_dependencies(tap generate_version)
 
 # 链接LLVM库
 if(WIN32)
-    target_link_libraries(4yue ${llvm_libs})
+    target_link_libraries(tap ${llvm_libs})
     if(MSVC)
-        target_compile_definitions(4yue PRIVATE strdup=_strdup)
+        target_compile_definitions(tap PRIVATE strdup=_strdup)
     endif()
 else()
-    target_link_libraries(4yue ${llvm_libs} m)
+    target_link_libraries(tap ${llvm_libs} m)
 endif()
 
 if(BUILD_TESTS)
     enable_testing()
     add_test(
         NAME language-tests
-        COMMAND sh ${CMAKE_SOURCE_DIR}/tests/run-tests.sh $<TARGET_FILE:4yue>
+        COMMAND sh ${CMAKE_SOURCE_DIR}/tests/run-tests.sh $<TARGET_FILE:tap>
     )
     set_tests_properties(language-tests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -112,11 +112,11 @@ if(BUILD_TESTS)
 endif()
 
 # 安装目标
-install(TARGETS 4yue DESTINATION bin)
-install(TARGETS 4yue_runtime ARCHIVE DESTINATION lib)
-install(TARGETS 4yue_runtime_shared
+install(TARGETS tap DESTINATION bin)
+install(TARGETS tap_runtime ARCHIVE DESTINATION lib)
+install(TARGETS tap_runtime_shared
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
 )
-install(DIRECTORY runtime/include/ DESTINATION include/4yue)
-install(DIRECTORY std/ DESTINATION share/4yue/std FILES_MATCHING PATTERN "*.tp")
+install(DIRECTORY runtime/include/ DESTINATION include/tap)
+install(DIRECTORY std/ DESTINATION share/tap/std FILES_MATCHING PATTERN "*.tp")

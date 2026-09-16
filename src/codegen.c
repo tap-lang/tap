@@ -308,7 +308,7 @@ static VarDeclNode *find_global_constant(CodeGenContext *context, const char *na
 
 // 非标识符接收者由 Parser 降低为保留的内部调用名称。
 static int is_internal_string_len_call(const FunctionCallNode *call) {
-    return strcmp(call->name, "__4yue_builtin_string_len") == 0;
+    return strcmp(call->name, "__tap_builtin_string_len") == 0;
 }
 
 // 标识符接收者沿用限定调用表示，此函数取出点号前的变量名范围。
@@ -368,13 +368,13 @@ static const VarTypeNode *function_param_var_type(FunctionNode *function, unsign
 // 返回 LLVM 中使用的函数名；用户 main 会重命名为内部入口。
 static const char *llvm_function_name(const FunctionNode *function) {
     return function && !function->is_extern && strcmp(function->name, "main") == 0
-        ? "__4yue_user_main"
+        ? "__tap_user_main"
         : function->name;
 }
 
 // 将源语言调用名转换为 LLVM 调用名。
 static const char *llvm_call_name(const char *name) {
-    return strcmp(name, "main") == 0 ? "__4yue_user_main" : name;
+    return strcmp(name, "main") == 0 ? "__tap_user_main" : name;
 }
 
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression);
@@ -498,7 +498,7 @@ static LLVMValueRef generate_field_address(
         context->builder, struct_type, symbol->value, index, "struct_field_ptr");
 }
 
-// 取函数名最后一段，模块函数内部名如 __4yue_module_0.push 会得到 push。
+// 取函数名最后一段，模块函数内部名如 __tap_module_0.push 会得到 push。
 static const char *function_base_name(const char *name) {
     const char *dot = strrchr(name, '.');
     return dot ? dot + 1 : name;
@@ -566,16 +566,16 @@ static FunctionNode *resolve_method_call(
 // 判断调用是否返回使用 LLVM opaque pointer 的底层内存地址。
 static int is_runtime_memory_pointer_result(const FunctionCallNode *call) {
     return call &&
-        (strcmp(call->name, "__4yue_malloc") == 0 ||
-         strcmp(call->name, "__4yue_realloc") == 0);
+        (strcmp(call->name, "__tap_malloc") == 0 ||
+         strcmp(call->name, "__tap_realloc") == 0);
 }
 
 // 判断底层内存 ABI 的参数是否允许接收任意元素类型的裸指针。
 static int is_runtime_memory_pointer_argument(
     const FunctionCallNode *call, unsigned index) {
     if (!call || index != 0) return 0;
-    return strcmp(call->name, "__4yue_realloc") == 0 ||
-           strcmp(call->name, "__4yue_free") == 0;
+    return strcmp(call->name, "__tap_realloc") == 0 ||
+           strcmp(call->name, "__tap_free") == 0;
 }
 
 // 检查取地址表达式的目标类型是否与指针元素类型一致。
@@ -2572,9 +2572,9 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
     LLVMTypeRef init_args_params[2] = {int32_type, argv_type};
     LLVMTypeRef init_args_type = LLVMFunctionType(
         LLVMVoidTypeInContext(context->context), init_args_params, 2, 0);
-    LLVMValueRef init_args = LLVMGetNamedFunction(context->module, "__4yue_init_args");
+    LLVMValueRef init_args = LLVMGetNamedFunction(context->module, "__tap_init_args");
     if (!init_args) {
-        init_args = LLVMAddFunction(context->module, "__4yue_init_args", init_args_type);
+        init_args = LLVMAddFunction(context->module, "__tap_init_args", init_args_type);
     }
 
     LLVMTypeRef main_params[2] = {int32_type, argv_type};

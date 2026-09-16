@@ -13,7 +13,7 @@ esac
 
 TEST_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$TEST_ROOT/.." && pwd)
-COMPILER=${1:-"$PROJECT_ROOT/build/4yue"}
+COMPILER=${1:-"$PROJECT_ROOT/build/tap"}
 FILTER=${TEST_FILTER:-${2:-}}
 
 case "$COMPILER" in
@@ -26,7 +26,7 @@ if [ ! -x "$COMPILER" ]; then
     exit 2
 fi
 
-TEMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/4yue-tests.XXXXXX") || exit 2
+TEMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/tap-tests.XXXXXX") || exit 2
 trap 'rm -rf "$TEMP_ROOT"' EXIT HUP INT TERM
 
 MODULE_PATH="$TEST_ROOT/fixtures"
@@ -192,7 +192,7 @@ run_case() {
     fi
 
     if [ "$case_mode" = "compile-fail" ]; then
-        env "4YUE_MODULE_PATH=$MODULE_PATH" "4YUE_STD_PATH=$STD_PATH" \
+        env "TAP_MODULE_PATH=$MODULE_PATH" "TAP_STD_PATH=$STD_PATH" \
             "$COMPILER" -ir -o "$TEMP_ROOT/$total.ll" "$relative_file" \
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?
@@ -204,7 +204,7 @@ run_case() {
                 set -- "$@" "$program_arg"
             done < "$expected_args_file"
         fi
-        env "4YUE_MODULE_PATH=$MODULE_PATH" "4YUE_STD_PATH=$STD_PATH" \
+        env "TAP_MODULE_PATH=$MODULE_PATH" "TAP_STD_PATH=$STD_PATH" \
             "$@" \
             >"$stdout_file" 2>"$stderr_file"
         case_status=$?

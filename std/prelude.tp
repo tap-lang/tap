@@ -1,24 +1,24 @@
 // Runtime ABI declarations use a prefix so they never collide with libc symbols.
-extern fn __4yue_read_key(): i32;
-extern fn __4yue_sleep_ms(milliseconds: i32): i32;
-extern fn __4yue_clear_screen(): i32;
-extern fn __4yue_random(maximum: i32): i32;
+extern fn __tap_read_key(): i32;
+extern fn __tap_sleep_ms(milliseconds: i32): i32;
+extern fn __tap_clear_screen(): i32;
+extern fn __tap_random(maximum: i32): i32;
 
-// Public wrappers keep operating-system details outside normal 4yue programs.
+// Public wrappers keep operating-system details outside normal tap programs.
 fn read_key(): i32 {
-    return __4yue_read_key();
+    return __tap_read_key();
 }
 
 fn sleep_ms(milliseconds: i32): i32 {
-    return __4yue_sleep_ms(milliseconds);
+    return __tap_sleep_ms(milliseconds);
 }
 
 fn clear_screen(): i32 {
-    return __4yue_clear_screen();
+    return __tap_clear_screen();
 }
 
 fn random(maximum: i32): i32 {
-    return __4yue_random(maximum);
+    return __tap_random(maximum);
 }
 
 fn min(a: i32, b: i32): i32 {

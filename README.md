@@ -1,6 +1,6 @@
-# 4yue lang
+# tap lang
 
-一个后端使用LLVM的编程语言 `4yue` ：自研词法 / 语法分析，生成 **LLVM IR**，默认链接为可执行文件（依赖本机 LLVM 工具链）。
+一个后端使用LLVM的编程语言 `tap` ：自研词法 / 语法分析，生成 **LLVM IR**，默认链接为可执行文件（依赖本机 LLVM 工具链）。
 
 ## 依赖
 
@@ -12,7 +12,7 @@ macOS（Homebrew）示例：`brew install llvm`，并保证能解析到对应 `i
 
 ## 构建
 
-**Make（默认生成 `build/4yue`）**
+**Make（默认生成 `build/tap`）**
 
 ```bash
 make
@@ -31,7 +31,7 @@ make SANITIZE=1
 mkdir -p build && cd build
 cmake ..
 cmake --build .
-# 可执行文件位于 build/4yue（与 CMake 生成目录一致）
+# 可执行文件位于 build/tap（与 CMake 生成目录一致）
 ```
 
 版本号由 C 生成器 `src/scripts/get_version.c` 从 git 生成 `src/version.h`。
@@ -39,8 +39,8 @@ cmake --build .
 ## 用法
 
 ```text
-4yue [选项] <源文件>
-4yue run [选项] <源文件>
+tap [选项] <源文件>
+tap run [选项] <源文件>
 ```
 
 源文件扩展名无强制要求，仓库内示例多为 `.tp`。
@@ -71,21 +71,21 @@ cmake --build .
 ### 示例
 
 ```bash
-./build/4yue tests/run-pass/basics/hello.tp
-./build/4yue -static -o hello-static tests/run-pass/basics/hello.tp
-./build/4yue run tests/run-pass/basics/hello.tp
-./build/4yue -o hello.bin tests/run-pass/basics/hello.tp
-./build/4yue -ir -o out.ll tests/run-pass/functions/fibonacci.tp
-./build/4yue -emit-wasm -o out.wasm tests/run-pass/functions/fibonacci.tp
-./build/4yue -run-lli tests/run-pass/basics/print.tp
-./build/4yue -lex tests/run-pass/functions/fibonacci.tp
-./build/4yue -parse tests/run-pass/functions/fibonacci.tp
+./build/tap tests/run-pass/basics/hello.tp
+./build/tap -static -o hello-static tests/run-pass/basics/hello.tp
+./build/tap run tests/run-pass/basics/hello.tp
+./build/tap -o hello.bin tests/run-pass/basics/hello.tp
+./build/tap -ir -o out.ll tests/run-pass/functions/fibonacci.tp
+./build/tap -emit-wasm -o out.wasm tests/run-pass/functions/fibonacci.tp
+./build/tap -run-lli tests/run-pass/basics/print.tp
+./build/tap -lex tests/run-pass/functions/fibonacci.tp
+./build/tap -parse tests/run-pass/functions/fibonacci.tp
 ```
 
 交互式贪吃蛇示例支持 WASD 和终端方向键真实键值，按 `q` 退出：
 
 ```bash
-./build/4yue run examples/snake.tp
+./build/tap run examples/snake.tp
 ```
 
 ## For 循环
@@ -132,7 +132,7 @@ square(value: i32): i32  # import std.math; 后通过 math.square(...) 调用
 ```
 
 Prelude 中的函数名不能在用户源码中重复定义。编译器依次从环境变量
-`4YUE_STD_PATH`、当前目录的 `std`、可执行文件相邻的源码或安装目录查找
+`TAP_STD_PATH`、当前目录的 `std`、可执行文件相邻的源码或安装目录查找
 `prelude.tp`。`-lex` 和 `-parse` 只处理指定源文件，不加载 Prelude。
 终端、休眠和随机数接口的行为见 [Runtime 文档](docs/runtime.md)。
 

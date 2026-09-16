@@ -1,6 +1,6 @@
 # 字符串
 
-本文档描述 4yue 当前已经实现的 `string` 类型，包括字符串字面量、变量、函数传递、
+本文档描述 tap 当前已经实现的 `string` 类型，包括字符串字面量、变量、函数传递、
 输出、固定长度字符串数组和标准库动态字符串数组。尚未实现的能力集中列在[当前限制](#当前限制)中。
 
 ## 字符串字面量
@@ -8,7 +8,7 @@
 字符串字面量使用双引号包围：
 
 ```text
-let message: string = "Hello, 4yue!";
+let message: string = "Hello, tap!";
 ```
 
 当前支持以下转义序列：
@@ -31,7 +31,7 @@ print("tab:\tquote:\" slash:\\\n");
 文本：
 
 ```text
-print("你好，4月！\n");
+print("你好，世界！\n");
 ```
 
 未列出的转义序列没有稳定语义，不应依赖。
@@ -42,7 +42,7 @@ print("你好，4月！\n");
 
 ```text
 let greeting: string = "Hello";
-let name = "4yue";
+let name = "tap";
 
 greeting = "Hi";
 print("%s, %s!\n", greeting, name);
@@ -51,7 +51,7 @@ print("%s, %s!\n", greeting, name);
 字符串常量必须显式标注类型，初始化后不能重新赋值：
 
 ```text
-const LANGUAGE: string = "4yue";
+const LANGUAGE: string = "tap";
 ```
 
 ## 函数参数与返回值
@@ -220,7 +220,7 @@ fn main(): i32 {
 可以只运行这些测试：
 
 ```bash
-TEST_FILTER=types/strings.tp sh tests/run-tests.sh build/4yue
-TEST_FILTER=types/string_arrays.tp sh tests/run-tests.sh build/4yue
-TEST_FILTER=types/string_length.tp sh tests/run-tests.sh build/4yue
+TEST_FILTER=types/strings.tp sh tests/run-tests.sh build/tap
+TEST_FILTER=types/string_arrays.tp sh tests/run-tests.sh build/tap
+TEST_FILTER=types/string_length.tp sh tests/run-tests.sh build/tap
 ```

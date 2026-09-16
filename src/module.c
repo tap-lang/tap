@@ -152,7 +152,7 @@ static char *resolve_module_path(
     if (!relative) return NULL;
 
     if (is_std_module(import_node->module_name)) {
-        const char *std_path = getenv("4YUE_STD_PATH");
+        const char *std_path = getenv("TAP_STD_PATH");
         if (std_path && std_path[0] != '\0') {
             char *std_relative = module_relative_path(import_node->module_name + 4);
             char *candidate = std_relative ? join_path(std_path, std_relative) : NULL;
@@ -174,7 +174,7 @@ static char *resolve_module_path(
         return resolved;
     }
 
-    const char *module_path = getenv("4YUE_MODULE_PATH");
+    const char *module_path = getenv("TAP_MODULE_PATH");
     if (module_path && module_path[0] != '\0') {
         resolved = existing_canonical_path(join_path(module_path, relative));
         if (resolved) {
@@ -202,7 +202,7 @@ static char *resolve_module_path(
             return resolved;
         }
 
-        candidate = join_path(directory, "../share/4yue");
+        candidate = join_path(directory, "../share/tap");
         char *install_root = candidate;
         candidate = install_root ? join_path(install_root, relative) : NULL;
         free(install_root);
@@ -274,7 +274,7 @@ static LoadedModule *create_loaded_module(ModuleContext *context, const char *pa
     }
 
     char prefix[64];
-    snprintf(prefix, sizeof(prefix), "__4yue_module_%u", context->next_module_id++);
+    snprintf(prefix, sizeof(prefix), "__tap_module_%u", context->next_module_id++);
     module->path = copy_string(path);
     module->prefix = copy_string(prefix);
     if (!module->path || !module->prefix) {
@@ -471,7 +471,7 @@ static void append_functions(ProgramNode *destination, ProgramNode *source) {
     }
 }
 
-// 将模块成员名解析为内部唯一符号名，例如 math.PI -> __4yue_module_0.PI。
+// 将模块成员名解析为内部唯一符号名，例如 math.PI -> __tap_module_0.PI。
 static char *resolve_exported_name(
     const char *name, LoadedModule *current_module, ImportBinding *bindings) {
     char *dot = strchr(name, '.');
@@ -637,7 +637,7 @@ static int rewrite_statement_list(
 static int rewrite_call(
     FunctionCallNode *call, LoadedModule *current_module, ImportBinding *bindings) {
     // 内建字符串方法不是模块函数，不参与模块导出名称重写。
-    if (strcmp(call->name, "__4yue_builtin_string_len") == 0) return 0;
+    if (strcmp(call->name, "__tap_builtin_string_len") == 0) return 0;
 
     char *dot = strchr(call->name, '.');
     ModuleExport *export = NULL;

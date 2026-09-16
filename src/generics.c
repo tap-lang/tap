@@ -724,7 +724,7 @@ static VarTypeNode *process_call(GenericContext *context,
         free_ast((ASTNode *)ignored);
     }
     if (function && function->return_type) return clone_type(function->return_type);
-    if (strcmp(call->name, "__4yue_builtin_string_len") == 0 ||
+    if (strcmp(call->name, "__tap_builtin_string_len") == 0 ||
         strstr(call->name, ".len")) {
         return create_var_type(LITERAL_UINT);
     }

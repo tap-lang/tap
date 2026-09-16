@@ -13,8 +13,8 @@
 
 // 打印用法
 static void print_usage() {
-    printf("用法: 4yue [选项] <源文件>\n");
-    printf("      4yue run [选项] <源文件> [-- 程序参数...]\n");
+    printf("用法: tap [选项] <源文件>\n");
+    printf("      tap run [选项] <源文件> [-- 程序参数...]\n");
     printf("命令:\n");
     printf("  run               编译为本地可执行文件并运行\n");
     printf("选项:\n");

@@ -1,4 +1,4 @@
-#include "4yue_runtime.h"
+#include "tap_runtime.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -18,10 +18,10 @@
 
 #ifdef _WIN32
 extern char **_environ;
-#define FOUR_YUE_ENVIRON _environ
+#define TAP_ENVIRON _environ
 #else
 extern char **environ;
-#define FOUR_YUE_ENVIRON environ
+#define TAP_ENVIRON environ
 #endif
 
 #ifndef _WIN32
@@ -101,65 +101,65 @@ static int read_escape_sequence_key(void) {
 static int32_t saved_argc = 0;
 static char **saved_argv = NULL;
 
-void __4yue_init_args(int32_t argc, char **argv) {
+void __tap_init_args(int32_t argc, char **argv) {
     saved_argc = argc;
     saved_argv = argv;
 }
 
-int32_t __4yue_argc(void) {
+int32_t __tap_argc(void) {
     return saved_argc;
 }
 
-const char *__4yue_arg(int32_t index) {
+const char *__tap_arg(int32_t index) {
     if (index < 0 || index >= saved_argc || !saved_argv || !saved_argv[index]) {
         return "";
     }
     return saved_argv[index];
 }
 
-// 获取指定名称的环境变量；不存在时返回空字符串，方便 4yue 侧直接当 string 使用。
-const char *__4yue_env_var(const char *name) {
+// 获取指定名称的环境变量；不存在时返回空字符串，方便 tap 侧直接当 string 使用。
+const char *__tap_env_var(const char *name) {
     if (!name || !name[0]) return "";
     const char *value = getenv(name);
     return value ? value : "";
 }
 
 // 返回当前进程环境变量数量。
-int32_t __4yue_envc(void) {
+int32_t __tap_envc(void) {
     int32_t count = 0;
-    if (!FOUR_YUE_ENVIRON) return 0;
-    while (FOUR_YUE_ENVIRON[count]) {
+    if (!TAP_ENVIRON) return 0;
+    while (TAP_ENVIRON[count]) {
         count++;
     }
     return count;
 }
 
 // 按索引返回环境变量原始条目，格式为 NAME=VALUE；越界时返回空字符串。
-const char *__4yue_env(int32_t index) {
-    if (index < 0 || !FOUR_YUE_ENVIRON) return "";
+const char *__tap_env(int32_t index) {
+    if (index < 0 || !TAP_ENVIRON) return "";
     for (int32_t current = 0; current <= index; current++) {
-        if (!FOUR_YUE_ENVIRON[current]) return "";
+        if (!TAP_ENVIRON[current]) return "";
     }
-    return FOUR_YUE_ENVIRON[index];
+    return TAP_ENVIRON[index];
 }
 
 // 分配堆内存；size 为 0 时仍申请 1 字节，避免不同 C 库对 malloc(0) 的差异。
-void *__4yue_malloc(size_t size) {
+void *__tap_malloc(size_t size) {
     return malloc(size == 0 ? 1 : size);
 }
 
 // 调整堆内存大小；size 为 0 时仍保留 1 字节，调用者可用返回 NULL 判断失败。
-void *__4yue_realloc(void *pointer, size_t size) {
+void *__tap_realloc(void *pointer, size_t size) {
     return realloc(pointer, size == 0 ? 1 : size);
 }
 
-// 释放由 4yue Runtime 分配的堆内存；NULL 指针安全无操作，返回 0 方便 4yue 调用。
-int32_t __4yue_free(void *pointer) {
+// 释放由 tap Runtime 分配的堆内存；NULL 指针安全无操作，返回 0 方便 tap 调用。
+int32_t __tap_free(void *pointer) {
     free(pointer);
     return 0;
 }
 
-int32_t __4yue_read_key(void) {
+int32_t __tap_read_key(void) {
 #ifdef _WIN32
     // Windows arrow and function keys use a prefix byte followed by a scan code.
     if (!_kbhit()) return -1;
@@ -177,7 +177,7 @@ int32_t __4yue_read_key(void) {
 #endif
 }
 
-int32_t __4yue_sleep_ms(int32_t milliseconds) {
+int32_t __tap_sleep_ms(int32_t milliseconds) {
     if (milliseconds < 0) return -1;
 
 #ifdef _WIN32
@@ -196,7 +196,7 @@ int32_t __4yue_sleep_ms(int32_t milliseconds) {
     return 0;
 }
 
-int32_t __4yue_clear_screen(void) {
+int32_t __tap_clear_screen(void) {
 #ifdef _WIN32
     // Enable ANSI escape processing for modern Windows terminals when possible.
     HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -211,7 +211,7 @@ int32_t __4yue_clear_screen(void) {
     return fflush(stdout) == 0 ? 0 : -1;
 }
 
-int32_t __4yue_random(int32_t maximum) {
+int32_t __tap_random(int32_t maximum) {
     static uint32_t state = 0;
     if (maximum <= 0) return 0;
 

@@ -42,7 +42,7 @@ fn main(): i32 {
     for (; game_over == 0;) {
         // Two terminal columns per cell compensate for characters being roughly twice as tall.
         clear_screen();
-        print("4yue Snake | WASD/arrows: move | q: quit | score: %d\n", score);
+        print("tap Snake | WASD/arrows: move | q: quit | score: %d\n", score);
         for (let border_x: i32 = 0; border_x < width; border_x++) {
             // A cactus emoji fills one two-column wall cell.
             print("🌵");

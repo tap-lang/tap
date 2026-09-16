@@ -26,7 +26,7 @@
 
 - 每个用例必须提供 `.exit`。
 - `.stdout` 和 `.stderr` 可省略；省略时对应输出必须为空。
-- `.args` 可省略；提供时仅用于 `run-pass` 和 `run-fail`，每行作为一个独立程序参数，并通过 `--` 传给 `4yue run` 生成的程序。
+- `.args` 可省略；提供时仅用于 `run-pass` 和 `run-fail`，每行作为一个独立程序参数，并通过 `--` 传给 `tap run` 生成的程序。
 - `compile-fail` 必须提供 `.stderr`，其中每个非空行都必须出现在诊断中。
 - 文本比较忽略 CRLF 差异和每行尾部空白，保留行首缩进。内嵌期望和外部期望文件都会使用相同规则归一化。
 
@@ -60,8 +60,8 @@ tests/compile-fail/lexer/unterminated_block_comment.stderr
 ```sh
 make test
 TEST_FILTER=module make test
-./tests/run-tests.sh ./build/4yue
-./tests/run-tests.sh ./build/4yue hello
+./tests/run-tests.sh ./build/tap
+./tests/run-tests.sh ./build/tap hello
 ```
 
 测试脚本当前按文件名串行执行。编译器内部使用独立临时目录，并发执行时不会共享中间文件。

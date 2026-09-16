@@ -74,7 +74,7 @@ static char *compiler_directory(const char *compiler_path) {
 }
 
 static char *resolve_prelude_path(const char *compiler_path) {
-    const char *std_path = getenv("4YUE_STD_PATH");
+    const char *std_path = getenv("TAP_STD_PATH");
     if (std_path && std_path[0] != '\0') {
         char *candidate = join_path(std_path, "prelude.tp");
         if (candidate && file_exists(candidate)) return candidate;
@@ -93,7 +93,7 @@ static char *resolve_prelude_path(const char *compiler_path) {
     }
     free(candidate);
 
-    candidate = join_path(directory, "../share/4yue/std/prelude.tp");
+    candidate = join_path(directory, "../share/tap/std/prelude.tp");
     free(directory);
     if (candidate && file_exists(candidate)) return candidate;
     free(candidate);
@@ -145,7 +145,7 @@ int load_prelude(ProgramNode *program, const char *compiler_path) {
     char *path = resolve_prelude_path(compiler_path);
     if (!path) {
         fprintf(stderr,
-            "error: standard library prelude.tp not found; run from the project directory or set 4YUE_STD_PATH\n"); // 中文：找不到标准库 prelude.tp；请从项目目录运行，或设置 4YUE_STD_PATH
+            "error: standard library prelude.tp not found; run from the project directory or set TAP_STD_PATH\n"); // 中文：找不到标准库 prelude.tp；请从项目目录运行，或设置 TAP_STD_PATH
         return 1;
     }
 

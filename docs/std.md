@@ -1,8 +1,8 @@
 # Standard Library
 
-4yue 标准库由两部分组成：
+tap 标准库由两部分组成：
 
-- `std/*.tp`：用 4yue 编写的标准库源码。
+- `std/*.tp`：用 tap 编写的标准库源码。
 - `runtime/`：用 C 实现的 Runtime ABI，提供需要操作系统支持的能力。
 
 编译器会自动加载 `std/prelude.tp`。其他标准库模块通过 `import std.xxx;`
@@ -86,7 +86,7 @@ fn main(): i32 {
 使用 `run` 传递被编译程序的参数时，用 `--` 分隔编译器参数和程序参数：
 
 ```sh
-4yue run app.tp -- alpha beta
+tap run app.tp -- alpha beta
 ```
 
 `std.memory` 示例：
@@ -99,7 +99,7 @@ fn main(): i32 {
     let values: *string = memory.malloc<string>(16);
     values[0] = "hello";
     values = memory.realloc(values, 32);
-    values[1] = "4yue";
+    values[1] = "tap";
 
     // 根据变量的 *i32 类型推断 T。
     let numbers: *i32 = memory.malloc(8);
@@ -122,7 +122,7 @@ import std.vec_string as vec;
 fn main(): i32 {
     let values: StringVec = vec.new();
     values.push("hello");
-    values.push("4yue");
+    values.push("tap");
 
     print("%d\n", values.len());
     print("%s %s\n", values.get(0), values.get(1));
@@ -140,30 +140,30 @@ fn main(): i32 {
 
 ## Runtime ABI
 
-Runtime 提供 Prelude 无法用纯 4yue 表达的能力。Runtime 函数使用 `__4yue_`
+Runtime 提供 Prelude 无法用纯 tap 表达的能力。Runtime 函数使用 `__tap_`
 前缀，避免和用户函数或 libc 符号冲突：
 
 ```text
-extern fn __4yue_read_key(): i32;
-extern fn __4yue_sleep_ms(milliseconds: i32): i32;
-extern fn __4yue_clear_screen(): i32;
-extern fn __4yue_random(maximum: i32): i32;
-extern fn __4yue_argc(): i32;
-extern fn __4yue_arg(index: i32): string;
-extern fn __4yue_env_var(name: string): string;
-extern fn __4yue_envc(): i32;
-extern fn __4yue_env(index: i32): string;
-extern fn __4yue_malloc(size: uint): *i8;
-extern fn __4yue_realloc(pointer: *i8, size: uint): *i8;
-extern fn __4yue_free(pointer: *i8): i32;
+extern fn __tap_read_key(): i32;
+extern fn __tap_sleep_ms(milliseconds: i32): i32;
+extern fn __tap_clear_screen(): i32;
+extern fn __tap_random(maximum: i32): i32;
+extern fn __tap_argc(): i32;
+extern fn __tap_arg(index: i32): string;
+extern fn __tap_env_var(name: string): string;
+extern fn __tap_envc(): i32;
+extern fn __tap_env(index: i32): string;
+extern fn __tap_malloc(size: uint): *i8;
+extern fn __tap_realloc(pointer: *i8, size: uint): *i8;
+extern fn __tap_free(pointer: *i8): i32;
 // 内存 ABI 由 std.memory 统一声明和封装。
 ```
 
 普通程序应调用 Prelude 封装后的 `read_key`、`sleep_ms`、`clear_screen`
-和 `random`，以及 `std.env`、`std.memory` 封装后的函数，不要直接调用 `__4yue_` 前缀函数。
+和 `random`，以及 `std.env`、`std.memory` 封装后的函数，不要直接调用 `__tap_` 前缀函数。
 
 Runtime 的 C ABI 声明位于
-[`runtime/include/4yue_runtime.h`](../runtime/include/4yue_runtime.h)，实现位于
+[`runtime/include/tap_runtime.h`](../runtime/include/tap_runtime.h)，实现位于
 [`runtime/src/runtime.c`](../runtime/src/runtime.c)。构建与加载细节见
 [runtime.md](runtime.md)。
 
@@ -171,21 +171,21 @@ Runtime 的 C ABI 声明位于
 
 编译器查找标准库时按以下顺序定位 `std` 目录：
 
-1. 环境变量 `4YUE_STD_PATH`。
+1. 环境变量 `TAP_STD_PATH`。
 2. 当前工作目录下的 `std`。
 3. 编译器可执行文件相邻的源码目录或安装目录。
 
 原生可执行文件链接 Runtime 静态库；`-run-lli` 运行临时 IR 时加载 Runtime
-共享库。Runtime 库目录可以通过 `4YUE_RUNTIME_PATH` 指定。
+共享库。Runtime 库目录可以通过 `TAP_RUNTIME_PATH` 指定。
 
 ## Adding APIs
 
-新增标准库 API 时优先使用 4yue 源码实现：
+新增标准库 API 时优先使用 tap 源码实现：
 
 1. 如果函数可以用现有语言能力表达，放入 `std/*.tp`。
 2. 如果函数应默认可用，放入 `std/prelude.tp`。
 3. 如果函数需要操作系统、终端、时间、随机数、文件、内存等底层能力，先在
-   Runtime 中增加 `__4yue_` 前缀 C ABI，再在 Prelude 或模块中提供公共包装。
+   Runtime 中增加 `__tap_` 前缀 C ABI，再在 Prelude 或模块中提供公共包装。
 
 新增或修改标准库函数后，需要同步：
 

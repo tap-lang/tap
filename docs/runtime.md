@@ -1,12 +1,12 @@
 # Runtime
 
-4yue Runtime 使用稳定的 C ABI 提供需要操作系统的能力。编译器支持无函数体的外部声明：
+tap Runtime 使用稳定的 C ABI 提供需要操作系统的能力。编译器支持无函数体的外部声明：
 
 ```text
-extern fn __4yue_sleep_ms(milliseconds: i32): i32;
+extern fn __tap_sleep_ms(milliseconds: i32): i32;
 ```
 
-普通程序不应直接使用 `__4yue_` 前缀符号。[`std/prelude.tp`](../std/prelude.tp)
+普通程序不应直接使用 `__tap_` 前缀符号。[`std/prelude.tp`](../std/prelude.tp)
 和 [`std/env.tp`](../std/env.tp) 将它们封装为以下公共函数：
 
 | 函数 | 行为 |
@@ -30,9 +30,9 @@ extern fn __4yue_sleep_ms(milliseconds: i32): i32;
 - 共享 Runtime 由 `-run-lli` 通过 `lli --load` 加载。
 - 开发构建会在编译器同目录生成两种库。
 - 安装后编译器会在相邻的 `../lib` 目录查找 Runtime。
-- 可以用 `4YUE_RUNTIME_PATH` 指定同时包含静态库和共享库的目录。
+- 可以用 `TAP_RUNTIME_PATH` 指定同时包含静态库和共享库的目录。
 
-Runtime 的公开 ABI 声明位于 [`runtime/include/4yue_runtime.h`](../runtime/include/4yue_runtime.h)，
+Runtime 的公开 ABI 声明位于 [`runtime/include/tap_runtime.h`](../runtime/include/tap_runtime.h)，
 跨平台实现位于 [`runtime/src/runtime.c`](../runtime/src/runtime.c)。
 
 ## 底层内存 ABI
@@ -41,9 +41,9 @@ Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或
 
 | C ABI | 行为 |
 |---|---|
-| `__4yue_malloc(size): *T` | 分配堆内存；`size == 0` 时按 1 字节处理 |
-| `__4yue_realloc(pointer, size): *T` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
-| `__4yue_free(pointer): i32` | 释放堆内存；`NULL` 指针安全无操作；返回 `0` |
+| `__tap_malloc(size): *T` | 分配堆内存；`size == 0` 时按 1 字节处理 |
+| `__tap_realloc(pointer, size): *T` | 调整堆内存大小；`size == 0` 时按 1 字节处理 |
+| `__tap_free(pointer): i32` | 释放堆内存；`NULL` 指针安全无操作；返回 `0` |
 
 这些函数由 `std.memory` 封装，底层 ABI 声明不需要出现在普通程序或其他容器模块中。
 需要直接管理堆内存时使用 `memory.malloc/realloc/free`；业务代码仍应优先使用

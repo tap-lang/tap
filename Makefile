@@ -1,4 +1,4 @@
-# Makefile for 4yue Lang compiler
+# Makefile for Tap Lang compiler
 
 # 编译器和编译选项
 # CC = clang
@@ -14,7 +14,7 @@ endif
 RUNTIME_INCLUDE = -Iruntime/include
 RUNTIME_CFLAGS = -Wall -Wextra -g $(RUNTIME_INCLUDE) -fPIC
 RUNTIME_OBJECT = $(BUILD_DIR)/runtime.o
-RUNTIME_STATIC = $(BUILD_DIR)/lib4yue_runtime.a
+RUNTIME_STATIC = $(BUILD_DIR)/libtap_runtime.a
 VERSION_GENERATOR = $(BUILD_DIR)/get_version
 
 # 根据操作系统类型设置不同的CFLAGS和LDFLAGS
@@ -25,7 +25,7 @@ ifeq ($(OS),Windows_NT)
     # CXXFLAGS = $(CFLAGS)
 #     LDFLAGS = -L"C:/Program Files/LLVM/lib"
     LDFLAGS = 
-    RUNTIME_SHARED = $(BUILD_DIR)/4yue_runtime.dll
+    RUNTIME_SHARED = $(BUILD_DIR)/tap_runtime.dll
     RUNTIME_SHARED_FLAGS = -shared
     # Windows下不使用address sanitizer
 else
@@ -36,21 +36,21 @@ else
         CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS) -I/usr/lib/llvm-21/include
         # CXXFLAGS = $(CFLAGS)
         LDFLAGS = -L/usr/lib/llvm-21/lib -Wl,-rpath,/usr/lib $(SANITIZER_FLAGS)
-        RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.so
+        RUNTIME_SHARED = $(BUILD_DIR)/libtap_runtime.so
         RUNTIME_SHARED_FLAGS = -shared
     else ifeq ($(UNAME_S),Darwin)
         # macOS系统设置
         CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS) -I/opt/homebrew/opt/llvm/include
         # CXXFLAGS = $(CFLAGS)
         LDFLAGS = -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib $(SANITIZER_FLAGS)
-        RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.dylib
+        RUNTIME_SHARED = $(BUILD_DIR)/libtap_runtime.dylib
         RUNTIME_SHARED_FLAGS = -dynamiclib
     else
         # 其他系统，使用默认设置
         CFLAGS = -Wall -Wextra -g $(SANITIZER_FLAGS)
         # CXXFLAGS = $(CFLAGS)
         LDFLAGS = $(SANITIZER_FLAGS)
-        RUNTIME_SHARED = $(BUILD_DIR)/lib4yue_runtime.so
+        RUNTIME_SHARED = $(BUILD_DIR)/libtap_runtime.so
         RUNTIME_SHARED_FLAGS = -shared
     endif
 endif
@@ -78,7 +78,7 @@ OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES))
 DEPS = $(OBJECTS:.o=.d)
 
 # 目标可执行文件
-TARGET = ./build/4yue
+TARGET = ./build/tap
 
 # 默认目标
 all: $(TARGET)
@@ -92,7 +92,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # Runtime objects are position independent so the same object can back both library forms.
-$(RUNTIME_OBJECT): runtime/src/runtime.c runtime/include/4yue_runtime.h | $(BUILD_DIR)
+$(RUNTIME_OBJECT): runtime/src/runtime.c runtime/include/tap_runtime.h | $(BUILD_DIR)
 	$(CC) $(RUNTIME_CFLAGS) -c $< -o $@
 
 # The generated native program links this archive only when Runtime symbols are referenced.

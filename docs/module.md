@@ -1,6 +1,6 @@
 # 模块导入
 
-4yue 使用 `import` 导入其他 `.tp` 源文件。每个导入在当前文件中建立名称空间，
+tap 使用 `import` 导入其他 `.tp` 源文件。每个导入在当前文件中建立名称空间，
 模块由编译器在代码生成前解析并合并。
 
 ## 语法
@@ -84,22 +84,22 @@ fn main(): i32 {
 普通模块按以下顺序查找：
 
 1. 导入声明所在文件的目录
-2. `4YUE_MODULE_PATH`
+2. `TAP_MODULE_PATH`
 3. 当前工作目录
 4. 编译器可执行文件相邻的源码目录
-5. 安装前缀下的 `share/4yue`
+5. 安装前缀下的 `share/tap`
 
-`4YUE_MODULE_PATH` 当前只接受一个模块根目录。例如：
+`TAP_MODULE_PATH` 当前只接受一个模块根目录。例如：
 
 ```bash
-env 4YUE_MODULE_PATH=/path/to/project ./build/4yue run app/main.tp
+env TAP_MODULE_PATH=/path/to/project ./build/tap run app/main.tp
 ```
 
-对于 `std.*` 模块，编译器会先尝试 `4YUE_STD_PATH`，并去掉模块名开头的
-`std.`。例如 `4YUE_STD_PATH=/path/to/std` 时，`import std.math;` 会查找
+对于 `std.*` 模块，编译器会先尝试 `TAP_STD_PATH`，并去掉模块名开头的
+`std.`。例如 `TAP_STD_PATH=/path/to/std` 时，`import std.math;` 会查找
 `/path/to/std/math.tp`。
 
-CMake 安装会把 `std` 下的 `.tp` 文件复制到 `share/4yue/std`，因此安装后的
+CMake 安装会把 `std` 下的 `.tp` 文件复制到 `share/tap/std`，因此安装后的
 编译器不依赖源码仓库也能导入标准库模块。
 
 ## 加载流程
@@ -162,7 +162,7 @@ error: undefined function 'double'
 `-parse` 只打印指定文件中的 `ImportNode`，不会展开模块内容：
 
 ```bash
-./build/4yue -parse tests/run-pass/modules/imports.tp
+./build/tap -parse tests/run-pass/modules/imports.tp
 ```
 
 普通编译、`run`、`-ir` 和 `-run-lli` 都会实际加载模块。项目中的模块回归用例包括：
@@ -185,5 +185,5 @@ error: undefined function 'double'
 - 不支持选择性导入和模块再导出。
 - 名称空间目前只能用于限定函数调用，不能作为值传递。
 - 入口文件不能把自身再次作为模块导入。
-- `4YUE_MODULE_PATH` 和 `4YUE_STD_PATH` 均只接受单个目录。
+- `TAP_MODULE_PATH` 和 `TAP_STD_PATH` 均只接受单个目录。
 - 模块文件扩展名固定为 `.tp`。

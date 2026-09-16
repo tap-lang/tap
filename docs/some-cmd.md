@@ -2,7 +2,7 @@
 
 ## 查看程序返回值
 ```sh
-./build/4yue tests/run-pass/basics/hello.tp -o ./build/hello
+./build/tap tests/run-pass/basics/hello.tp -o ./build/hello
 ./build/hello
 echo $?
 ```

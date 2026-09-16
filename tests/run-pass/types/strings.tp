@@ -4,7 +4,7 @@ fn echo(value: string): string {
 
 fn main(): i32 {
     let greeting: string = "Hello";
-    let name = echo("4yue");
+    let name = echo("tap");
     print("%s, %s!\n", greeting, name);
 
     greeting = "line 1\nline 2";
@@ -15,7 +15,7 @@ fn main(): i32 {
 
 /** -- test
 - .stdout
-Hello, 4yue!
+Hello, tap!
 line 1
 line 2
 tab:	quote:" slash:\

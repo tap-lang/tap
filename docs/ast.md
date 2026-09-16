@@ -1,6 +1,6 @@
 # AST
 
-本文档描述 4yue 当前实现中的抽象语法树（Abstract Syntax Tree，AST）。内容以
+本文档描述 tap 当前实现中的抽象语法树（Abstract Syntax Tree，AST）。内容以
 [`src/ast.h`](../src/ast.h) 和 [`src/ast.c`](../src/ast.c) 为准，不包含尚未实现的语言设计。
 
 ## 作用与数据流
@@ -202,7 +202,7 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 使用 `-parse` 可以检查 Parser 生成的 AST：
 
 ```bash
-./build/4yue -parse tests/run-pass/functions/fibonacci.tp
+./build/tap -parse tests/run-pass/functions/fibonacci.tp
 ```
 
 例如下面的代码：

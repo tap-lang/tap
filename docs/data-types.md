@@ -150,7 +150,7 @@ fn main(): i32 {
 
     let values: *string = memory.malloc(64);
     values[0] = "hello";
-    values[1] = "4yue";
+    values[1] = "tap";
     print("%s %s\n", values[0], values[1]);
 
     values = memory.realloc(values, 128);
@@ -180,7 +180,7 @@ fn first<T, U>(left: T, right: U): T {
 
 fn main(): i32 {
     let inferred: i32 = identity(42);
-    let explicit: string = identity<string>("4yue");
+    let explicit: string = identity<string>("tap");
     let selected: string = first("left", 10);
     return inferred;
 }
@@ -201,7 +201,7 @@ import std.vec_string as vec;
 fn main(): i32 {
     let values: StringVec = vec.new();
     values.push("hello");
-    values.push("4yue");
+    values.push("tap");
     print("%s\n", values.get(1));
     values.free();
     return 0;
