@@ -22,7 +22,7 @@ jobs:
   build-and-test:
     name: Windows 2022 / MSVC / Release
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 90
 
     steps:
       - name: Normalize line endings
@@ -34,10 +34,10 @@ jobs:
 
       - name: Restore native LLVM cache
         id: llvm-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v1
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v2
 
       - name: Install native LLVM 21
         if: steps.llvm-cache.outputs.cache-hit != 'true'
@@ -57,7 +57,16 @@ jobs:
           }
 
           New-Item -ItemType Directory -Force $env:LLVM_ROOT | Out-Null
-          tar.exe -xJf $archive -C $env:LLVM_ROOT --strip-components=1
+          $packageRoot = $env:LLVM_ARCHIVE -replace '\.tar\.xz$', ''
+          $requiredFiles = @(
+            "$packageRoot/include/llvm-c",
+            "$packageRoot/lib/LLVM-C.lib",
+            "$packageRoot/bin/LLVM-C.dll",
+            "$packageRoot/bin/clang.exe",
+            "$packageRoot/bin/lli.exe",
+            "$packageRoot/bin/llvm-config.exe"
+          )
+          tar.exe -xJf $archive -C $env:LLVM_ROOT --strip-components=1 $requiredFiles
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to extract $archive"
           }
@@ -66,11 +75,13 @@ jobs:
         shell: pwsh
         run: |
           $llvmConfig = Join-Path $env:LLVM_ROOT "bin\llvm-config.exe"
-          $llvmCmake = Join-Path $env:LLVM_ROOT "lib\cmake\llvm\LLVMConfig.cmake"
+          $llvmHeader = Join-Path $env:LLVM_ROOT "include\llvm-c\Core.h"
           $llvmImportLibrary = Join-Path $env:LLVM_ROOT "lib\LLVM-C.lib"
           $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
+          $clang = Join-Path $env:LLVM_ROOT "bin\clang.exe"
+          $lli = Join-Path $env:LLVM_ROOT "bin\lli.exe"
 
-          foreach ($path in @($llvmConfig, $llvmCmake, $llvmImportLibrary, $llvmDll)) {
+          foreach ($path in @($llvmConfig, $llvmHeader, $llvmImportLibrary, $llvmDll, $clang, $lli)) {
             if (-not (Test-Path $path)) {
               throw "Required native LLVM file is missing: $path"
             }
@@ -90,15 +101,22 @@ jobs:
           (Join-Path $env:LLVM_ROOT "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           (Join-Path $env:ProgramFiles "Git\bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Save native LLVM cache
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.LLVM_ROOT }}
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v2
+
       - name: Configure with MSVC
         shell: pwsh
         run: |
-          $llvmDir = (Join-Path $env:LLVM_ROOT "lib\cmake\llvm").Replace('\', '/')
+          $llvmRoot = $env:LLVM_ROOT.Replace('\', '/')
           cmake -S . -B build-msvc `
             -G "Visual Studio 17 2022" `
             -A x64 `
             -T host=x64 `
-            "-DLLVM_DIR=$llvmDir" `
+            "-DTAP_LLVM_C_ROOT=$llvmRoot" `
             -DBUILD_TESTS=ON
 
           if ($LASTEXITCODE -ne 0) {
@@ -121,5 +139,3 @@ jobs:
         env:
           TEST_JOBS: "2"
         run: ctest --test-dir build-msvc --build-config Release --output-on-failure
-
-

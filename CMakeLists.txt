@@ -55,27 +55,54 @@ add_executable(tap
 set_target_properties(tap PROPERTIES LINKER_LANGUAGE C)
 add_dependencies(tap tap_runtime tap_runtime_shared)
 
-# 查找LLVM 限制版本大于21
-find_package(LLVM REQUIRED CONFIG)
-if(LLVM_PACKAGE_VERSION VERSION_LESS "21")
-    message(FATAL_ERROR "LLVM version must be greater than 21")
-endif()
-message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+set(TAP_LLVM_C_ROOT "" CACHE PATH
+    "Root of a native Windows LLVM package containing LLVM-C.lib and LLVM-C.dll")
 
-# 获取 LLVM 相关信息
+if(MSVC AND TAP_LLVM_C_ROOT)
+    set(LLVM_INCLUDE_DIRS "${TAP_LLVM_C_ROOT}/include")
+    set(LLVM_LIBRARY_DIRS "${TAP_LLVM_C_ROOT}/lib")
+    set(LLVM_C_IMPORT_LIBRARY "${TAP_LLVM_C_ROOT}/lib/LLVM-C.lib")
+    set(LLVM_C_RUNTIME "${TAP_LLVM_C_ROOT}/bin/LLVM-C.dll")
+
+    foreach(required_file
+            "${LLVM_INCLUDE_DIRS}/llvm-c/Core.h"
+            "${LLVM_C_IMPORT_LIBRARY}"
+            "${LLVM_C_RUNTIME}")
+        if(NOT EXISTS "${required_file}")
+            message(FATAL_ERROR "Native LLVM C API file not found: ${required_file}")
+        endif()
+    endforeach()
+
+    add_library(tap_llvm_c SHARED IMPORTED)
+    set_target_properties(tap_llvm_c PROPERTIES
+        IMPORTED_IMPLIB "${LLVM_C_IMPORT_LIBRARY}"
+        IMPORTED_LOCATION "${LLVM_C_RUNTIME}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LLVM_INCLUDE_DIRS}"
+    )
+    set(llvm_libs tap_llvm_c)
+    set(LLVM_DEFINITIONS "")
+    message(STATUS "Using native LLVM C API from: ${TAP_LLVM_C_ROOT}")
+else()
+    # 查找LLVM 限制版本大于21
+    find_package(LLVM REQUIRED CONFIG)
+    if(LLVM_PACKAGE_VERSION VERSION_LESS "21")
+        message(FATAL_ERROR "LLVM version must be greater than 21")
+    endif()
+    message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
+    message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+
+    # The official Windows developer archive exposes the C API through LLVM-C.
+    # Unix packages in CI provide the traditional monolithic LLVM library.
+    if(MSVC AND TARGET LLVM-C)
+        set(llvm_libs LLVM-C)
+    else()
+        set(llvm_libs LLVM)
+    endif()
+endif()
+
 message(STATUS "LLVM Include Dir: ${LLVM_INCLUDE_DIRS}")
 message(STATUS "LLVM Library Dir: ${LLVM_LIBRARY_DIRS}")
 message(STATUS "LLVM Definitions: ${LLVM_DEFINITIONS}")
-
-
-# The official Windows developer archive exposes the C API through LLVM-C.
-# Unix packages in CI provide the traditional monolithic LLVM library.
-if(MSVC AND TARGET LLVM-C)
-    set(llvm_libs LLVM-C)
-else()
-    set(llvm_libs LLVM)
-endif()
 
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
@@ -103,6 +130,13 @@ if(WIN32)
     endif()
 else()
     target_link_libraries(tap ${llvm_libs} m)
+endif()
+
+if(MSVC AND TAP_LLVM_C_ROOT)
+    add_custom_command(TARGET tap POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${LLVM_C_RUNTIME}" "$<TARGET_FILE_DIR:tap>"
+    )
 endif()
 
 if(BUILD_TESTS)
