@@ -1,0 +1,97 @@
+name: Cygwin
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cygwin-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 仅作为 Cygwin 缓存键的版本标记：Cygwin 侧实际安装的 LLVM 版本由下面的
+  # packages 列表决定（稳定版仓库仍是 LLVM 20.x，需要 test 包才能拿到 21）。
+  LLVM_RELEASE: "21.1.8"
+  CYGWIN_ROOT: D:\cygwin64
+
+jobs:
+  build-and-test:
+    name: Windows 2022 / Cygwin Clang / Release
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Normalize line endings
+        shell: pwsh
+        run: git config --global core.autocrlf input
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Cygwin cache
+        id: cygwin-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CYGWIN_ROOT }}
+          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Prepare Cygwin
+        if: steps.cygwin-cache.outputs.cache-hit != 'true'
+        uses: cygwin/cygwin-install-action@v6
+        with:
+          install-dir: ${{ env.CYGWIN_ROOT }}
+          # Stable Cygwin still ships LLVM 20.x; this repo requires LLVM >= 21.
+          allow-test-packages: 'true'
+          packages: |
+            clang
+            cmake
+            ninja
+            llvm
+            libllvm-devel
+            libpolly-devel
+            zlib-devel
+            libzstd-devel
+            libxml2-devel
+            libedit-devel
+            git
+
+      - name: Verify LLVM
+        shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
+        run: >-
+          export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
+          test -x /usr/bin/llvm-config &&
+          test -f /usr/lib/cmake/llvm/LLVMConfig.cmake &&
+          llvm-config --version
+
+      - name: Save Cygwin cache
+        if: steps.cygwin-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CYGWIN_ROOT }}
+          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Configure
+        shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
+        run: >-
+          export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang
+          -DLLVM_DIR=/usr/lib/cmake/llvm
+          -DBUILD_TESTS=ON
+
+      - name: Build
+        shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
+        run: >-
+          export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
+          cmake --build build --parallel 2
+
+      - name: Test
+        shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
+        run: >-
+          export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
+          ctest --test-dir build --output-on-failure
