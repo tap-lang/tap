@@ -931,6 +931,9 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             if (binary->op_type >= OP_EQUAL && binary->op_type <= OP_GREATER_THAN_OR_EQUAL) {
                 return LITERAL_BOOL;
             }
+            if (binary->op_type == OP_AND || binary->op_type == OP_OR) {
+                return LITERAL_BOOL;
+            }
             return common_integer_type(expression_type(context, binary->left),
                                        expression_type(context, binary->right));
         }
@@ -985,6 +988,8 @@ static LLVMValueRef cast_value(CodeGenContext *context, LLVMValueRef value,
 
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call);
+static LLVMValueRef generate_logical_binary(CodeGenContext *context, BinaryOpNode *binary);
+static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition);
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type);
 static LLVMValueRef generate_array_value(
@@ -1086,7 +1091,7 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
     }
     if (expression && expression->type == NODE_BINARY_OP && is_integer_type(target)) {
         BinaryOpNode *binary = (BinaryOpNode *)expression;
-        if (binary->op_type >= OP_ADD && binary->op_type <= OP_DIVIDE) {
+        if (binary->op_type >= OP_ADD && binary->op_type <= OP_MODULO) {
             return generate_integer_binary(context, binary, target);
         }
     }
@@ -1336,6 +1341,10 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
             return is_unsigned_type(operand_type)
                 ? LLVMBuildUDiv(context->builder, left, right, "udiv_result")
                 : LLVMBuildSDiv(context->builder, left, right, "sdiv_result");
+        case OP_MODULO:
+            return is_unsigned_type(operand_type)
+                ? LLVMBuildURem(context->builder, left, right, "urem_result")
+                : LLVMBuildSRem(context->builder, left, right, "srem_result");
         case OP_EQUAL:
             return LLVMBuildICmp(context->builder, LLVMIntEQ, left, right, "eq_result");
         case OP_NOT_EQUAL:
@@ -1360,6 +1369,44 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
             fprintf(stderr, "error: unsupported binary operator\n"); // 中文：不支持的二元操作符
             exit(1);
     }
+}
+
+// 生成 && / || 的短路求值：左侧结果决定是否需要求值右侧。
+// && 左侧为假、|| 左侧为真时，右侧完全不求值。
+static LLVMValueRef generate_logical_binary(CodeGenContext *context, BinaryOpNode *binary) {
+    int is_and = binary->op_type == OP_AND;
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+
+    LLVMBasicBlockRef rhs_block = LLVMAppendBasicBlockInContext(
+        context->context, function, is_and ? "and_rhs" : "or_rhs");
+    LLVMBasicBlockRef merge_block = LLVMAppendBasicBlockInContext(
+        context->context, function, is_and ? "and_end" : "or_end");
+
+    // 左侧本身可能含短路运算，求值后必须重新取当前基本块作为 phi 的前驱。
+    LLVMValueRef left = condition_value(context, binary->left);
+    LLVMBasicBlockRef left_block = LLVMGetInsertBlock(context->builder);
+
+    if (is_and) {
+        LLVMBuildCondBr(context->builder, left, rhs_block, merge_block);
+    } else {
+        LLVMBuildCondBr(context->builder, left, merge_block, rhs_block);
+    }
+
+    LLVMPositionBuilderAtEnd(context->builder, rhs_block);
+    LLVMValueRef right = condition_value(context, binary->right);
+    LLVMBasicBlockRef right_block = LLVMGetInsertBlock(context->builder);
+    LLVMBuildBr(context->builder, merge_block);
+
+    LLVMPositionBuilderAtEnd(context->builder, merge_block);
+    LLVMTypeRef bool_type = LLVMInt1TypeInContext(context->context);
+    LLVMValueRef phi = LLVMBuildPhi(context->builder, bool_type, "logical_result");
+    LLVMValueRef incoming_values[2] = {
+        LLVMConstInt(bool_type, is_and ? 0 : 1, 0),
+        right
+    };
+    LLVMBasicBlockRef incoming_blocks[2] = {left_block, right_block};
+    LLVMAddIncoming(phi, incoming_values, incoming_blocks, 2);
+    return phi;
 }
 
 // 解析字符串方法的接收者和用户参数。
@@ -1838,6 +1885,9 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             return generate_function_call(context, (FunctionCallNode *)expression);
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
+            if (binary->op_type == OP_AND || binary->op_type == OP_OR) {
+                return generate_logical_binary(context, binary);
+            }
             enum LiteralType left_type = expression_type(context, binary->left);
             enum LiteralType right_type = expression_type(context, binary->right);
             if (left_type == LITERAL_STRING || right_type == LITERAL_STRING) {

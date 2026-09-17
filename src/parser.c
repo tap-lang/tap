@@ -57,10 +57,12 @@ static void consume(Parser *parser, enum TokenType expected_type) {
 }
 
 // 前置声明
-static ASTNode *parse_expression(Parser *parser); // 解析表达式（支持加法和减法）
+static ASTNode *parse_expression(Parser *parser); // 解析表达式（逻辑或、逻辑与、比较、加减、乘除取模）
+static ASTNode *parse_logical_or(Parser *parser); // 解析逻辑或 ||
+static ASTNode *parse_logical_and(Parser *parser); // 解析逻辑与 &&
 static ASTNode *parse_addition(Parser *parser);
-static ASTNode *parse_term(Parser *parser); // 解析项（乘法和除法）
-static ASTNode *parse_factor(Parser *parser); // 解析因子（基本表达式）
+static ASTNode *parse_term(Parser *parser); // 解析项（乘法、除法和取模）
+static ASTNode *parse_factor(Parser *parser); // 解析因子（一元运算和基本表达式）
 static ASTNode *parse_function_call(Parser *parser, char *function_name); // 解析函数调用
 static ASTNode *parse_expression_statement(Parser *parser);
 static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon);
@@ -1027,6 +1029,14 @@ static ASTNode *parse_factor(Parser *parser) {
             OP_SUBTRACT, (ASTNode *)create_int_literal(0), factor);
     }
 
+    // 逻辑非直接降级为与 false 比较，复用已有的比较运算语义。
+    if (parser->current_token->type == TOKEN_NOT) {
+        consume(parser, TOKEN_NOT);
+        ASTNode *factor = parse_factor(parser);
+        return (ASTNode *)create_binary_op(
+            OP_EQUAL, factor, (ASTNode *)create_bool_literal(0));
+    }
+
     ASTNode *expression = parse_primary(parser);
     for (;;) {
         if (parser->current_token->type == TOKEN_LBRACKET) {
@@ -1086,11 +1096,13 @@ static ASTNode *parse_factor(Parser *parser) {
     return expression;
 }
 
-// 解析项（乘除）
+// 解析项（乘除取模）
 static ASTNode *parse_term(Parser *parser) {
     ASTNode *left = parse_factor(parser);
     
-    while (parser->current_token->type == TOKEN_MULTIPLY || parser->current_token->type == TOKEN_DIVIDE) {
+    while (parser->current_token->type == TOKEN_MULTIPLY ||
+           parser->current_token->type == TOKEN_DIVIDE ||
+           parser->current_token->type == TOKEN_MODULO) {
         Token *token = parser->current_token;
         if (token->type == TOKEN_MULTIPLY) {
             consume(parser, TOKEN_MULTIPLY);
@@ -1098,6 +1110,9 @@ static ASTNode *parse_term(Parser *parser) {
         } else if (token->type == TOKEN_DIVIDE) {
             consume(parser, TOKEN_DIVIDE);
             left = (ASTNode *)create_binary_op(OP_DIVIDE, left, parse_factor(parser));
+        } else {
+            consume(parser, TOKEN_MODULO);
+            left = (ASTNode *)create_binary_op(OP_MODULO, left, parse_factor(parser));
         }
     }
     
@@ -1166,8 +1181,32 @@ static ASTNode *parse_addition(Parser *parser) {
     return left;
 }
 
+// 解析逻辑与（&&）。优先级低于比较，高于逻辑或。
+static ASTNode *parse_logical_and(Parser *parser) {
+    ASTNode *left = parse_comparison(parser);
+
+    while (parser->current_token->type == TOKEN_AND) {
+        consume(parser, TOKEN_AND);
+        left = (ASTNode *)create_binary_op(OP_AND, left, parse_comparison(parser));
+    }
+
+    return left;
+}
+
+// 解析逻辑或（||）。优先级低于逻辑与。
+static ASTNode *parse_logical_or(Parser *parser) {
+    ASTNode *left = parse_logical_and(parser);
+
+    while (parser->current_token->type == TOKEN_OR) {
+        consume(parser, TOKEN_OR);
+        left = (ASTNode *)create_binary_op(OP_OR, left, parse_logical_and(parser));
+    }
+
+    return left;
+}
+
 static ASTNode *parse_expression(Parser *parser) {
-    return parse_comparison(parser);
+    return parse_logical_or(parser);
 }
 
 // 解析程序

@@ -52,9 +52,11 @@ enum TokenType {
     TOKEN_DECREMENT,                // --
     TOKEN_MULTIPLY,                 // *
     TOKEN_DIVIDE,                   // /
+    TOKEN_MODULO,                   // %
     TOKEN_ASSIGN,                   // =
     TOKEN_EQUAL,                    // ==
     TOKEN_NOT_EQUAL,                // !=
+    TOKEN_NOT,                      // !
     TOKEN_LESS_THAN,                // <
     TOKEN_GREATER_THAN,             // >
     TOKEN_LESS_THAN_OR_EQUAL,       // <=

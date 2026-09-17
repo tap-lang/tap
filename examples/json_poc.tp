@@ -1,0 +1,347 @@
+// 用 tap 现有语言能力实现的 JSON 解析器 + 序列化器，不需要扩展 runtime。
+// 覆盖 object / array / string（含 \n \t \r \" \\ 转义）/ number / true / false / null。
+//
+// 两个不显然的设计要点：
+//   - number 保存原始文本、不做数值转换：既避开当前不可用的浮点算术，
+//     也保证 1.0 不被改写成 1、指数形式原样保留。
+//   - struct 是值类型（传参是拷贝），所以解析游标和 StringBuilder 都必须
+//     折进返回值一路带回去，不能用「输出参数」模式。
+//
+// 运行：tap run examples/json_poc.tp
+
+import std.vec as vec;
+import std.string_builder as sb;
+
+// kind: 0=null 1=bool 2=number 3=string 4=array 5=object
+// number 存原始文本，不做数值转换（浮点算术当前不可用，且原始文本更保真）。
+// pos 是解析游标：因为没有多返回值，把它折进结构体里带出来。
+struct Json {
+    pos: uint,
+    kind: i32,
+    boolean: bool,
+    number: string,
+    text: string,
+    items: Vec<Json>,
+    keys: Vec<string>,
+    values: Vec<Json>,
+}
+
+fn blank(pos: uint): Json {
+    return Json {
+        pos: pos,
+        kind: 0,
+        boolean: false,
+        number: "",
+        text: "",
+        items: vec.new<Json>(),
+        keys: vec.new<string>(),
+        values: vec.new<Json>(),
+    };
+}
+
+// 新运算符 && / || / ! 让字符分类变成一行。
+fn is_space(b: u8): bool {
+    return b == 32 || b == 9 || b == 10 || b == 13;
+}
+
+fn is_digit(b: u8): bool {
+    return b >= 48 && b <= 57;
+}
+
+fn is_number_byte(b: u8): bool {
+    return is_digit(b) || b == 45 || b == 43 || b == 46 || b == 101 || b == 69;
+}
+
+fn byte_at_or_zero(src: string, pos: uint): u8 {
+    if (pos >= src.len()) {
+        return 0;
+    }
+    return src.byte_at(pos);
+}
+
+fn skip_ws(src: string, pos: uint): uint {
+    let p: uint = pos;
+    let n: uint = src.len();
+    while (p < n && is_space(src.byte_at(p))) {
+        p++;
+    }
+    return p;
+}
+
+fn parse_number(src: string, pos: uint): Json {
+    let p: uint = pos;
+    let n: uint = src.len();
+    while (p < n && is_number_byte(src.byte_at(p))) {
+        p++;
+    }
+    let result: Json = blank(p);
+    result.kind = 2;
+    result.number = src.slice(pos, p);
+    return result;
+}
+
+// elseif 把原来 6 层嵌套的转义分支压平成一条链。
+fn parse_string(src: string, pos: uint): Json {
+    let p: uint = pos + 1;
+    let n: uint = src.len();
+    let out: StringBuilder = sb.new();
+    let running: bool = true;
+    while (running) {
+        if (p >= n) {
+            running = false;
+        } elseif (src.byte_at(p) == 34) {
+            running = false;
+            p++;
+        } elseif (src.byte_at(p) == 92) {
+            let e: u8 = byte_at_or_zero(src, p + 1);
+            if (e == 110) {
+                out.append_byte(10);
+                p = p + 2;
+            } elseif (e == 116) {
+                out.append_byte(9);
+                p = p + 2;
+            } elseif (e == 114) {
+                out.append_byte(13);
+                p = p + 2;
+            } elseif (e == 34) {
+                out.append_byte(34);
+                p = p + 2;
+            } elseif (e == 92) {
+                out.append_byte(92);
+                p = p + 2;
+            } else {
+                out.append_byte(src.byte_at(p));
+                p++;
+            }
+        } else {
+            out.append_byte(src.byte_at(p));
+            p++;
+        }
+    }
+    let result: Json = blank(p);
+    result.kind = 3;
+    result.text = out.to_string();
+    return result;
+}
+
+fn match_keyword(src: string, pos: uint, word: string): bool {
+    if (pos + word.len() > src.len()) {
+        return false;
+    }
+    return src.slice(pos, pos + word.len()) == word;
+}
+
+fn parse_array(src: string, pos: uint): Json {
+    let p: uint = skip_ws(src, pos + 1);
+    let items: Vec<Json> = vec.new<Json>();
+    let result: Json = blank(p);
+    if (byte_at_or_zero(src, p) == 93) {
+        result.pos = p + 1;
+        result.kind = 4;
+        result.items = items;
+        return result;
+    }
+    let running: bool = true;
+    while (running) {
+        let element: Json = parse_value(src, p);
+        p = element.pos;
+        items = items.push(element);
+        p = skip_ws(src, p);
+        let b: u8 = byte_at_or_zero(src, p);
+        if (b == 44) {
+            p = skip_ws(src, p + 1);
+        } else {
+            running = false;
+            if (b == 93) {
+                p++;
+            }
+        }
+    }
+    result.pos = p;
+    result.kind = 4;
+    result.items = items;
+    return result;
+}
+
+fn parse_object(src: string, pos: uint): Json {
+    let p: uint = skip_ws(src, pos + 1);
+    let keys: Vec<string> = vec.new<string>();
+    let values: Vec<Json> = vec.new<Json>();
+    let result: Json = blank(p);
+    if (byte_at_or_zero(src, p) == 125) {
+        result.pos = p + 1;
+        result.kind = 5;
+        result.keys = keys;
+        result.values = values;
+        return result;
+    }
+    let running: bool = true;
+    while (running) {
+        let key_value: Json = parse_string(src, p);
+        p = skip_ws(src, key_value.pos);
+        p = skip_ws(src, p + 1);
+        let value: Json = parse_value(src, p);
+        p = value.pos;
+        keys = keys.push(key_value.text);
+        values = values.push(value);
+        p = skip_ws(src, p);
+        let b: u8 = byte_at_or_zero(src, p);
+        if (b == 44) {
+            p = skip_ws(src, p + 1);
+        } else {
+            running = false;
+            if (b == 125) {
+                p++;
+            }
+        }
+    }
+    result.pos = p;
+    result.kind = 5;
+    result.keys = keys;
+    result.values = values;
+    return result;
+}
+
+fn parse_value(src: string, pos: uint): Json {
+    let p: uint = skip_ws(src, pos);
+    let b: u8 = byte_at_or_zero(src, p);
+    if (b == 123) {
+        return parse_object(src, p);
+    }
+    if (b == 91) {
+        return parse_array(src, p);
+    }
+    if (b == 34) {
+        return parse_string(src, p);
+    }
+    if (match_keyword(src, p, "true")) {
+        let t: Json = blank(p + 4);
+        t.kind = 1;
+        t.boolean = true;
+        return t;
+    }
+    if (match_keyword(src, p, "false")) {
+        let f: Json = blank(p + 5);
+        f.kind = 1;
+        f.boolean = false;
+        return f;
+    }
+    if (match_keyword(src, p, "null")) {
+        return blank(p + 4);
+    }
+    return parse_number(src, p);
+}
+
+fn write_string(out: StringBuilder, value: string): StringBuilder {
+    out.append_byte(34);
+    let i: uint = 0;
+    let n: uint = value.len();
+    while (i < n) {
+        let b: u8 = value.byte_at(i);
+        if (b == 34) {
+            out.append("\\\"");
+        } elseif (b == 92) {
+            out.append("\\\\");
+        } elseif (b == 10) {
+            out.append("\\n");
+        } elseif (b == 9) {
+            out.append("\\t");
+        } elseif (b == 13) {
+            out.append("\\r");
+        } else {
+            out.append_byte(b);
+        }
+        i++;
+    }
+    out.append_byte(34);
+    return out;
+}
+
+// struct 是值类型，传参是拷贝，所以必须把 StringBuilder 一路返回回去。
+fn write_json(out: StringBuilder, value: Json): StringBuilder {
+    if (value.kind == 0) {
+        out.append("null");
+        return out;
+    }
+    if (value.kind == 1) {
+        if (value.boolean) {
+            out.append("true");
+        } else {
+            out.append("false");
+        }
+        return out;
+    }
+    if (value.kind == 2) {
+        out.append(value.number);
+        return out;
+    }
+    if (value.kind == 3) {
+        return write_string(out, value.text);
+    }
+
+    let items: Vec<Json> = value.items;
+    let keys: Vec<string> = value.keys;
+    let values: Vec<Json> = value.values;
+
+    if (value.kind == 4) {
+        out.append("[");
+        let i: uint = 0;
+        let n: uint = items.len();
+        while (i < n) {
+            let element: Json = items.get(i);
+            out = write_json(out, element);
+            i++;
+            if (i < n) {
+                out.append(",");
+            }
+        }
+        out.append("]");
+        return out;
+    }
+
+    out.append("{");
+    let k: uint = 0;
+    let kn: uint = keys.len();
+    while (k < kn) {
+        out = write_string(out, keys.get(k));
+        out.append(":");
+        let v: Json = values.get(k);
+        out = write_json(out, v);
+        k++;
+        if (k < kn) {
+            out.append(",");
+        }
+    }
+    out.append("}");
+    return out;
+}
+
+fn main(): i32 {
+    let source: string = "{\"name\":\"tap\",\"nums\":[1,2.5,-3e2],\"ok\":true,\"none\":null,\"nested\":{\"a\":[[]]}}";
+
+    let root: Json = parse_value(source, 0);
+    print("parsed kind=%d pos=%llu len=%llu\n", root.kind, root.pos, source.len());
+
+    let out: StringBuilder = sb.new();
+    out = write_json(out, root);
+    print("reserialized: %s\n", out.to_string());
+
+    // 新运算符让「找某个键」变得直接
+    let keys: Vec<string> = root.keys;
+    let values: Vec<Json> = root.values;
+    print("keys=%llu\n", keys.len());
+    let i: uint = 0;
+    while (i < keys.len()) {
+        let v: Json = values.get(i);
+        if (v.kind == 4 || v.kind == 5) {
+            print("  %s -> 容器 kind %d\n", keys.get(i), v.kind);
+        } elseif (!(v.kind == 0)) {
+            print("  %s -> 标量 kind %d\n", keys.get(i), v.kind);
+        } else {
+            print("  %s -> null\n", keys.get(i));
+        }
+        i++;
+    }
+
+    return 0;
+}

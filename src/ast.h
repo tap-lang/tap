@@ -65,6 +65,7 @@ enum BinaryOpType {
     OP_SUBTRACT,                    // 减号 -
     OP_MULTIPLY,                    // 乘号 *
     OP_DIVIDE,                      // 除号 /
+    OP_MODULO,                      // 取模 %
     OP_EQUAL,                       // 等于号 ==
     OP_NOT_EQUAL,                   // 不等于号 !=
     OP_LESS_THAN,                   // 小于号 <

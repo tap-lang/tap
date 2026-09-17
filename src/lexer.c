@@ -467,6 +467,8 @@ Token *get_next_token(Lexer *lexer) {
             return create_token(lexer, TOKEN_MULTIPLY, lexer->current - 1, lexer->current);
         case '/':
             return create_token(lexer, TOKEN_DIVIDE, lexer->current - 1, lexer->current);
+        case '%':
+            return create_token(lexer, TOKEN_MODULO, lexer->current - 1, lexer->current);
         case '=':
             if (peek(lexer) == '=') {
                 advance(lexer);
@@ -479,7 +481,7 @@ Token *get_next_token(Lexer *lexer) {
                 advance(lexer);
                 return create_token(lexer, TOKEN_NOT_EQUAL, lexer->current - 2, lexer->current);
             }
-            break;
+            return create_token(lexer, TOKEN_NOT, lexer->current - 1, lexer->current);
         case '<':
             if (peek(lexer) == '=') {
                 advance(lexer);

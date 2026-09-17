@@ -1,0 +1,62 @@
+// && 与 || 的短路求值：左侧结果已能决定整体结果时，右侧完全不求值。
+fn noisy(tag: string, result: bool): bool {
+    print("%s\n", tag);
+    return result;
+}
+
+fn main(): i32 {
+    // || 左侧为真 -> 右侧不执行
+    if (noisy("or-left-true", true) || noisy("or-right-skipped", true)) {
+        print("or-true\n");
+    }
+
+    // || 左侧为假 -> 右侧执行
+    if (noisy("or-left-false", false) || noisy("or-right-ran", true)) {
+        print("or-true-2\n");
+    }
+
+    // && 左侧为假 -> 右侧不执行
+    if (noisy("and-left-false", false) && noisy("and-right-skipped", true)) {
+        print("unreachable\n");
+    } else {
+        print("and-false\n");
+    }
+
+    // && 左侧为真 -> 右侧执行
+    if (noisy("and-left-true", true) && noisy("and-right-ran", true)) {
+        print("and-true\n");
+    }
+
+    // 优先级：&& 高于 ||
+    if (false || true && false) {
+        print("bad-precedence\n");
+    } else {
+        print("precedence-ok\n");
+    }
+
+    // 嵌套短路：左侧本身含短路运算时也要正确
+    if (noisy("nested-a", true) || noisy("nested-b", true) && noisy("nested-c", true)) {
+        print("nested-ok\n");
+    }
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+or-left-true
+or-true
+or-left-false
+or-right-ran
+or-true-2
+and-left-false
+and-false
+and-left-true
+and-right-ran
+and-true
+precedence-ok
+nested-a
+nested-ok
+- .exit
+0
+-- */

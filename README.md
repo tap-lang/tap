@@ -87,6 +87,14 @@ tap run [选项] <源文件>
 ./build/tap run examples/snake.tp
 ```
 
+`examples/json_poc.tp` 是不依赖 runtime 扩展的 JSON 解析器与序列化器，
+覆盖 object / array / string / number / true / false / null，演示递归结构体、
+泛型动态数组和字符串构建的用法：
+
+```bash
+./build/tap run examples/json_poc.tp
+```
+
 ## For 循环
 
 ```text

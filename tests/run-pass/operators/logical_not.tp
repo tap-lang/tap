@@ -1,0 +1,45 @@
+// `!` 逻辑非：一元前缀，优先级高于比较和二元运算。
+fn is_even(value: i32): bool {
+    return value % 2 == 0;
+}
+
+fn main(): i32 {
+    let flag: bool = true;
+    if (!flag) {
+        print("bad\n");
+    } else {
+        print("not-true\n");
+    }
+
+    if (!(1 == 2)) {
+        print("not-equal\n");
+    }
+
+    // ! 作用于函数返回值
+    if (!is_even(3)) {
+        print("three-is-odd\n");
+    }
+
+    // ! 与 && 组合
+    if (!is_even(3) && is_even(4)) {
+        print("mixed\n");
+    }
+
+    // 双重取反
+    if (!!is_even(4)) {
+        print("double-not\n");
+    }
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+not-true
+not-equal
+three-is-odd
+mixed
+double-not
+- .exit
+0
+-- */
