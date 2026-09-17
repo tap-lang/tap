@@ -106,6 +106,11 @@ void configure_runtime(const char *compiler_path) {
 #elif defined(__APPLE__)
     const char *static_names[] = {"libtap_runtime.a", NULL};
     const char *shared_names[] = {"libtap_runtime.dylib", NULL};
+#elif defined(__CYGWIN__)
+    // CMake 在 Cygwin 平台按约定给共享库加 cyg 前缀，产出 cygtap_runtime.dll；
+    // Makefile 是手工命名成 libtap_runtime.so 的。两种构建方式的名字都接受。
+    const char *static_names[] = {"libtap_runtime.a", NULL};
+    const char *shared_names[] = {"cygtap_runtime.dll", "libtap_runtime.so", NULL};
 #else
     const char *static_names[] = {"libtap_runtime.a", NULL};
     const char *shared_names[] = {"libtap_runtime.so", NULL};

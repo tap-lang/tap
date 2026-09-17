@@ -91,7 +91,16 @@ jobs:
           cmake --build build --parallel 2
 
       - name: Test
+        # Cygwin 的 lli 有两个无法在 tap 侧规避的限制，fast 模式必然有 5 个用例失败：
+        #   1. JIT 里的 exit() 不传递退出码（实测最小 IR 直接 call exit(1) 仍返回 0），
+        #      导致 4 个 run-fail 用例的 .exit 期望无法满足；
+        #   2. 栈帧超过 4KB 时 LLVM 插入的 ___chkstk_ms 在 Cygwin 的 lli 里解析不到
+        #      （env_var.tp 有 [string; 256]，触发该问题）。
+        # 因此与 msvc.yml 一致改走 native 模式，实测 88/88 全过。
         shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
+        env:
+          TEST_JOBS: "2"
+          TEST_RUN_MODE: native
         run: >-
           export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
           ctest --test-dir build --output-on-failure

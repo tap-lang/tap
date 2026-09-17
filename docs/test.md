@@ -70,3 +70,21 @@ TEST_FILTER=module make test
 带 `.args` 的用例和 `tests/run-pass/basics/hello.tp` 原生编译并链接，持续覆盖程序参数和链接路径。
 `make test-native` 会让全部运行用例生成原生可执行文件。可以用 `TEST_JOBS=N` 调整并行度，
 或设为 `1` 排查依赖执行顺序的问题；最终结果始终按文件名顺序输出。
+
+`TEST_RUN_MODE` 环境变量可以直接选择运行方式（`fast` 走 `lli`，`native` 生成原生可执行文件），
+不传时默认为 `fast`。
+
+### Cygwin 下必须用 native 模式
+
+Cygwin 的 `lli` 有两个限制，导致 `fast` 模式固定有 5 个用例失败：
+
+- **JIT 代码里的 `exit()` 不传递退出码**。用最小 IR 验证：`call void @exit(i32 1)` 后
+  `lli` 仍返回 0，而 `ret i32 1` 正常返回 1；同一份 IR 原生编译则返回 1。
+  这会让 4 个 `run-fail` 用例的 `.exit` 期望无法满足。
+- **栈帧超过 4KB 时解析不到 `___chkstk_ms`**。Cygwin 的目标 triple 是
+  `x86_64-pc-windows-cygnus`，LLVM 会为 Windows ABI 插入栈探测调用，
+  而 Cygwin 的 `lli` 里没有这个符号。`tests/run-pass/stdlib/env_var.tp`
+  的 `[string; 256]`（4KB 栈数组）就会触发。
+
+这两个问题都出自 `lli`，无法在 tap 侧规避，因此 `.github/workflows/cygwin.yml`
+固定使用 `TEST_RUN_MODE=native`（实测 88/88 全过）。
