@@ -168,6 +168,7 @@ jobs:
           $llvmImportLibrary = Join-Path $env:LLVM_ROOT "lib\LLVM-C.lib"
           $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
           $clang = Join-Path $env:LLVM_ROOT "bin\clang.exe"
+          $clangCl = Join-Path $env:LLVM_ROOT "bin\clang-cl.exe"
           $llvmConfigHeader = Join-Path $env:LLVM_ROOT "include\llvm\Config\llvm-config.h"
           $llvmTargetDefinitions = @(
             "Targets.def",
@@ -182,7 +183,8 @@ jobs:
             $llvmConfigHeader,
             $llvmImportLibrary,
             $llvmDll,
-            $clang
+            $clang,
+            $clangCl
           ) + $llvmTargetDefinitions
 
           foreach ($path in $requiredFiles) {

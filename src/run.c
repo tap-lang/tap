@@ -318,13 +318,20 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
 
     int result = 0;
 #ifdef _WIN32
-    // Windows 上暂时保留 clang 作为链接驱动，避免手动处理 MSVC/MinGW 运行库差异。
-    const char *linker = "clang";
-    char *const dynamic_argv[] = {(char *)linker, (char *)object_file, runtime_static_path,
-                                  "-o", (char *)exe_file, NULL};
-    char *const static_argv[] = {(char *)linker, "-static", (char *)object_file,
-                                 runtime_static_path, "-o", (char *)exe_file, NULL};
-    result = run_process(static_link ? static_argv : dynamic_argv);
+    // Match the Runtime's static MSVC CRT so generated objects and Runtime use one CRT.
+    char output_option[RUN_PATH_MAX + 4];
+    int output_length = snprintf(output_option, sizeof(output_option), "/Fe%s", exe_file);
+    if (output_length < 0 || (size_t)output_length >= sizeof(output_option)) {
+        fprintf(stderr, "output file path is too long\n");
+        return 1;
+    }
+    const char *linker = "clang-cl";
+    char *const argv[] = {
+        (char *)linker, "/nologo", "/MT", (char *)object_file,
+        runtime_static_path, output_option, NULL
+    };
+    (void)static_link;
+    result = run_process(argv);
 #elif defined(__APPLE__)
     if (static_link) {
         fprintf(stderr,

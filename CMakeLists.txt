@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
 project(tap C)
 
 # Homebrew GCC uses its own fixed macOS headers; CMake's SDK sysroot mixes in
@@ -22,6 +25,10 @@ option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 add_library(tap_runtime STATIC runtime/src/runtime.c)
 target_include_directories(tap_runtime PUBLIC runtime/include)
 set_target_properties(tap_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    set_property(TARGET tap_runtime PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 add_library(tap_runtime_shared SHARED runtime/src/runtime.c)
 target_include_directories(tap_runtime_shared PUBLIC runtime/include)
