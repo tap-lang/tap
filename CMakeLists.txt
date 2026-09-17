@@ -66,6 +66,11 @@ if(MSVC AND TAP_LLVM_C_ROOT)
 
     foreach(required_file
             "${LLVM_INCLUDE_DIRS}/llvm-c/Core.h"
+            "${LLVM_INCLUDE_DIRS}/llvm/Config/llvm-config.h"
+            "${LLVM_INCLUDE_DIRS}/llvm/Config/Targets.def"
+            "${LLVM_INCLUDE_DIRS}/llvm/Config/AsmPrinters.def"
+            "${LLVM_INCLUDE_DIRS}/llvm/Config/AsmParsers.def"
+            "${LLVM_INCLUDE_DIRS}/llvm/Config/Disassemblers.def"
             "${LLVM_C_IMPORT_LIBRARY}"
             "${LLVM_C_RUNTIME}")
         if(NOT EXISTS "${required_file}")

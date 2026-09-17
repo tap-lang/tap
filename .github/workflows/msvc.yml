@@ -42,7 +42,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v4
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v5
 
       - name: Checkout LLVM C API headers
         if: steps.llvm-cache.outputs.cache-hit != 'true'
@@ -88,6 +88,57 @@ jobs:
           New-Item -ItemType Directory -Force $includeRoot | Out-Null
           Copy-Item -Path $headerSource -Destination $includeRoot -Recurse -Force
 
+          Write-Host "Generating LLVM configuration headers"
+          $configRoot = Join-Path $includeRoot "llvm\Config"
+          New-Item -ItemType Directory -Force $configRoot | Out-Null
+          @'
+          #ifndef LLVM_CONFIG_H
+          #define LLVM_CONFIG_H
+          #define LLVM_DEFAULT_TARGET_TRIPLE "x86_64-pc-windows-msvc"
+          #define LLVM_HOST_TRIPLE "x86_64-pc-windows-msvc"
+          #define LLVM_NATIVE_ARCH X86
+          #define LLVM_NATIVE_ASMPARSER LLVMInitializeX86AsmParser
+          #define LLVM_NATIVE_ASMPRINTER LLVMInitializeX86AsmPrinter
+          #define LLVM_NATIVE_DISASSEMBLER LLVMInitializeX86Disassembler
+          #define LLVM_NATIVE_TARGET LLVMInitializeX86Target
+          #define LLVM_NATIVE_TARGETINFO LLVMInitializeX86TargetInfo
+          #define LLVM_NATIVE_TARGETMC LLVMInitializeX86TargetMC
+          #define LLVM_VERSION_MAJOR 21
+          #define LLVM_VERSION_MINOR 1
+          #define LLVM_VERSION_PATCH 8
+          #define LLVM_VERSION_STRING "21.1.8"
+          #define LLVM_ENABLE_LLVM_C_EXPORT_ANNOTATIONS
+          #endif
+          '@ | Set-Content -Path (Join-Path $configRoot "llvm-config.h") -Encoding ascii
+
+          function Write-LlvmDefinition {
+            param(
+              [string]$Path,
+              [string]$Macro,
+              [string[]]$Targets
+            )
+            $lines = @(
+              "#ifndef $Macro",
+              "#  error Please define $Macro(TargetName)",
+              '#endif',
+              ''
+            )
+            $lines += $Targets | ForEach-Object { '{0}({1})' -f $Macro, $_ }
+            $lines += '', "#undef $Macro"
+            $lines | Set-Content -Path $Path -Encoding ascii
+          }
+
+          $targets = @('AArch64', 'ARM', 'BPF', 'NVPTX', 'RISCV', 'WebAssembly', 'X86')
+          $nativeCodeTargets = @('AArch64', 'ARM', 'BPF', 'RISCV', 'WebAssembly', 'X86')
+          Write-LlvmDefinition (Join-Path $configRoot "Targets.def") `
+            'LLVM_TARGET' $targets
+          Write-LlvmDefinition (Join-Path $configRoot "AsmPrinters.def") `
+            'LLVM_ASM_PRINTER' $targets
+          Write-LlvmDefinition (Join-Path $configRoot "AsmParsers.def") `
+            'LLVM_ASM_PARSER' $nativeCodeTargets
+          Write-LlvmDefinition (Join-Path $configRoot "Disassemblers.def") `
+            'LLVM_DISASSEMBLER' $nativeCodeTargets
+
           Write-Host "Generating the MSVC import library for LLVM-C.dll"
           $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
           $llvmLibDir = Join-Path $env:LLVM_ROOT "lib"
@@ -117,8 +168,24 @@ jobs:
           $llvmImportLibrary = Join-Path $env:LLVM_ROOT "lib\LLVM-C.lib"
           $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
           $clang = Join-Path $env:LLVM_ROOT "bin\clang.exe"
+          $llvmConfigHeader = Join-Path $env:LLVM_ROOT "include\llvm\Config\llvm-config.h"
+          $llvmTargetDefinitions = @(
+            "Targets.def",
+            "AsmPrinters.def",
+            "AsmParsers.def",
+            "Disassemblers.def"
+          ) | ForEach-Object {
+            Join-Path $env:LLVM_ROOT "include\llvm\Config\$_"
+          }
+          $requiredFiles = @(
+            $llvmHeader,
+            $llvmConfigHeader,
+            $llvmImportLibrary,
+            $llvmDll,
+            $clang
+          ) + $llvmTargetDefinitions
 
-          foreach ($path in @($llvmHeader, $llvmImportLibrary, $llvmDll, $clang)) {
+          foreach ($path in $requiredFiles) {
             if (-not (Test-Path $path)) {
               throw "Required native LLVM file is missing: $path"
             }
@@ -137,13 +204,6 @@ jobs:
           Write-Host "LLVM host target: $hostTarget"
           (Join-Path $env:LLVM_ROOT "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           (Join-Path $env:ProgramFiles "Git\bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Save native LLVM cache
-        if: steps.llvm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v4
 
       - name: Configure with MSVC
         shell: pwsh
@@ -177,3 +237,10 @@ jobs:
           TEST_JOBS: "2"
           TEST_RUN_MODE: native
         run: ctest --test-dir build-msvc --build-config Release --output-on-failure
+
+      - name: Save native LLVM cache
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.LLVM_ROOT }}
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v5
