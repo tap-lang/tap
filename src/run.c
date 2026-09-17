@@ -264,14 +264,76 @@ static int cleanup_temp_workspace(TempWorkspace *workspace) {
     return result;
 }
 
+#ifdef _WIN32
+// Quote one argv entry using the parsing rules used by the Microsoft C Runtime.
+static char *quote_windows_argument(const char *argument) {
+    size_t argument_length = strlen(argument);
+    if (argument_length > (((size_t)-1) - 3) / 2) return NULL;
+
+    char *quoted = malloc(argument_length * 2 + 3);
+    if (!quoted) return NULL;
+
+    char *output = quoted;
+    const char *cursor = argument;
+    *output++ = '"';
+    while (*cursor) {
+        size_t backslash_count = 0;
+        while (*cursor == '\\') {
+            backslash_count++;
+            cursor++;
+        }
+
+        if (*cursor == '"') {
+            for (size_t i = 0; i < backslash_count * 2 + 1; i++) *output++ = '\\';
+            *output++ = *cursor++;
+        } else if (!*cursor) {
+            for (size_t i = 0; i < backslash_count * 2; i++) *output++ = '\\';
+        } else {
+            for (size_t i = 0; i < backslash_count; i++) *output++ = '\\';
+            *output++ = *cursor++;
+        }
+    }
+    *output++ = '"';
+    *output = '\0';
+    return quoted;
+}
+#endif
+
 // 启动子进程并返回其退出码。
 static int run_process(char *const argv[]) {
     fflush(NULL);
 
 #ifdef _WIN32
-    intptr_t result = _spawnvp(_P_WAIT, argv[0], (const char *const *)argv);
+    size_t argument_count = 0;
+    while (argv[argument_count]) argument_count++;
+    if (argument_count > (((size_t)-1) / sizeof(char *)) - 1) {
+        fprintf(stderr, "too many process arguments\n");
+        return 1;
+    }
+
+    char **quoted_argv = calloc(argument_count + 1, sizeof(char *));
+    if (!quoted_argv) {
+        fprintf(stderr, "Out of memory\n");
+        return 1;
+    }
+    for (size_t i = 0; i < argument_count; i++) {
+        quoted_argv[i] = quote_windows_argument(argv[i]);
+        if (!quoted_argv[i]) {
+            for (size_t j = 0; j < i; j++) free(quoted_argv[j]);
+            free(quoted_argv);
+            fprintf(stderr, "Out of memory\n");
+            return 1;
+        }
+    }
+
+    intptr_t result = _spawnvp(
+        _P_WAIT, argv[0], (const char *const *)quoted_argv);
+    int spawn_error = errno;
+    for (size_t i = 0; i < argument_count; i++) free(quoted_argv[i]);
+    free(quoted_argv);
     if (result == -1) {
-        fprintf(stderr, "failed to start program: %s: %s\n", argv[0], strerror(errno)); // 中文：启动程序失败
+        fprintf(stderr, "failed to start program: %s: %s\n",
+                argv[0], strerror(spawn_error)); // 中文：启动程序失败
         return 1;
     }
     return (int)result;
