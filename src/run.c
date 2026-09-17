@@ -164,15 +164,48 @@ static int create_temp_workspace(TempWorkspace *workspace) {
 
 #ifdef _WIN32
     char temp_path[RUN_PATH_MAX];
-    char temp_name[RUN_PATH_MAX];
     DWORD path_length = GetTempPathA(sizeof(temp_path), temp_path);
-    if (path_length == 0 || path_length >= sizeof(temp_path) ||
-        GetTempFileNameA(temp_path, "4yu", 0, temp_name) == 0 ||
-        !DeleteFileA(temp_name) || !CreateDirectoryA(temp_name, NULL)) {
-        fprintf(stderr, "failed to create temporary directory\n"); // 中文：创建临时目录失败
+    if (path_length == 0) {
+        fprintf(stderr, "failed to resolve temporary directory: Windows error %lu\n",
+                (unsigned long)GetLastError());
         return 1;
     }
-    snprintf(workspace->directory, sizeof(workspace->directory), "%s", temp_name);
+    if (path_length >= sizeof(temp_path)) {
+        fprintf(stderr, "temporary directory path is too long\n");
+        return 1;
+    }
+
+    // CreateDirectory is atomic. Avoid the GetTempFileName/DeleteFile race when
+    // multiple compiler processes create workspaces at the same time.
+    DWORD process_id = GetCurrentProcessId();
+    ULONGLONG timestamp = GetTickCount64();
+    DWORD create_error = ERROR_ALREADY_EXISTS;
+    int directory_created = 0;
+    for (unsigned int attempt = 0; attempt < 128; attempt++) {
+        int name_length = snprintf(
+            workspace->directory, sizeof(workspace->directory),
+            "%stap-%lu-%llu-%u", temp_path, (unsigned long)process_id,
+            (unsigned long long)timestamp, attempt);
+        if (name_length < 0 || (size_t)name_length >= sizeof(workspace->directory)) {
+            fprintf(stderr, "temporary directory path is too long\n");
+            workspace->directory[0] = '\0';
+            return 1;
+        }
+        if (CreateDirectoryA(workspace->directory, NULL)) {
+            directory_created = 1;
+            break;
+        }
+        create_error = GetLastError();
+        if (create_error != ERROR_ALREADY_EXISTS && create_error != ERROR_FILE_EXISTS) {
+            break;
+        }
+    }
+    if (!directory_created) {
+        fprintf(stderr, "failed to create temporary directory: Windows error %lu\n",
+                (unsigned long)create_error);
+        workspace->directory[0] = '\0';
+        return 1;
+    }
     if (build_temp_paths(workspace, "\\") != 0) {
         RemoveDirectoryA(workspace->directory);
         return 1;
