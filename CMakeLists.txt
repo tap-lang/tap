@@ -69,8 +69,13 @@ message(STATUS "LLVM Library Dir: ${LLVM_LIBRARY_DIRS}")
 message(STATUS "LLVM Definitions: ${LLVM_DEFINITIONS}")
 
 
-# 获取LLVM库列表
-set(llvm_libs LLVM)
+# The official Windows developer archive exposes the C API through LLVM-C.
+# Unix packages in CI provide the traditional monolithic LLVM library.
+if(MSVC AND TARGET LLVM-C)
+    set(llvm_libs LLVM-C)
+else()
+    set(llvm_libs LLVM)
+endif()
 
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})

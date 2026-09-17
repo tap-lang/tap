@@ -1,0 +1,123 @@
+name: MSVC
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msvc-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LLVM_VERSION: "21.1.8"
+  LLVM_ROOT: ${{ github.workspace }}\.cache\llvm-21-msvc
+  LLVM_ARCHIVE: clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+  LLVM_ARCHIVE_SHA256: 749d22f565fcd5718dbed06512572d0e5353b502c03fe1f7f17ee8b8aca21a47
+
+jobs:
+  build-and-test:
+    name: Windows 2022 / MSVC / Release
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Normalize line endings
+        shell: pwsh
+        run: git config --global core.autocrlf input
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore native LLVM cache
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LLVM_ROOT }}
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v1
+
+      - name: Install native LLVM 21
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP $env:LLVM_ARCHIVE
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$env:LLVM_ARCHIVE"
+
+          curl.exe --fail --location --retry 3 --output $archive $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download $url"
+          }
+
+          $actualHash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actualHash -ne $env:LLVM_ARCHIVE_SHA256) {
+            throw "LLVM archive checksum mismatch: expected $env:LLVM_ARCHIVE_SHA256, got $actualHash"
+          }
+
+          New-Item -ItemType Directory -Force $env:LLVM_ROOT | Out-Null
+          tar.exe -xJf $archive -C $env:LLVM_ROOT --strip-components=1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract $archive"
+          }
+
+      - name: Verify native LLVM 21
+        shell: pwsh
+        run: |
+          $llvmConfig = Join-Path $env:LLVM_ROOT "bin\llvm-config.exe"
+          $llvmCmake = Join-Path $env:LLVM_ROOT "lib\cmake\llvm\LLVMConfig.cmake"
+          $llvmImportLibrary = Join-Path $env:LLVM_ROOT "lib\LLVM-C.lib"
+          $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
+
+          foreach ($path in @($llvmConfig, $llvmCmake, $llvmImportLibrary, $llvmDll)) {
+            if (-not (Test-Path $path)) {
+              throw "Required native LLVM file is missing: $path"
+            }
+          }
+
+          $version = (& $llvmConfig --version).Trim()
+          $hostTarget = (& $llvmConfig --host-target).Trim()
+          if ($version -ne $env:LLVM_VERSION) {
+            throw "Expected LLVM $env:LLVM_VERSION, got $version"
+          }
+          if ($hostTarget -notmatch "windows-msvc$") {
+            throw "Expected an MSVC ABI LLVM build, got target $hostTarget"
+          }
+
+          Write-Host "LLVM version: $version"
+          Write-Host "LLVM host target: $hostTarget"
+          (Join-Path $env:LLVM_ROOT "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          (Join-Path $env:ProgramFiles "Git\bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure with MSVC
+        shell: pwsh
+        run: |
+          $llvmDir = (Join-Path $env:LLVM_ROOT "lib\cmake\llvm").Replace('\', '/')
+          cmake -S . -B build-msvc `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -T host=x64 `
+            "-DLLVM_DIR=$llvmDir" `
+            -DBUILD_TESTS=ON
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "CMake configuration failed"
+          }
+
+          $compilerFile = Get-ChildItem build-msvc -Recurse -Filter CMakeCCompiler.cmake |
+            Select-Object -First 1
+          if (-not $compilerFile -or
+              -not (Select-String -Path $compilerFile.FullName -Pattern 'CMAKE_C_COMPILER_ID "MSVC"' -Quiet)) {
+            throw "CMake did not select the MSVC C compiler"
+          }
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build-msvc --config Release --parallel 2
+
+      - name: Test
+        shell: pwsh
+        env:
+          TEST_JOBS: "2"
+        run: ctest --test-dir build-msvc --build-config Release --output-on-failure
