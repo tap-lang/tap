@@ -17,8 +17,6 @@ env:
   LLVM_ROOT: ${{ github.workspace }}\.cache\llvm-21-msvc
   LLVM_INSTALLER: LLVM-21.1.8-win64.exe
   LLVM_INSTALLER_SHA256: 7a5386c26497db1691f320121e5b113364dd0274b98e55f15f4dbc00c0450113
-  LLVM_SOURCE_ARCHIVE: llvm-21.1.8.src.tar.xz
-  LLVM_SOURCE_SHA256: d9022ddadb40a15015f6b27e6549a7144704ded8828ba036ffe4b8165707de21
 
 jobs:
   build-and-test:
@@ -44,7 +42,17 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v3
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v4
+
+      - name: Checkout LLVM C API headers
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: llvm/llvm-project
+          ref: llvmorg-21.1.8
+          path: llvm-source
+          fetch-depth: 1
+          sparse-checkout: llvm/include/llvm-c
 
       - name: Install native LLVM 21
         if: steps.llvm-cache.outputs.cache-hit != 'true'
@@ -52,7 +60,6 @@ jobs:
         run: |
           $releaseRoot = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION"
           $installer = Join-Path $env:RUNNER_TEMP $env:LLVM_INSTALLER
-          $sourceArchive = Join-Path $env:RUNNER_TEMP $env:LLVM_SOURCE_ARCHIVE
 
           Write-Host "Downloading native Windows LLVM installer"
           curl.exe --fail --location --retry 3 --output $installer "$releaseRoot/$env:LLVM_INSTALLER"
@@ -72,25 +79,14 @@ jobs:
             throw "LLVM installer failed with exit code $($install.ExitCode)"
           }
 
-          Write-Host "Downloading LLVM C API headers"
-          curl.exe --fail --location --retry 3 --output $sourceArchive `
-            "$releaseRoot/$env:LLVM_SOURCE_ARCHIVE"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to download $env:LLVM_SOURCE_ARCHIVE"
+          Write-Host "Copying LLVM C API headers from sparse checkout"
+          $headerSource = Join-Path $env:GITHUB_WORKSPACE "llvm-source\llvm\include\llvm-c"
+          $includeRoot = Join-Path $env:LLVM_ROOT "include"
+          if (-not (Test-Path (Join-Path $headerSource "Core.h"))) {
+            throw "Sparse checkout did not provide LLVM C API headers: $headerSource"
           }
-          Write-Host "Verifying LLVM source archive"
-          $sourceHash = (Get-FileHash -Algorithm SHA256 $sourceArchive).Hash.ToLowerInvariant()
-          if ($sourceHash -ne $env:LLVM_SOURCE_SHA256) {
-            throw "LLVM source checksum mismatch: expected $env:LLVM_SOURCE_SHA256, got $sourceHash"
-          }
-
-          Write-Host "Extracting LLVM C API headers"
-          $sourceRoot = $env:LLVM_SOURCE_ARCHIVE -replace '\.tar\.xz$', ''
-          tar.exe -xJf $sourceArchive -C $env:LLVM_ROOT --strip-components=1 `
-            "$sourceRoot/include/llvm-c"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to extract LLVM C API headers"
-          }
+          New-Item -ItemType Directory -Force $includeRoot | Out-Null
+          Copy-Item -Path $headerSource -Destination $includeRoot -Recurse -Force
 
           Write-Host "Generating the MSVC import library for LLVM-C.dll"
           $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
@@ -147,7 +143,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v3
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v4
 
       - name: Configure with MSVC
         shell: pwsh
