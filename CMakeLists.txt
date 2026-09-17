@@ -10,6 +10,13 @@ if(APPLE AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
     set(CMAKE_OSX_SYSROOT "" CACHE PATH "macOS SDK sysroot" FORCE)
 endif()
 
+# 源码是 UTF-8（含中文）。MSVC 默认按系统代码页（如 936）读取源文件，会把中文字符的
+# 尾字节与紧随其后的转义反斜杠并成一个双字节字符，既破坏字符串字面量又吞掉 \n。
+# /utf-8 等价于 /source-charset:utf-8 /execution-charset:utf-8。
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # 设置编译器
 # set(CMAKE_C_COMPILER "clang")
 # set(CMAKE_CXX_COMPILER "clang++")

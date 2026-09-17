@@ -1,6 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "lexer.h"
 #include "parser.h"
 #include "module.h"
@@ -31,7 +36,14 @@ static void print_usage() {
 }
 
 int main(int argc, char *argv[]) {
-    
+
+#ifdef _WIN32
+    // Windows 控制台默认用系统代码页（简体中文为 936），而编译器和源码都按 UTF-8
+    // 输出中文，字节被按 GBK 解释就会显示成乱码。这里把控制台切到 UTF-8 代码页。
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+
     char *input_file = NULL;       
     char *output_file = NULL;   
     int emit_ir = 0;        

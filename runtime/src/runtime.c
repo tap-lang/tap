@@ -140,6 +140,16 @@ static char *allocate_owned_string(size_t length) {
     return allocation->value;
 }
 
+// void __tap_init_console(void) {
+// #ifdef _WIN32
+//     // 控制台默认使用系统代码页（简体中文为 936），而 tap 源码里的字符串是 UTF-8 字节，
+//     // 直接写出去会被按 GBK 解释成乱码。输出和输入代码页一并切到 UTF-8。
+//     // 输出被重定向到文件或管道时本调用无副作用，写出的仍是原始 UTF-8 字节。
+//     SetConsoleOutputCP(CP_UTF8);
+//     SetConsoleCP(CP_UTF8);
+// #endif
+// }
+
 void __tap_init_args(int32_t argc, char **argv) {
     saved_argc = argc;
     saved_argv = argv;

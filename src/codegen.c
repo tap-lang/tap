@@ -2777,6 +2777,18 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
     LLVMBuildCall2(context->builder, init_args_type, init_args,
                    init_args_values, 2, "");
 
+    // // 把控制台切到 UTF-8 代码页，否则 Windows 下程序输出的中文会乱码。
+    // LLVMTypeRef init_console_type = LLVMFunctionType(
+    //     LLVMVoidTypeInContext(context->context), NULL, 0, 0);
+    // LLVMValueRef init_console = LLVMGetNamedFunction(
+    //     context->module, "__tap_init_console");
+    // if (!init_console) {
+    //     init_console = LLVMAddFunction(
+    //         context->module, "__tap_init_console", init_console_type);
+    // }
+    // LLVMBuildCall2(context->builder, init_console_type, init_console,
+    //                NULL, 0, "");
+
     LLVMValueRef user_main_function = LLVMGetNamedFunction(
         context->module, llvm_function_name(user_main));
     LLVMTypeRef user_main_type = LLVMGlobalGetValueType(user_main_function);

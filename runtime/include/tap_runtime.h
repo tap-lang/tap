@@ -19,6 +19,10 @@ TAP_RUNTIME_API int32_t __tap_clear_screen(void);
 
 TAP_RUNTIME_API int32_t __tap_random(int32_t maximum);
 
+// 把 Windows 控制台切到 UTF-8 代码页，避免 UTF-8 输出被按 GBK 解释成乱码。
+// 其他平台是空操作。由生成的入口 main 在最开始调用。
+// TAP_RUNTIME_API void __tap_init_console(void);
+
 TAP_RUNTIME_API void __tap_init_args(int32_t argc, char **argv);
 TAP_RUNTIME_API int32_t __tap_argc(void);
 TAP_RUNTIME_API const char *__tap_arg(int32_t index);

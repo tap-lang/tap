@@ -1,7 +1,14 @@
 .vscode/
 .cache/
+.vs/
+.workbuddy-ai/
+
 tmp/
 build/
+build-msvc/
+out/
+
+CMakeSettings.json
 
 src/version.h
 *.ll
