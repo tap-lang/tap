@@ -15,14 +15,16 @@ concurrency:
 env:
   LLVM_VERSION: "21.1.8"
   LLVM_ROOT: ${{ github.workspace }}\.cache\llvm-21-msvc
-  LLVM_ARCHIVE: clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
-  LLVM_ARCHIVE_SHA256: 749d22f565fcd5718dbed06512572d0e5353b502c03fe1f7f17ee8b8aca21a47
+  LLVM_INSTALLER: LLVM-21.1.8-win64.exe
+  LLVM_INSTALLER_SHA256: 7a5386c26497db1691f320121e5b113364dd0274b98e55f15f4dbc00c0450113
+  LLVM_SOURCE_ARCHIVE: llvm-21.1.8.src.tar.xz
+  LLVM_SOURCE_SHA256: d9022ddadb40a15015f6b27e6549a7144704ded8828ba036ffe4b8165707de21
 
 jobs:
   build-and-test:
     name: Windows 2022 / MSVC / Release
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Normalize line endings
@@ -32,71 +34,110 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Restore native LLVM cache
         id: llvm-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v2
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v3
 
       - name: Install native LLVM 21
         if: steps.llvm-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP $env:LLVM_ARCHIVE
-          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$env:LLVM_ARCHIVE"
+          $releaseRoot = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION"
+          $installer = Join-Path $env:RUNNER_TEMP $env:LLVM_INSTALLER
+          $sourceArchive = Join-Path $env:RUNNER_TEMP $env:LLVM_SOURCE_ARCHIVE
 
-          curl.exe --fail --location --retry 3 --output $archive $url
+          Write-Host "Downloading native Windows LLVM installer"
+          curl.exe --fail --location --retry 3 --output $installer "$releaseRoot/$env:LLVM_INSTALLER"
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to download $url"
+            throw "Failed to download $env:LLVM_INSTALLER"
+          }
+          Write-Host "Verifying native Windows LLVM installer"
+          $installerHash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
+          if ($installerHash -ne $env:LLVM_INSTALLER_SHA256) {
+            throw "LLVM installer checksum mismatch: expected $env:LLVM_INSTALLER_SHA256, got $installerHash"
           }
 
-          $actualHash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          if ($actualHash -ne $env:LLVM_ARCHIVE_SHA256) {
-            throw "LLVM archive checksum mismatch: expected $env:LLVM_ARCHIVE_SHA256, got $actualHash"
+          Write-Host "Installing native Windows LLVM"
+          $install = Start-Process -FilePath $installer `
+            -ArgumentList @('/S', "/D=$env:LLVM_ROOT") -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "LLVM installer failed with exit code $($install.ExitCode)"
           }
 
-          New-Item -ItemType Directory -Force $env:LLVM_ROOT | Out-Null
-          $packageRoot = $env:LLVM_ARCHIVE -replace '\.tar\.xz$', ''
-          $requiredFiles = @(
-            "$packageRoot/include/llvm-c",
-            "$packageRoot/lib/LLVM-C.lib",
-            "$packageRoot/bin/LLVM-C.dll",
-            "$packageRoot/bin/clang.exe",
-            "$packageRoot/bin/lli.exe",
-            "$packageRoot/bin/llvm-config.exe"
-          )
-          tar.exe -xJf $archive -C $env:LLVM_ROOT --strip-components=1 $requiredFiles
+          Write-Host "Downloading LLVM C API headers"
+          curl.exe --fail --location --retry 3 --output $sourceArchive `
+            "$releaseRoot/$env:LLVM_SOURCE_ARCHIVE"
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to extract $archive"
+            throw "Failed to download $env:LLVM_SOURCE_ARCHIVE"
+          }
+          Write-Host "Verifying LLVM source archive"
+          $sourceHash = (Get-FileHash -Algorithm SHA256 $sourceArchive).Hash.ToLowerInvariant()
+          if ($sourceHash -ne $env:LLVM_SOURCE_SHA256) {
+            throw "LLVM source checksum mismatch: expected $env:LLVM_SOURCE_SHA256, got $sourceHash"
+          }
+
+          Write-Host "Extracting LLVM C API headers"
+          $sourceRoot = $env:LLVM_SOURCE_ARCHIVE -replace '\.tar\.xz$', ''
+          tar.exe -xJf $sourceArchive -C $env:LLVM_ROOT --strip-components=1 `
+            "$sourceRoot/include/llvm-c"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract LLVM C API headers"
+          }
+
+          Write-Host "Generating the MSVC import library for LLVM-C.dll"
+          $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
+          $llvmLibDir = Join-Path $env:LLVM_ROOT "lib"
+          $llvmDef = Join-Path $llvmLibDir "LLVM-C.def"
+          $llvmLib = Join-Path $llvmLibDir "LLVM-C.lib"
+          New-Item -ItemType Directory -Force $llvmLibDir | Out-Null
+
+          $exports = dumpbin.exe /nologo /exports $llvmDll | ForEach-Object {
+            if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(LLVM[A-Za-z0-9_]+)(?:\s|$)') {
+              $Matches[1]
+            }
+          } | Sort-Object -Unique
+          if ($exports.Count -lt 100) {
+            throw "Unexpected LLVM-C export count: $($exports.Count)"
+          }
+          (@('LIBRARY LLVM-C', 'EXPORTS') + $exports) |
+            Set-Content -Path $llvmDef -Encoding ascii
+          lib.exe /nologo "/def:$llvmDef" /machine:x64 "/out:$llvmLib"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to generate LLVM-C.lib"
           }
 
       - name: Verify native LLVM 21
         shell: pwsh
         run: |
-          $llvmConfig = Join-Path $env:LLVM_ROOT "bin\llvm-config.exe"
           $llvmHeader = Join-Path $env:LLVM_ROOT "include\llvm-c\Core.h"
           $llvmImportLibrary = Join-Path $env:LLVM_ROOT "lib\LLVM-C.lib"
           $llvmDll = Join-Path $env:LLVM_ROOT "bin\LLVM-C.dll"
           $clang = Join-Path $env:LLVM_ROOT "bin\clang.exe"
-          $lli = Join-Path $env:LLVM_ROOT "bin\lli.exe"
 
-          foreach ($path in @($llvmConfig, $llvmHeader, $llvmImportLibrary, $llvmDll, $clang, $lli)) {
+          foreach ($path in @($llvmHeader, $llvmImportLibrary, $llvmDll, $clang)) {
             if (-not (Test-Path $path)) {
               throw "Required native LLVM file is missing: $path"
             }
           }
 
-          $version = (& $llvmConfig --version).Trim()
-          $hostTarget = (& $llvmConfig --host-target).Trim()
-          if ($version -ne $env:LLVM_VERSION) {
-            throw "Expected LLVM $env:LLVM_VERSION, got $version"
+          $versionOutput = (& $clang --version) -join "`n"
+          $hostTarget = (& $clang -print-target-triple).Trim()
+          if ($versionOutput -notmatch "clang version $([regex]::Escape($env:LLVM_VERSION))") {
+            throw "Expected LLVM $env:LLVM_VERSION, got:`n$versionOutput"
           }
           if ($hostTarget -notmatch "windows-msvc$") {
             throw "Expected an MSVC ABI LLVM build, got target $hostTarget"
           }
 
-          Write-Host "LLVM version: $version"
+          Write-Host ($versionOutput -split "`n")[0]
           Write-Host "LLVM host target: $hostTarget"
           (Join-Path $env:LLVM_ROOT "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           (Join-Path $env:ProgramFiles "Git\bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -106,7 +147,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.LLVM_ROOT }}
-          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v2
+          key: llvm-${{ env.LLVM_VERSION }}-windows-x64-msvc-v3
 
       - name: Configure with MSVC
         shell: pwsh
@@ -138,4 +179,5 @@ jobs:
         shell: pwsh
         env:
           TEST_JOBS: "2"
+          TEST_RUN_MODE: native
         run: ctest --test-dir build-msvc --build-config Release --output-on-failure
