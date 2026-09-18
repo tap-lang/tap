@@ -51,6 +51,22 @@ static int is_float_type(enum LiteralType type) {
     return type == LITERAL_FLOAT || type == LITERAL_F32 || type == LITERAL_F64;
 }
 
+// 判断标量类型之间是否允许隐式转换：整数之间、浮点之间互相兼容，另外允许 int -> float。
+// bool 虽然按整数处理，但不参与隐式数值转换，避免 `let f: f64 = true;` 这类写法通过。
+static int scalar_types_compatible(enum LiteralType target, enum LiteralType source) {
+    if (target == source) return 1;
+    if (is_integer_type(target) && is_integer_type(source)) return 1;
+    if (is_float_type(target) && is_float_type(source)) return 1;
+    if (is_float_type(target) && is_integer_type(source) && source != LITERAL_BOOL) return 1;
+    return 0;
+}
+
+// 计算两个浮点操作数共同提升后的类型；任一侧为 f64 时整体提升到 f64。
+static enum LiteralType common_float_type(enum LiteralType left, enum LiteralType right) {
+    if (left == LITERAL_F64 || right == LITERAL_F64) return LITERAL_F64;
+    return LITERAL_F32;
+}
+
 static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type);
 static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const char *name);
 
@@ -760,9 +776,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         }
         return 0;
     }
-    enum LiteralType actual_type = expression_type(context, expression);
-    return target_type->type == actual_type ||
-           (is_integer_type(target_type->type) && is_integer_type(actual_type));
+    return scalar_types_compatible(target_type->type,
+                                   expression_type(context, expression));
 }
 
 // 解析标识符或连续下标表达式最终指向的数组/指针元素类型。
@@ -934,8 +949,12 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             if (binary->op_type == OP_AND || binary->op_type == OP_OR) {
                 return LITERAL_BOOL;
             }
-            return common_integer_type(expression_type(context, binary->left),
-                                       expression_type(context, binary->right));
+            enum LiteralType left_type = expression_type(context, binary->left);
+            enum LiteralType right_type = expression_type(context, binary->right);
+            if (is_float_type(left_type) || is_float_type(right_type)) {
+                return common_float_type(left_type, right_type);
+            }
+            return common_integer_type(left_type, right_type);
         }
         default:
             return default_integer_type();
@@ -966,11 +985,17 @@ static LLVMValueRef cast_integer(CodeGenContext *context, LLVMValueRef value,
     return LLVMBuildSExt(context->builder, value, target_type, "int_sext");
 }
 
-// 根据目标类型执行标量转换；当前支持整数扩展/截断和 f32/f64 互转。
+// 根据目标类型执行标量转换；支持整数扩展/截断、f32/f64 互转和 int -> float。
 static LLVMValueRef cast_value(CodeGenContext *context, LLVMValueRef value,
                                enum LiteralType source, enum LiteralType target) {
     if (is_integer_type(source) && is_integer_type(target)) {
         return cast_integer(context, value, source, target);
+    }
+    if (is_integer_type(source) && is_float_type(target)) {
+        LLVMTypeRef target_type = get_llvm_type(context, target);
+        return is_unsigned_type(source)
+            ? LLVMBuildUIToFP(context->builder, value, target_type, "uint_to_float")
+            : LLVMBuildSIToFP(context->builder, value, target_type, "int_to_float");
     }
     if (is_float_type(source) && is_float_type(target)) {
         if (source == target) return value;
@@ -992,6 +1017,8 @@ static LLVMValueRef generate_logical_binary(CodeGenContext *context, BinaryOpNod
 static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition);
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type);
+static LLVMValueRef generate_float_binary(CodeGenContext *context, BinaryOpNode *binary,
+                                          enum LiteralType operand_type);
 static LLVMValueRef generate_array_value(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *expected_type);
 static unsigned function_param_count(FunctionNode *function);
@@ -1365,6 +1392,36 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
             return LLVMBuildICmp(context->builder,
                 is_unsigned_type(operand_type) ? LLVMIntUGE : LLVMIntSGE,
                 left, right, "ge_result");
+        default:
+            fprintf(stderr, "error: unsupported binary operator\n"); // 中文：不支持的二元操作符
+            exit(1);
+    }
+}
+
+// 生成浮点二元运算与比较。比较使用 ordered 谓词，NaN 参与比较时结果为 false。
+static LLVMValueRef generate_float_binary(CodeGenContext *context, BinaryOpNode *binary,
+                                          enum LiteralType operand_type) {
+    LLVMValueRef left = generate_expression_as(context, binary->left, operand_type);
+    LLVMValueRef right = generate_expression_as(context, binary->right, operand_type);
+
+    switch (binary->op_type) {
+        case OP_ADD: return LLVMBuildFAdd(context->builder, left, right, "fadd_result");
+        case OP_SUBTRACT: return LLVMBuildFSub(context->builder, left, right, "fsub_result");
+        case OP_MULTIPLY: return LLVMBuildFMul(context->builder, left, right, "fmul_result");
+        case OP_DIVIDE: return LLVMBuildFDiv(context->builder, left, right, "fdiv_result");
+        case OP_MODULO: return LLVMBuildFRem(context->builder, left, right, "frem_result");
+        case OP_EQUAL:
+            return LLVMBuildFCmp(context->builder, LLVMRealOEQ, left, right, "feq_result");
+        case OP_NOT_EQUAL:
+            return LLVMBuildFCmp(context->builder, LLVMRealONE, left, right, "fne_result");
+        case OP_LESS_THAN:
+            return LLVMBuildFCmp(context->builder, LLVMRealOLT, left, right, "flt_result");
+        case OP_GREATER_THAN:
+            return LLVMBuildFCmp(context->builder, LLVMRealOGT, left, right, "fgt_result");
+        case OP_LESS_THAN_OR_EQUAL:
+            return LLVMBuildFCmp(context->builder, LLVMRealOLE, left, right, "fle_result");
+        case OP_GREATER_THAN_OR_EQUAL:
+            return LLVMBuildFCmp(context->builder, LLVMRealOGE, left, right, "fge_result");
         default:
             fprintf(stderr, "error: unsupported binary operator\n"); // 中文：不支持的二元操作符
             exit(1);
@@ -1897,6 +1954,10 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 }
                 return generate_string_comparison(context, binary);
             }
+            if (is_float_type(left_type) || is_float_type(right_type)) {
+                return generate_float_binary(
+                    context, binary, common_float_type(left_type, right_type));
+            }
             enum LiteralType operand_type = common_integer_type(left_type, right_type);
             return generate_integer_binary(context, binary, operand_type);
         }
@@ -1908,10 +1969,13 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
     exit(1);
 }
 
-// 将 printf 的窄整数实参提升到 C 可变参数 ABI 需要的宽度。
-static LLVMValueRef promote_printf_integer(CodeGenContext *context, ASTNode *expression) {
+// 把 printf 实参提升到 C 可变参数 ABI 要求的宽度：窄整数提升到 i32，浮点提升到 double。
+static LLVMValueRef promote_printf_argument(CodeGenContext *context, ASTNode *expression) {
     enum LiteralType type = expression_type(context, expression);
     LLVMValueRef value = generate_expression(context, expression);
+    if (is_float_type(type)) {
+        return cast_value(context, value, type, LITERAL_F64);
+    }
     if (!is_integer_type(type)) return value;
     if (integer_type_bits(type) < 32) {
         return cast_integer(context, value, type, LITERAL_I32);
@@ -1934,7 +1998,7 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
             ((LiteralNode *)first)->value.string_value, "format_string");
         ASTNode *argument = first->next;
         for (unsigned i = 1; i < count; i++, argument = argument->next) {
-            arguments[i] = promote_printf_integer(context, argument);
+            arguments[i] = promote_printf_argument(context, argument);
         }
         LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
                        arguments, count, "printf_result");
@@ -1944,7 +2008,9 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
 
     enum LiteralType type = expression_type(context, first);
     const char *format = "%d";
-    if (is_integer_type(type) && integer_type_bits(type) > 32) {
+    if (is_float_type(type)) {
+        format = "%f";
+    } else if (is_integer_type(type) && integer_type_bits(type) > 32) {
         format = is_unsigned_type(type) ? "%llu" : "%lld";
     } else if (is_unsigned_type(type)) {
         format = "%u";
@@ -1952,7 +2018,7 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
 
     LLVMValueRef arguments[2] = {
         LLVMBuildGlobalStringPtr(context->builder, format, "format_string"),
-        promote_printf_integer(context, first)
+        promote_printf_argument(context, first)
     };
     LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
                    arguments, 2, "printf_result");
@@ -2010,7 +2076,7 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
 // 判断数组元素的标量类型是否允许写入目标元素类型。
 static int array_element_type_compatible(
     enum LiteralType expected, enum LiteralType actual) {
-    return expected == actual || (is_integer_type(expected) && is_integer_type(actual));
+    return scalar_types_compatible(expected, actual);
 }
 
 // 递归校验嵌套数组字面量，并把每个标量叶子写入数组存储。

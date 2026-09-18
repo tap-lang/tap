@@ -234,6 +234,7 @@ static Token *identifier(Lexer *lexer) {
 static Token *number(Lexer *lexer) {
     const char *start = lexer->current;
     int has_dot = 0;
+    int has_exponent = 0;
     
     while (isdigit(peek(lexer))) {
         advance(lexer);
@@ -248,8 +249,27 @@ static Token *number(Lexer *lexer) {
         }
     }
     
+    // 指数记法：e/E 后必须是可选符号加至少一位数字，否则回退，把 e 留给标识符。
+    if (peek(lexer) == 'e' || peek(lexer) == 'E') {
+        char *mark = lexer->current;
+        int mark_column = lexer->column;
+        advance(lexer);
+        if (peek(lexer) == '+' || peek(lexer) == '-') {
+            advance(lexer);
+        }
+        if (isdigit(peek(lexer))) {
+            has_exponent = 1;
+            while (isdigit(peek(lexer))) {
+                advance(lexer);
+            }
+        } else {
+            lexer->current = mark;
+            lexer->column = mark_column;
+        }
+    }
+    
     Token *token;
-    if (has_dot) {
+    if (has_dot || has_exponent) {
         token = create_token(lexer, TOKEN_F32, start, lexer->current);
         token->value.float_value = atof(token->lexeme);
     } else {

@@ -40,6 +40,27 @@ const VALUES: [i32; 4] = [0; 4];
 | `f32` | 32位单精度浮点数 |
 | `f64` | 64位双精度浮点数 |
 
+以上浮点类型已经支持用于变量声明、函数参数和函数返回值，也支持固定长度数组元素和结构体字段。
+实现约定如下：
+
+- 字面量支持小数写法 `1.5` 和指数写法 `1e10`、`1.5e-3`、`2E+8`；带小数点或指数的数字一律
+  解析为浮点，字面量默认类型是 `f32`。
+- `f32` 与 `f64` 之间可以隐式转换：拓宽到 `f64` 使用 `FPExt`，收窄到 `f32` 使用 `FPTrunc`。
+- 整数可以隐式转换为浮点，例如 `let value: f64 = 3;`。反方向不会隐式发生，
+  `let count: i32 = 1.5;` 会报类型不匹配。
+- 四则运算 `+`、`-`、`*`、`/` 和取模 `%` 都按浮点语义执行；两侧类型不同时提升到 `f64`。
+- 比较运算符按浮点语义求值。NaN 参与比较时六种运算符的结果都是 `false`。
+- 输出浮点值使用 `%f`，例如 `print("%f\n", value)`。`print` 会自动把浮点实参提升为
+  `double`，以匹配 C 可变参数 ABI。
+- 当前没有浮点类型后缀，类型由声明位置或表达式上下文确定。
+
+浮点行为由以下运行测试覆盖：
+
+- [`float_literals.tp`](../tests/run-pass/types/float_literals.tp)：指数记法、隐式 `int → float`、`f32` 到 `f64` 拓宽。
+- [`float_arithmetic.tp`](../tests/run-pass/types/float_arithmetic.tp)：四则运算、取模和一元负号。
+- [`float_comparisons.tp`](../tests/run-pass/types/float_comparisons.tp)：六种比较运算符。
+- [`float_containers.tp`](../tests/run-pass/types/float_containers.tp)：浮点数组、结构体字段和函数参数返回值。
+
 ### 字符串类型
 | 类型 | 描述 |
 | --- | --- |

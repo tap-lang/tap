@@ -168,8 +168,8 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 `i32` 等泛型实参。
 
 十进制整数字面量默认创建为 `LITERAL_I32`，同时在 `integer_text` 中保留原文，使 Codegen
-可以直接构造超过 64 位的 `i128/u128` 常量。浮点和布尔构造函数已经存在，但尚未接入对应的
-表达式解析流程。
+可以直接构造超过 64 位的 `i128/u128` 常量。浮点字面量（`1.5` 和 `1e10` 两种写法）创建为
+`LITERAL_F32`，布尔字面量 `true` / `false` 创建为 `LITERAL_BOOL`。
 
 ## 链表关系
 
@@ -290,4 +290,5 @@ Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`
 - `LiteralType` 同时承担字面量类型和声明类型，后续类型系统扩展时应考虑拆分。
 - `params` 与 `param_types` 使用平行链表；混合有类型和无类型参数时容易发生位置错配。
 - `print_ast()` 当前直接访问 `VarDeclNode.type`，无类型变量声明可能导致空指针访问。
-- `NODE_STATEMENT`、`NODE_EXPRESSION`、逻辑操作符以及浮点/布尔字面量解析仍是预留能力。
+- `NODE_STATEMENT` 和 `NODE_EXPRESSION` 仍是预留能力，没有对应的结构体、构造函数或
+  Parser 产物。

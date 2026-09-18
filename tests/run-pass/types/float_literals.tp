@@ -1,0 +1,27 @@
+// 浮点字面量的各种写法：指数记法、隐式 int -> float、f32 到 f64 的拓宽。
+fn main(): i32 {
+    let big: f64 = 1e10;
+    let small: f64 = 1.5e-3;
+    let upper: f64 = 2E+8;
+    let from_int: f64 = 3;
+    let narrow: f32 = 1.5;
+    let widened: f64 = narrow;
+
+    print("%f\n", big);
+    print("%f\n", small);
+    print("%f\n", upper);
+    print("%f\n", from_int);
+    print("%f\n", widened);
+    return 0;
+}
+
+/** -- test
+- .stdout
+10000000000.000000
+0.001500
+200000000.000000
+3.000000
+1.500000
+- .exit
+0
+-- */

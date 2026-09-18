@@ -3,6 +3,8 @@
 .vs/
 .workbuddy-ai/
 
+.DS_Store
+
 tmp/
 build/
 build-msvc/

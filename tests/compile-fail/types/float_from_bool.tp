@@ -1,0 +1,11 @@
+fn main(): i32 {
+    let value: f64 = true;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: initializer type mismatch for 'value'
+- .exit
+1
+-- */

@@ -1,0 +1,37 @@
+// 浮点六种比较运算符，覆盖 f64 与混合整数的比较。
+fn main(): i32 {
+    let a: f64 = 1.5;
+    let b: f64 = 2.25;
+
+    if (a < b) {
+        print("lt\n");
+    }
+    if (a <= a) {
+        print("le\n");
+    }
+    if (b > a) {
+        print("gt\n");
+    }
+    if (b >= b) {
+        print("ge\n");
+    }
+    if (a == a) {
+        print("eq\n");
+    }
+    if (a != b) {
+        print("ne\n");
+    }
+    return 0;
+}
+
+/** -- test
+- .stdout
+lt
+le
+gt
+ge
+eq
+ne
+- .exit
+0
+-- */

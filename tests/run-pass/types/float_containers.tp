@@ -1,0 +1,43 @@
+// 浮点在复合类型中的使用：固定长度数组、结构体字段、函数参数与返回值。
+struct Ratio {
+    num: f64,
+    den: f64,
+}
+
+fn scale(value: f64, factor: i32): f64 {
+    return value * factor;
+}
+
+fn largest(a: f64, b: f64): f64 {
+    if (a >= b) {
+        return a;
+    }
+    return b;
+}
+
+fn main(): i32 {
+    let values: [f64; 3] = [1.5, 2.5, 3.5];
+    let total: f64 = 0.0;
+    for (let i: i32 = 0; i < 3; i++) {
+        total = total + values[i];
+    }
+    print("sum %f\n", total);
+
+    let ratio: Ratio = Ratio { num: 3.0, den: 4.0 };
+    print("ratio %f\n", ratio.num / ratio.den);
+
+    print("scaled %f\n", scale(2.5, 4));
+    print("largest %f\n", largest(1.25, 9.5));
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+sum 7.500000
+ratio 0.750000
+scaled 10.000000
+largest 9.500000
+- .exit
+0
+-- */
