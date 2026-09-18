@@ -1,0 +1,241 @@
+// JSON 字符串转义。全部用 tap 实现，不依赖额外的 Runtime ABI。
+//
+// 覆盖 RFC 8259 对字符串字面量的要求：
+//   - 输出侧：`"` `\` 以及所有小于 0x20 的字符都必须转义。`\b` `\f` `\n` `\r` `\t` 用短形式，
+//     其余控制字符写成 `\u00XX`。
+//   - 输入侧：识别 `\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t` 和 `\uXXXX`；相邻的
+//     高/低代理对会合成一个码点再按 UTF-8 编码，孤立代理视为非法。
+//
+// 本模块只处理字符串内容，不含两侧引号——引号由 append_quoted / escape_quoted 补上。
+// 非 ASCII 字节原样透传（JSON 允许直接出现 UTF-8 字节）。
+import std.string_builder as sb;
+
+// unescape 的结果。ok 为 false 时表示输入含非法转义序列，
+// text 是出错前已经解出的部分。
+struct Unescaped {
+    text: string,
+    ok: bool,
+}
+
+// 读取 4 位十六进制的结果。
+struct Hex4 {
+    value: i32,
+    ok: bool,
+}
+
+// 返回 0..15 对应的十六进制字符（小写）。
+fn hex_digit(value: i32): i32 {
+    if (value < 10) {
+        return value + 48;
+    }
+    return value - 10 + 97;
+}
+
+// 判断字节是否为十六进制数字。
+fn is_hex_digit(value: u8): bool {
+    if (value >= 48 && value <= 57) {
+        return true;
+    }
+    if (value >= 97 && value <= 102) {
+        return true;
+    }
+    if (value >= 65 && value <= 70) {
+        return true;
+    }
+    return false;
+}
+
+// 返回十六进制数字对应的数值；调用方需保证是合法数字。
+fn hex_value(value: u8): i32 {
+    if (value >= 48 && value <= 57) {
+        return value - 48;
+    }
+    if (value >= 97 && value <= 102) {
+        return value - 97 + 10;
+    }
+    return value - 65 + 10;
+}
+
+// 从 start 起读取 4 位十六进制；越界或含非十六进制字符时 ok 为 false。
+fn read_hex4(text: string, start: uint, length: uint): Hex4 {
+    if (start + 4 > length) {
+        return Hex4 { value: 0, ok: false };
+    }
+    let value: i32 = 0;
+    let step: uint = 0;
+    while (step < 4) {
+        let byte: u8 = text.byte_at(start + step);
+        if (!is_hex_digit(byte)) {
+            return Hex4 { value: 0, ok: false };
+        }
+        value = value * 16 + hex_value(byte);
+        step++;
+    }
+    return Hex4 { value: value, ok: true };
+}
+
+// 取出构建器的快照并释放它。
+fn finish(builder: StringBuilder): string {
+    let text: string = sb.to_string(builder);
+    sb.free(builder);
+    return text;
+}
+
+// 把一个字节按 JSON 规则转义后追加。
+fn append_escaped_byte(builder: StringBuilder, value: u8): StringBuilder {
+    if (value == 34) {
+        return sb.append(builder, "\\\"");
+    }
+    if (value == 92) {
+        return sb.append(builder, "\\\\");
+    }
+    if (value == 8) {
+        return sb.append(builder, "\\b");
+    }
+    if (value == 12) {
+        return sb.append(builder, "\\f");
+    }
+    if (value == 10) {
+        return sb.append(builder, "\\n");
+    }
+    if (value == 13) {
+        return sb.append(builder, "\\r");
+    }
+    if (value == 9) {
+        return sb.append(builder, "\\t");
+    }
+    if (value < 32) {
+        // 其余控制字符一律写成 \u00XX：裸的控制字节不是合法 JSON。
+        builder = sb.append(builder, "\\u00");
+        builder = sb.append_byte(builder, hex_digit(value / 16));
+        return sb.append_byte(builder, hex_digit(value % 16));
+    }
+    return sb.append_byte(builder, value);
+}
+
+// 把原始字符串转义后追加到构建器，不含两侧引号。
+fn append_escaped(builder: StringBuilder, text: string): StringBuilder {
+    let length: uint = text.len();
+    let index: uint = 0;
+    while (index < length) {
+        builder = append_escaped_byte(builder, text.byte_at(index));
+        index++;
+    }
+    return builder;
+}
+
+// 把原始字符串转义后追加，并补上两侧引号。
+fn append_quoted(builder: StringBuilder, text: string): StringBuilder {
+    builder = sb.append_byte(builder, 34);
+    builder = append_escaped(builder, text);
+    return sb.append_byte(builder, 34);
+}
+
+// 返回转义后的字符串，不含两侧引号。
+fn escape(text: string): string {
+    return finish(append_escaped(sb.new(), text));
+}
+
+// 返回可直接放进 JSON 的字符串字面量（含两侧引号）。
+fn escape_quoted(text: string): string {
+    return finish(append_quoted(sb.new(), text));
+}
+
+// 把码点按 UTF-8 编码追加。用乘除代替移位，因为 tap 目前没有移位运算符。
+fn append_code_point(builder: StringBuilder, code_point: i32): StringBuilder {
+    if (code_point < 128) {
+        return sb.append_byte(builder, code_point);
+    }
+    if (code_point < 2048) {
+        builder = sb.append_byte(builder, code_point / 64 + 192);
+        return sb.append_byte(builder, code_point % 64 + 128);
+    }
+    if (code_point < 65536) {
+        builder = sb.append_byte(builder, code_point / 4096 + 224);
+        builder = sb.append_byte(builder, code_point % 4096 / 64 + 128);
+        return sb.append_byte(builder, code_point % 64 + 128);
+    }
+    builder = sb.append_byte(builder, code_point / 262144 + 240);
+    builder = sb.append_byte(builder, code_point % 262144 / 4096 + 128);
+    builder = sb.append_byte(builder, code_point % 4096 / 64 + 128);
+    return sb.append_byte(builder, code_point % 64 + 128);
+}
+
+// 反转义 JSON 字符串内容（不含两侧引号）。
+// 遇到非法转义、被截断的 \uXXXX、或孤立的代理时返回 ok = false。
+fn unescape(text: string): Unescaped {
+    let builder: StringBuilder = sb.new();
+    let length: uint = text.len();
+    let index: uint = 0;
+
+    while (index < length) {
+        let byte: u8 = text.byte_at(index);
+        if (byte != 92) {
+            builder = sb.append_byte(builder, byte);
+            index++;
+            continue;
+        }
+
+        // 反斜杠后面必须有字符。
+        if (index + 1 >= length) {
+            return Unescaped { text: finish(builder), ok: false };
+        }
+        let marker: u8 = text.byte_at(index + 1);
+        if (marker == 34) {
+            builder = sb.append_byte(builder, 34);
+            index = index + 2;
+        } elseif (marker == 92) {
+            builder = sb.append_byte(builder, 92);
+            index = index + 2;
+        } elseif (marker == 47) {
+            builder = sb.append_byte(builder, 47);
+            index = index + 2;
+        } elseif (marker == 98) {
+            builder = sb.append_byte(builder, 8);
+            index = index + 2;
+        } elseif (marker == 102) {
+            builder = sb.append_byte(builder, 12);
+            index = index + 2;
+        } elseif (marker == 110) {
+            builder = sb.append_byte(builder, 10);
+            index = index + 2;
+        } elseif (marker == 114) {
+            builder = sb.append_byte(builder, 13);
+            index = index + 2;
+        } elseif (marker == 116) {
+            builder = sb.append_byte(builder, 9);
+            index = index + 2;
+        } elseif (marker == 117) {
+            let first: Hex4 = read_hex4(text, index + 2, length);
+            if (!first.ok) {
+                return Unescaped { text: finish(builder), ok: false };
+            }
+            let code_point: i32 = first.value;
+            let consumed: uint = 6;
+
+            if (code_point >= 55296 && code_point <= 56319) {
+                // 高代理后面必须紧跟 \uDC00-\uDFFF 形式的低代理，两者合成一个码点。
+                if (index + 12 > length || text.byte_at(index + 6) != 92 ||
+                    text.byte_at(index + 7) != 117) {
+                    return Unescaped { text: finish(builder), ok: false };
+                }
+                let second: Hex4 = read_hex4(text, index + 8, length);
+                if (!second.ok || second.value < 56320 || second.value > 57343) {
+                    return Unescaped { text: finish(builder), ok: false };
+                }
+                code_point = 65536 + (code_point - 55296) * 1024 + (second.value - 56320);
+                consumed = 12;
+            } elseif (code_point >= 56320 && code_point <= 57343) {
+                // 孤立的低代理无法编码成 UTF-8。
+                return Unescaped { text: finish(builder), ok: false };
+            }
+
+            builder = append_code_point(builder, code_point);
+            index = index + consumed;
+        } else {
+            return Unescaped { text: finish(builder), ok: false };
+        }
+    }
+
+    return Unescaped { text: finish(builder), ok: true };
+}

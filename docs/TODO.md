@@ -10,6 +10,7 @@
 7. [x] 泛型载荷枚举（`Option<T>`、`Result<T, E>`），支持多种实例化共存与嵌套实例化。
 8. 构造时显式写类型实参，例如 `Option<i32>.Some(42)`；当前只能由目标类型推断。
 9. `match` 作为表达式（`let x = match ...`）、嵌套模式、分支守卫。
-10. JSON 转义 API。
+10. [x] JSON 转义 API（`std.json` 的 `escape` / `escape_quoted` / `append_escaped` /
+    `append_quoted` / `unescape`，覆盖控制字符、`\uXXXX` 和代理对）。
 11. format_f64：把 `double` 渲染成十进制字符串，需要大整数算法或 Runtime 的 `snprintf` 支持。
 12. 递归载荷枚举：成员载荷不能是枚举自身，需要先有指针或 Box 语义。

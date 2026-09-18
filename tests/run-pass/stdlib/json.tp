@@ -1,0 +1,69 @@
+// std.json 的字符串转义：输出侧转义、输入侧反转义、代理对与非法输入。
+import std.json;
+import std.string_builder as sb;
+
+fn main(): i32 {
+    print("quoted: %s\n", json.escape_quoted("hi"));
+    print("bare: %s\n", json.escape("a\"b\\c"));
+    print("shorts: %s\n", json.escape("x\ty\nz"));
+
+    // 控制字符一律转义；0x7F 不是控制字符，按规范原样透传。
+    let ctrl: StringBuilder = sb.new();
+    ctrl = sb.append_byte(ctrl, 1);
+    ctrl = sb.append_byte(ctrl, 8);
+    ctrl = sb.append_byte(ctrl, 12);
+    ctrl = sb.append_byte(ctrl, 31);
+    let raw: string = sb.to_string(ctrl);
+    print("ctrl: %s\n", json.escape_quoted(raw));
+
+    let del: StringBuilder = sb.new();
+    del = sb.append_byte(del, 127);
+    let del_raw: string = sb.to_string(del);
+    let del_escaped: string = json.escape_quoted(del_raw);
+    print("del passthrough: len=%llu\n", del_escaped.len());
+
+    // 反转义：短形式、\uXXXX（2 字节 / 3 字节）、代理对、\/。
+    let nl: Unescaped = json.unescape("a\\nb");
+    let uni: Unescaped = json.unescape("\\u0041\\u00e9\\u4e2d");
+    let emoji: Unescaped = json.unescape("\\uD83D\\uDE00");
+    let solidus: Unescaped = json.unescape("\\/");
+    let nl_text: string = nl.text;
+    let uni_text: string = uni.text;
+    let emoji_text: string = emoji.text;
+    print("nl: ok=%d len=%llu\n", nl.ok, nl_text.len());
+    print("unicode: ok=%d text=%s len=%llu\n", uni.ok, uni_text, uni_text.len());
+    print("surrogate: ok=%d len=%llu\n", emoji.ok, emoji_text.len());
+    print("solidus: ok=%d\n", solidus.ok);
+
+    // 非法输入：未知转义、孤立代理、截断、结尾裸反斜杠。
+    let bad1: Unescaped = json.unescape("\\q");
+    let bad2: Unescaped = json.unescape("\\uD83D");
+    let bad3: Unescaped = json.unescape("\\uDE00");
+    let bad4: Unescaped = json.unescape("\\u12");
+    let bad5: Unescaped = json.unescape("\\");
+    print("invalid: %d %d %d %d %d\n",
+        bad1.ok, bad2.ok, bad3.ok, bad4.ok, bad5.ok);
+
+    // escape 与 unescape 互为逆运算。
+    let back: Unescaped = json.unescape(json.escape(raw));
+    let back_text: string = back.text;
+    print("roundtrip: ok=%d same=%d\n", back.ok, back_text.len() == raw.len());
+    return 0;
+}
+
+/** -- test
+- .stdout
+quoted: "hi"
+bare: a\"b\\c
+shorts: x\ty\nz
+ctrl: "\u0001\b\f\u001f"
+del passthrough: len=3
+nl: ok=1 len=3
+unicode: ok=1 text=Aé中 len=6
+surrogate: ok=1 len=4
+solidus: ok=1
+invalid: 0 0 0 0 0
+roundtrip: ok=1 same=1
+- .exit
+0
+-- */

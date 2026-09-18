@@ -1,5 +1,6 @@
 // 用 tap 现有语言能力实现的 JSON 解析器 + 序列化器，不需要扩展 runtime。
-// 覆盖 object / array / string（含 \n \t \r \" \\ 转义）/ number / true / false / null。
+// 覆盖 object / array / string / number / true / false / null；字符串的转义与反转义
+// 交给 std.json——那里覆盖全部控制字符和 \uXXXX（含代理对），比内联实现完整。
 //
 // 两个不显然的设计要点：
 //   - number 保存原始文本、不做数值转换：既避开当前不可用的浮点算术，
@@ -9,6 +10,7 @@
 //
 // 运行：tap run examples/json_poc.tp
 
+import std.json as json;
 import std.vec as vec;
 import std.string_builder as sb;
 
@@ -81,46 +83,41 @@ fn parse_number(src: string, pos: uint): Json {
 }
 
 // elseif 把原来 6 层嵌套的转义分支压平成一条链。
-fn parse_string(src: string, pos: uint): Json {
-    let p: uint = pos + 1;
-    let n: uint = src.len();
-    let out: StringBuilder = sb.new();
-    let running: bool = true;
-    while (running) {
-        if (p >= n) {
-            running = false;
-        } elseif (src.byte_at(p) == 34) {
-            running = false;
-            p++;
-        } elseif (src.byte_at(p) == 92) {
-            let e: u8 = byte_at_or_zero(src, p + 1);
-            if (e == 110) {
-                out.append_byte(10);
-                p = p + 2;
-            } elseif (e == 116) {
-                out.append_byte(9);
-                p = p + 2;
-            } elseif (e == 114) {
-                out.append_byte(13);
-                p = p + 2;
-            } elseif (e == 34) {
-                out.append_byte(34);
-                p = p + 2;
-            } elseif (e == 92) {
-                out.append_byte(92);
-                p = p + 2;
-            } else {
-                out.append_byte(src.byte_at(p));
-                p++;
-            }
-        } else {
-            out.append_byte(src.byte_at(p));
-            p++;
+// 找到字符串字面量的结束引号下标；未闭合时返回 n。
+fn scan_string_end(src: string, start: uint, n: uint): uint {
+    let p: uint = start;
+    while (p < n) {
+        let b: u8 = src.byte_at(p);
+        if (b == 92) {
+            // 跳过被转义的字符：\" 不会提前结束字符串。
+            p = p + 2;
+            continue;
         }
+        if (b == 34) {
+            return p;
+        }
+        p++;
     }
-    let result: Json = blank(p);
+    return n;
+}
+
+fn parse_string(src: string, pos: uint): Json {
+    let n: uint = src.len();
+    let content_start: uint = pos + 1;
+    let end: uint = scan_string_end(src, content_start, n);
+
+    let raw: string = src.slice(content_start, end);
+    let decoded: Unescaped = json.unescape(raw);
+
+    // 这个示例是尽力而为的解析器：转义非法时沿用已解出的部分，真正的解析器
+    // 应该检查 decoded.ok 并报错。
+    let next: uint = n;
+    if (end < n) {
+        next = end + 1;
+    }
+    let result: Json = blank(next);
     result.kind = 3;
-    result.text = out.to_string();
+    result.text = decoded.text;
     return result;
 }
 
@@ -232,31 +229,6 @@ fn parse_value(src: string, pos: uint): Json {
     return parse_number(src, p);
 }
 
-fn write_string(out: StringBuilder, value: string): StringBuilder {
-    out.append_byte(34);
-    let i: uint = 0;
-    let n: uint = value.len();
-    while (i < n) {
-        let b: u8 = value.byte_at(i);
-        if (b == 34) {
-            out.append("\\\"");
-        } elseif (b == 92) {
-            out.append("\\\\");
-        } elseif (b == 10) {
-            out.append("\\n");
-        } elseif (b == 9) {
-            out.append("\\t");
-        } elseif (b == 13) {
-            out.append("\\r");
-        } else {
-            out.append_byte(b);
-        }
-        i++;
-    }
-    out.append_byte(34);
-    return out;
-}
-
 // struct 是值类型，传参是拷贝，所以必须把 StringBuilder 一路返回回去。
 fn write_json(out: StringBuilder, value: Json): StringBuilder {
     if (value.kind == 0) {
@@ -276,7 +248,7 @@ fn write_json(out: StringBuilder, value: Json): StringBuilder {
         return out;
     }
     if (value.kind == 3) {
-        return write_string(out, value.text);
+        return json.append_quoted(out, value.text);
     }
 
     let items: Vec<Json> = value.items;
@@ -303,7 +275,7 @@ fn write_json(out: StringBuilder, value: Json): StringBuilder {
     let k: uint = 0;
     let kn: uint = keys.len();
     while (k < kn) {
-        out = write_string(out, keys.get(k));
+        out = json.append_quoted(out, keys.get(k));
         out.append(":");
         let v: Json = values.get(k);
         out = write_json(out, v);

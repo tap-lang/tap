@@ -81,6 +81,11 @@ fn main(): i32 {
 | `std.parse` | `parse_i64(text: string): ParsedInt` | 解析十进制整数，返回 `{ value: i64, ok: bool }` |
 | `std.parse` | `parse_f64(text: string): ParsedFloat` | 解析十进制浮点，返回 `{ value: f64, ok: bool }` |
 | `std.parse` | `format_i64(value: i64): string` | 把整数格式化为十进制字符串 |
+| `std.json` | `escape(text: string): string` | 转义为 JSON 字符串内容，不含两侧引号 |
+| `std.json` | `escape_quoted(text: string): string` | 转义并补上两侧引号，结果可直接放进 JSON |
+| `std.json` | `append_escaped(builder, text): StringBuilder` | 把转义结果追加进构建器，不含两侧引号 |
+| `std.json` | `append_quoted(builder, text): StringBuilder` | 追加转义结果并补上两侧引号 |
+| `std.json` | `unescape(text: string): Unescaped` | 反转义 JSON 字符串内容，返回 `{ text: string, ok: bool }` |
 
 `std.env` 示例：
 
@@ -242,6 +247,43 @@ if (result.ok) {
 
 当前没有 `format_f64`：把 `double` 渲染成十进制需要大整数算法或 Runtime 的 `snprintf`
 支持，尚未提供。
+
+`std.json` 示例：
+
+```text
+import std.json;
+import std.string_builder as sb;
+
+fn main(): i32 {
+    // 输出：转义并补上两侧引号，结果可以直接放进 JSON
+    print("%s\n", json.escape_quoted("say \"hi\"\n"));
+
+    // 增量拼接时用 append_quoted，省掉每段字符串的临时对象
+    let out: StringBuilder = sb.new();
+    out = json.append_quoted(out, "key");
+    out.append(":");
+    out = json.append_quoted(out, "va\\lue");
+    print("%s\n", sb.to_string(out));
+
+    // 输入：反转义，非法转义序列通过 ok 报告
+    let decoded: Unescaped = json.unescape("a\\u0041\\uD83D\\uDE00b");
+    if (decoded.ok) {
+        // 字段访问要先绑定到变量，不能在字段链上直接调方法。
+        let text: string = decoded.text;
+        print("len=%llu\n", text.len());
+    }
+    return 0;
+}
+```
+
+输出侧转义 `"`、`\` 以及所有小于 `0x20` 的字符：`\b` `\f` `\n` `\r` `\t` 用短形式，其余控制
+字符写成 `\u00XX`。`0x7F` 及以上不是控制字符，按 UTF-8 字节原样透传。
+
+输入侧识别 `\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t` 和 `\uXXXX`。相邻的高/低代理对会合成一个
+码点再按 UTF-8 编码；孤立代理、被截断的 `\uXXXX`、未知转义和结尾的裸反斜杠都让 `ok` 为
+`false`，此时 `text` 是出错前已经解出的部分。
+
+`escape` 和 `unescape` 都不含两侧引号——引号由 `escape_quoted` / `append_quoted` 补上。
 
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
 
