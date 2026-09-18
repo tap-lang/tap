@@ -1,0 +1,210 @@
+// 字符串与数值之间的转换。全部用 tap 实现，不依赖额外的 Runtime ABI。
+//
+// 解析结果用结构体返回：`ok` 为 false 时 `value` 没有意义。这样调用方可以自行决定
+// 是报错、跳过还是用默认值，不会像 assert 那样直接终止程序。
+//
+// 浮点到字符串的转换（format_f64）当前没有提供：把 double 渲染成十进制需要大整数
+// 算法或 Runtime 的 snprintf 支持，不在本模块的能力范围内。
+import std.string_builder as sb;
+
+// parse_i64 的结果。
+struct ParsedInt {
+    value: i64,
+    ok: bool,
+}
+
+// parse_f64 的结果。
+struct ParsedFloat {
+    value: f64,
+    ok: bool,
+}
+
+// 判断字节是否为 ASCII 十进制数字。
+fn is_digit_byte(value: u8): bool {
+    return value >= 48 && value <= 57;
+}
+
+// 返回数字字节对应的数值；调用方需保证 value 落在 '0'..'9' 之间。
+fn digit_of(value: u8): i64 {
+    return value - 48;
+}
+
+// 解析十进制整数，接受可选的正负号。
+// 空串、只有符号、含非数字字符或末尾有多余字符时返回 ok = false。
+fn parse_i64(text: string): ParsedInt {
+    let length: uint = text.len();
+    let index: uint = 0;
+    let negative: bool = false;
+
+    if (length > 0) {
+        let first: u8 = text.byte_at(0);
+        if (first == 45) {
+            negative = true;
+            index = 1;
+        } elseif (first == 43) {
+            index = 1;
+        }
+    }
+
+    let value: i64 = 0;
+    let digits: i32 = 0;
+    while (index < length) {
+        let byte: u8 = text.byte_at(index);
+        if (!is_digit_byte(byte)) {
+            return ParsedInt { value: 0, ok: false };
+        }
+        value = value * 10 + digit_of(byte);
+        digits++;
+        index++;
+    }
+
+    // 空串或只有正负号时没有任何数字被消费。
+    if (digits == 0) {
+        return ParsedInt { value: 0, ok: false };
+    }
+    if (negative) {
+        value = -value;
+    }
+    return ParsedInt { value: value, ok: true };
+}
+
+// 解析十进制浮点，接受可选正负号、小数部分和 e/E 指数。
+// 空串、只有符号、没有任何数字、指数缺少数字或末尾有多余字符时返回 ok = false。
+// 数字要求与 C 的 strtod 一致：整数部分和小数部分至少一侧有数字，".5" 和 "1." 都合法。
+fn parse_f64(text: string): ParsedFloat {
+    let length: uint = text.len();
+    let index: uint = 0;
+    let negative: bool = false;
+
+    if (length > 0) {
+        let first: u8 = text.byte_at(0);
+        if (first == 45) {
+            negative = true;
+            index = 1;
+        } elseif (first == 43) {
+            index = 1;
+        }
+    }
+
+    // 整数部分和小数部分共用同一个累加器，小数部分最后按位数缩放。
+    let value: f64 = 0.0;
+    let digits: i32 = 0;
+
+    while (index < length) {
+        let byte: u8 = text.byte_at(index);
+        if (!is_digit_byte(byte)) {
+            break;
+        }
+        value = value * 10.0 + digit_of(byte);
+        digits++;
+        index++;
+    }
+
+    if (index < length && text.byte_at(index) == 46) {
+        index++;
+        let scale: f64 = 1.0;
+        while (index < length) {
+            let byte: u8 = text.byte_at(index);
+            if (!is_digit_byte(byte)) {
+                break;
+            }
+            value = value * 10.0 + digit_of(byte);
+            scale = scale * 10.0;
+            digits++;
+            index++;
+        }
+        value = value / scale;
+    }
+
+    // 至少要有一位数字，整数部分或小数部分任意一侧即可。因此 ".5" 和 "1." 都能解析，
+    // 与 C 的 strtod 一致；"." 或只有符号则失败。
+    if (digits == 0) {
+        return ParsedFloat { value: 0.0, ok: false };
+    }
+
+    if (index < length) {
+        let marker: u8 = text.byte_at(index);
+        if (marker == 101 || marker == 69) {
+            index++;
+            let exponent_negative: bool = false;
+            if (index < length) {
+                let sign: u8 = text.byte_at(index);
+                if (sign == 43 || sign == 45) {
+                    exponent_negative = sign == 45;
+                    index++;
+                }
+            }
+
+            let exponent: i32 = 0;
+            let exponent_digits: i32 = 0;
+            while (index < length) {
+                let byte: u8 = text.byte_at(index);
+                if (!is_digit_byte(byte)) {
+                    break;
+                }
+                exponent = exponent * 10 + digit_of(byte);
+                exponent_digits++;
+                index++;
+            }
+            if (exponent_digits == 0) {
+                return ParsedFloat { value: 0.0, ok: false };
+            }
+
+            // 用循环累乘 10 构造缩放因子，避免依赖 libm 的 pow。
+            let factor: f64 = 1.0;
+            let step: i32 = 0;
+            while (step < exponent) {
+                factor = factor * 10.0;
+                step++;
+            }
+            if (exponent_negative) {
+                value = value / factor;
+            } else {
+                value = value * factor;
+            }
+        }
+    }
+
+    // 到这里还有剩余字符说明输入不是合法的完整数值。
+    if (index != length) {
+        return ParsedFloat { value: 0.0, ok: false };
+    }
+    if (negative) {
+        value = -value;
+    }
+    return ParsedFloat { value: value, ok: true };
+}
+
+// 把整数格式化为十进制字符串。
+// i64 最小值取相反数会溢出，该边界行为与 C 一致。
+fn format_i64(value: i64): string {
+    let builder: StringBuilder = sb.new();
+    let remaining: i64 = value;
+
+    if (remaining < 0) {
+        builder = sb.append_byte(builder, 45);
+        remaining = -remaining;
+    }
+
+    if (remaining == 0) {
+        builder = sb.append_byte(builder, 48);
+    } else {
+        // 逐位取余得到逆序数字，再倒序写入；i64 最多 19 位，20 足够。
+        let digits: [i64; 20] = [0; 20];
+        let count: i32 = 0;
+        while (remaining > 0) {
+            digits[count] = remaining % 10;
+            remaining = remaining / 10;
+            count++;
+        }
+        while (count > 0) {
+            count--;
+            builder = sb.append_byte(builder, digits[count] + 48);
+        }
+    }
+
+    // to_string 返回独立快照，之后可以安全释放构建器的内部缓冲区。
+    let text: string = sb.to_string(builder);
+    sb.free(builder);
+    return text;
+}

@@ -1,0 +1,25 @@
+// 窄目标类型不能改变表达式的求值宽度：先按表达式自身的类型求值，再截断到目标类型。
+// 同时锁住宽字面量在表达式中的精度，以及同宽度不同符号时按表达式类型选择运算。
+fn main(): i32 {
+    let wide: i32 = 789;
+    let digit: u8 = wide % 10;
+    print("mod: %d\n", digit);
+
+    let wrap: u8 = 200 + 100;
+    print("wrap: %d\n", wrap);
+
+    let a: i64 = -8;
+    let b: i64 = 2;
+    let quotient: u64 = a / b;
+    print("signed div: %llu\n", quotient);
+    return 0;
+}
+
+/** -- test
+- .stdout
+mod: 9
+wrap: 44
+signed div: 18446744073709551612
+- .exit
+0
+-- */

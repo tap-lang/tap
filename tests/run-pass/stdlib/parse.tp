@@ -1,0 +1,40 @@
+// std.parse 的字符串与数值互转：整数解析、浮点解析、整数格式化。
+import std.parse;
+
+fn main(): i32 {
+    let a: ParsedInt = parse.parse_i64("123");
+    let b: ParsedInt = parse.parse_i64("-456");
+    let c: ParsedInt = parse.parse_i64("+7");
+    let empty: ParsedInt = parse.parse_i64("");
+    let sign_only: ParsedInt = parse.parse_i64("-");
+    let trailing: ParsedInt = parse.parse_i64("12a");
+    print("i64: %lld %lld %lld\n", a.value, b.value, c.value);
+    print("i64 fail: %d %d %d\n", empty.ok, sign_only.ok, trailing.ok);
+
+    let x: ParsedFloat = parse.parse_f64("3.14");
+    let y: ParsedFloat = parse.parse_f64("-2.5");
+    let e1: ParsedFloat = parse.parse_f64("1e3");
+    let e2: ParsedFloat = parse.parse_f64("1.5e-3");
+    let bad: ParsedFloat = parse.parse_f64("1.2.3");
+    print("f64: %f %f\n", x.value, y.value);
+    print("f64 exp: %f %f\n", e1.value, e2.value);
+    print("f64 fail: %d\n", bad.ok);
+
+    print("format: %s %s %s\n",
+        parse.format_i64(0), parse.format_i64(-42), parse.format_i64(1000000));
+    print("roundtrip: %s\n", parse.format_i64(b.value));
+    return 0;
+}
+
+/** -- test
+- .stdout
+i64: 123 -456 7
+i64 fail: 0 0 0
+f64: 3.140000 -2.500000
+f64 exp: 1000.000000 0.001500
+f64 fail: 0
+format: 0 -42 1000000
+roundtrip: -456
+- .exit
+0
+-- */
