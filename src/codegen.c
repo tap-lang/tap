@@ -1096,6 +1096,15 @@ static LLVMValueRef generate_array_value(
 static unsigned function_param_count(FunctionNode *function);
 static void validate_var_type(CodeGenContext *context, VarTypeNode *type);
 
+// 取出整数字面量的数值。bool 字面量写入的是 union 的 bool_value（4 字节），
+// 直接按 int_value（8 字节）读会带进未初始化的高位字节，因此按类型选正确的成员。
+static uint64_t literal_integer_value(const LiteralNode *literal) {
+    if (literal->literal_type == LITERAL_BOOL) {
+        return literal->value.bool_value != 0 ? 1 : 0;
+    }
+    return literal->value.int_value;
+}
+
 // 根据整数字面量原文或数值构造指定整数类型的 LLVM 常量。
 static LLVMValueRef integer_constant(CodeGenContext *context, LiteralNode *literal,
                                      enum LiteralType type) {
@@ -1104,7 +1113,7 @@ static LLVMValueRef integer_constant(CodeGenContext *context, LiteralNode *liter
         return LLVMConstIntOfStringAndSize(llvm_type, literal->integer_text,
                                           (unsigned)strlen(literal->integer_text), 10);
     }
-    return LLVMConstInt(llvm_type, literal->value.int_value, 0);
+    return LLVMConstInt(llvm_type, literal_integer_value(literal), 0);
 }
 
 // 查找结构体字面量中的初始化字段。
@@ -3068,7 +3077,7 @@ static LLVMValueRef constant_initializer(
                 target_type, literal->integer_text,
                 (unsigned)strlen(literal->integer_text), 10);
         }
-        return LLVMConstInt(target_type, literal->value.int_value, 0);
+        return LLVMConstInt(target_type, literal_integer_value(literal), 0);
     }
     if (is_float_type(constant->type->type) && is_float_type(literal->literal_type)) {
         return LLVMConstReal(target_type, literal->value.float_value);

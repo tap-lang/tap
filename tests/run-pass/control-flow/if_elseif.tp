@@ -1,4 +1,7 @@
 // `else if` 与 `elseif` 是等价写法，生成的 AST 完全相同。
+//
+// 条件刻意用变量而不是 true/false 常量：常量条件会让 LLVM 把整条链折叠掉，
+// 那样验证到的只是常量传播，而不是 tap 自己的分支生成。
 fn classify(value: i32): i32 {
     if (value < 0) {
         return -1;
@@ -29,13 +32,14 @@ fn main(): i32 {
     print("describe: %d %d %d %d\n",
         describe(1), describe(2), describe(3), describe(9));
 
-    // 两种写法可以在同一条链上混用。
+    // 两种写法可以在同一条链上混用：三个条件依次为假、假、真。
+    let probe: i32 = 0;
     let mixed: i32 = 0;
-    if (false) {
+    if (probe > 0) {
         mixed = 1;
-    } else if (false) {
+    } else if (probe > 1) {
         mixed = 2;
-    } elseif (true) {
+    } elseif (probe >= 0) {
         mixed = 3;
     } else {
         mixed = 4;
@@ -44,9 +48,9 @@ fn main(): i32 {
 
     // 没有最终 else 时，链尾不执行任何分支。
     let no_else: i32 = 9;
-    if (false) {
+    if (probe > 5) {
         no_else = 0;
-    } else if (false) {
+    } else if (probe > 6) {
         no_else = 1;
     }
     print("no else: %d\n", no_else);

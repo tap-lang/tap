@@ -37,7 +37,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CYGWIN_ROOT }}
-          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v1
+          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Prepare Cygwin
         if: steps.cygwin-cache.outputs.cache-hit != 'true'
@@ -60,19 +60,24 @@ jobs:
             git
 
       - name: Verify LLVM
+        # Cygwin 的 LLVM 来自 test packages，具体版本由镜像决定，无法像 msvc.yml 那样钉死。
+        # 因此这里显式记录版本并按 CMake 的同一条规则断言（主版本 >= 21）：拿到 20.x 或
+        # 过期的缓存时直接失败，而不是在后续测试里表现为难以定位的偶发错误。
         shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
         run: >-
           export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
           test -x /usr/bin/llvm-config &&
           test -f /usr/lib/cmake/llvm/LLVMConfig.cmake &&
-          llvm-config --version
+          llvm_version=$(llvm-config --version) &&
+          echo "Cygwin LLVM version: ${llvm_version}" &&
+          test "${llvm_version%%.*}" -ge 21
 
       - name: Save Cygwin cache
         if: steps.cygwin-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CYGWIN_ROOT }}
-          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v1
+          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Configure
         shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
