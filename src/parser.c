@@ -518,11 +518,16 @@ static ASTNode *parse_if_statement(Parser *parser) {
     ASTNode *alternative = NULL;
     if (parser->current_token->type == TOKEN_ELSE) {
         consume(parser, TOKEN_ELSE);
-        
-        // 解析 else 代码块
-        consume(parser, TOKEN_LBRACE);
-        alternative = parse_block(parser);
-        consume(parser, TOKEN_RBRACE);
+
+        // `else if` 与 `elseif` 等价，都继续解析下一个条件分支。
+        if (parser->current_token->type == TOKEN_IF) {
+            alternative = parse_if_statement(parser);
+        } else {
+            // 解析 else 代码块
+            consume(parser, TOKEN_LBRACE);
+            alternative = parse_block(parser);
+            consume(parser, TOKEN_RBRACE);
+        }
     } else if (parser->current_token->type == TOKEN_ELSEIF) {
         // 递归解析下一个条件分支（elseif）
         alternative = parse_if_statement(parser);

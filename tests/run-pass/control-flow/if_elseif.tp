@@ -1,0 +1,64 @@
+// `else if` 与 `elseif` 是等价写法，生成的 AST 完全相同。
+fn classify(value: i32): i32 {
+    if (value < 0) {
+        return -1;
+    } else if (value == 0) {
+        return 0;
+    } else if (value < 10) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+fn describe(value: i32): i32 {
+    if (value == 1) {
+        return 10;
+    } elseif (value == 2) {
+        return 20;
+    } elseif (value == 3) {
+        return 30;
+    } else {
+        return 0;
+    }
+}
+
+fn main(): i32 {
+    print("classify: %d %d %d %d\n",
+        classify(-5), classify(0), classify(5), classify(50));
+    print("describe: %d %d %d %d\n",
+        describe(1), describe(2), describe(3), describe(9));
+
+    // 两种写法可以在同一条链上混用。
+    let mixed: i32 = 0;
+    if (false) {
+        mixed = 1;
+    } else if (false) {
+        mixed = 2;
+    } elseif (true) {
+        mixed = 3;
+    } else {
+        mixed = 4;
+    }
+    print("mixed: %d\n", mixed);
+
+    // 没有最终 else 时，链尾不执行任何分支。
+    let no_else: i32 = 9;
+    if (false) {
+        no_else = 0;
+    } else if (false) {
+        no_else = 1;
+    }
+    print("no else: %d\n", no_else);
+    return 0;
+}
+
+/** -- test
+- .stdout
+classify: -1 0 1 2
+describe: 10 20 30 0
+mixed: 3
+no else: 9
+- .exit
+0
+-- */

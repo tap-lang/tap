@@ -102,7 +102,7 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 - `IndexAssignmentNode`：固定长度数组或指针的元素赋值，固定长度数组支持多维索引链。
 - `ReturnNode`：返回表达式。
 - `PrintNode`：一个或多个打印参数。
-- `IfStatementNode`：`if`、`elseif` 和 `else`。
+- `IfStatementNode`：`if`、`elseif`（或等价的 `else if`）和 `else`。
 - `ForStatementNode`：经典三段式 `for` 循环。
 - `NODE_BREAK_STATEMENT`：`break;`，结束最内层循环。
 - `NODE_CONTINUE_STATEMENT`：`continue;`，进入最内层循环的更新阶段。
@@ -110,7 +110,8 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 `IfStatementNode.consequence` 指向真分支的语句链表。`alternative` 有两种形态：
 
 - `else`：指向语句链表。
-- `elseif`：指向另一个 `IfStatementNode`，形成嵌套条件链。
+- `elseif`：指向另一个 `IfStatementNode`，形成嵌套条件链。`else if` 是 `elseif` 的等价
+  写法，两者生成的 AST 完全相同。
 
 `ForStatementNode` 对应 `for (initializer; condition; update) { body }`。三个循环头字段均可为空；
 条件为空时 Codegen 将其视为真。初始化支持 `let` 或赋值，更新支持赋值、后缀 `++` 和后缀 `--`。
