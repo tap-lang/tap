@@ -1,4 +1,4 @@
-// std.parse 的字符串与数值互转：整数解析、浮点解析、整数格式化。
+// std.parse 的字符串与数值互转：整数解析、浮点解析、整数与浮点格式化。
 import std.parse;
 
 fn main(): i32 {
@@ -23,6 +23,27 @@ fn main(): i32 {
     print("format: %s %s %s\n",
         parse.format_i64(0), parse.format_i64(-42), parse.format_i64(1000000));
     print("roundtrip: %s\n", parse.format_i64(b.value));
+
+    // format_f64 取最短的、能往返的表示，不用补齐到固定小数位。
+    let tenth: ParsedFloat = parse.parse_f64("0.1");
+    let pi: ParsedFloat = parse.parse_f64("3.141592653589793");
+    let tiny: ParsedFloat = parse.parse_f64("1e-7");
+    print("f64 fmt: %s %s %s\n",
+        parse.format_f64(tenth.value), parse.format_f64(y.value),
+        parse.format_f64(pi.value));
+    print("f64 fmt exp: %s %s\n",
+        parse.format_f64(e1.value), parse.format_f64(tiny.value));
+
+    // format 之后再 parse 应回到同一个值。
+    let text: string = parse.format_f64(tenth.value);
+    let back: ParsedFloat = parse.parse_f64(text);
+    print("f64 roundtrip: %s ok=%d\n", text, back.ok);
+
+    // 非有限值输出 inf / nan：JSON 没有这两种写法，调用方需要自行处理。
+    let one: f64 = e1.value / e1.value;
+    let zero: f64 = e1.value - e1.value;
+    print("f64 nonfinite: %s %s\n",
+        parse.format_f64(one / zero), parse.format_f64(zero / zero));
     return 0;
 }
 
@@ -35,6 +56,10 @@ f64 exp: 1000.000000 0.001500
 f64 fail: 0
 format: 0 -42 1000000
 roundtrip: -456
+f64 fmt: 0.1 -2.5 3.141592653589793
+f64 fmt exp: 1000 1e-07
+f64 roundtrip: 0.1 ok=1
+f64 nonfinite: inf nan
 - .exit
 0
 -- */

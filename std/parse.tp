@@ -1,11 +1,14 @@
-// 字符串与数值之间的转换。全部用 tap 实现，不依赖额外的 Runtime ABI。
+// 字符串与数值之间的转换。解析和整数格式化全部用 tap 实现。
 //
 // 解析结果用结构体返回：`ok` 为 false 时 `value` 没有意义。这样调用方可以自行决定
 // 是报错、跳过还是用默认值，不会像 assert 那样直接终止程序。
 //
-// 浮点到字符串的转换（format_f64）当前没有提供：把 double 渲染成十进制需要大整数
-// 算法或 Runtime 的 snprintf 支持，不在本模块的能力范围内。
+// format_f64 是唯一的例外：精确的十进制展开需要大整数算法，这里下沉到 Runtime 的
+// C 库转换，换取正确且可往返的输出。
 import std.string_builder as sb;
+
+// 浮点到字符串的内部 Runtime ABI。
+extern fn __tap_format_f64(value: f64): string;
 
 // parse_i64 的结果。
 struct ParsedInt {
@@ -207,4 +210,12 @@ fn format_i64(value: i64): string {
     let text: string = sb.to_string(builder);
     sb.free(builder);
     return text;
+}
+
+// 把浮点数格式化为十进制字符串。
+// 取最短的、能往返的表示：0.1 输出 "0.1"，圆周率输出 "3.141592653589793"。
+// 极大或极小的值用指数形式，例如 1e300 输出 "1e+300"。
+// 非有限值输出 "inf" / "-inf" / "nan"。
+fn format_f64(value: f64): string {
+    return __tap_format_f64(value);
 }

@@ -50,6 +50,21 @@ Runtime 的公开 ABI 声明位于 [`runtime/include/tap_runtime.h`](../runtime/
 `slice` 和 `bytes_to_string` 结果由 Runtime 跟踪，进程退出时统一释放。
 普通程序不应直接调用这些符号。
 
+## 数值格式化 ABI
+
+`std.parse` 的 `format_f64` 下沉到 C 库的十进制转换：
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_format_f64(value: f64): string` | 渲染成最短的、能往返的十进制字符串；结果由 Runtime 跟踪 |
+
+精确的十进制展开需要大整数算法，纯 tap 实现会引入难以察觉的精度偏差，因此这里选择调用
+C 库：先用 `%.15g`，再逐步提高精度直到结果能往返，这样 `0.1` 输出 `0.1` 而不是
+`0.10000000000000001`。非有限值输出 `inf` / `-inf` / `nan`。
+
+这是 `std.parse` 里唯一不纯 tap 的函数；其余解析和整数格式化都由 tap 自己实现。
+返回值与其他 Runtime 字符串一样在进程退出时统一释放。
+
 ## 底层内存 ABI
 
 Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或容器标准库使用：

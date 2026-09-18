@@ -12,5 +12,6 @@
 9. `match` 作为表达式（`let x = match ...`）、嵌套模式、分支守卫。
 10. [x] JSON 转义 API（`std.json` 的 `escape` / `escape_quoted` / `append_escaped` /
     `append_quoted` / `unescape`，覆盖控制字符、`\uXXXX` 和代理对）。
-11. format_f64：把 `double` 渲染成十进制字符串，需要大整数算法或 Runtime 的 `snprintf` 支持。
+11. [x] format_f64：`std.parse` 的 `format_f64` 通过 Runtime 的 `__tap_format_f64` 调用
+    C 库转换，输出最短可往返的十进制字符串（精确展开需要大整数算法）。
 12. 递归载荷枚举：成员载荷不能是枚举自身，需要先有指针或 Box 语义。

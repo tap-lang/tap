@@ -81,6 +81,7 @@ fn main(): i32 {
 | `std.parse` | `parse_i64(text: string): ParsedInt` | 解析十进制整数，返回 `{ value: i64, ok: bool }` |
 | `std.parse` | `parse_f64(text: string): ParsedFloat` | 解析十进制浮点，返回 `{ value: f64, ok: bool }` |
 | `std.parse` | `format_i64(value: i64): string` | 把整数格式化为十进制字符串 |
+| `std.parse` | `format_f64(value: f64): string` | 把浮点数格式化为最短可往返的十进制字符串 |
 | `std.json` | `escape(text: string): string` | 转义为 JSON 字符串内容，不含两侧引号 |
 | `std.json` | `escape_quoted(text: string): string` | 转义并补上两侧引号，结果可直接放进 JSON |
 | `std.json` | `append_escaped(builder, text): StringBuilder` | 把转义结果追加进构建器，不含两侧引号 |
@@ -227,6 +228,10 @@ fn main(): i32 {
 
     let ratio: ParsedFloat = parse.parse_f64("1.5e-3");
     print("ratio=%f\n", ratio.value);
+
+    // format_f64 取最短的、能往返的表示，不补齐到固定小数位。
+    let tenth: ParsedFloat = parse.parse_f64("0.1");
+    print("text=%s\n", parse.format_f64(tenth.value));
     return 0;
 }
 ```
@@ -245,8 +250,14 @@ if (result.ok) {
 }
 ```
 
-当前没有 `format_f64`：把 `double` 渲染成十进制需要大整数算法或 Runtime 的 `snprintf`
-支持，尚未提供。
+`format_f64` 取最短的、能往返的表示：`0.1` 输出 `0.1`，圆周率输出 `3.141592653589793`，
+极大或极小的值用指数形式。它不提供定点位数、宽度或对齐控制。`inf` / `-inf` / `nan` 直接
+输出字面文本——JSON 没有这三种写法，需要写出 JSON 的调用方要自行处理。
+
+注意 tap 的浮点字面量默认是 `f32`（见[数据类型](data-types.md#标量类型)），所以
+`format_f64(0.1)` 会先把 `0.1` 按 `f32` 取近似、再放宽到 `f64`，输出
+`0.10000000149011612`。要拿到 `f64` 精度的输入，用 `f64` 类型的变量、运算结果，或者
+`parse.parse_f64("0.1")` 的 `value`。
 
 `std.json` 示例：
 
@@ -355,8 +366,9 @@ Runtime 的 C ABI 声明位于
 - `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()` 和内容比较，动态构建可使用
   `std.string_builder`，字符串与数值互转可使用 `std.parse`；尚无 `+` 拼接、查找和
   Unicode 码点级 API。
-- `std.parse` 只解析十进制，不识别十六进制、下划线分隔符或 `inf` / `nan`；也还没有
-  `format_f64`，浮点到字符串仍需借助其他手段。
+- `std.parse` 只解析十进制，不识别十六进制、下划线分隔符或 `inf` / `nan`。
+- `format_f64` 通过 Runtime 调用 C 库的十进制转换（`__tap_format_f64`），是 `std.parse`
+  里唯一不纯 tap 的函数：精确的十进制展开需要大整数算法。
 - 内建数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
   `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。动态字符串数组请使用
   `std.vec_string`。

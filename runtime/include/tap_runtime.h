@@ -45,6 +45,10 @@ TAP_RUNTIME_API int32_t __tap_string_copy_bytes(
 TAP_RUNTIME_API const char *__tap_bytes_to_string(
     const uint8_t *data, size_t length);
 
+// 把 double 渲染成最短的、能往返的十进制字符串；结果由 Runtime 管理。
+// 非有限值输出 "inf" / "-inf" / "nan"。
+TAP_RUNTIME_API const char *__tap_format_f64(double value);
+
 // 分配堆内存；size 为 0 时 Runtime 会按 1 字节处理。
 TAP_RUNTIME_API void *__tap_malloc(size_t size);
 // 调整堆内存大小；size 为 0 时 Runtime 会按 1 字节处理。

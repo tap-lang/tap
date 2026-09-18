@@ -3,19 +3,21 @@
 // 交给 std.json——那里覆盖全部控制字符和 \uXXXX（含代理对），比内联实现完整。
 //
 // 两个不显然的设计要点：
-//   - number 保存原始文本、不做数值转换：既避开当前不可用的浮点算术，
-//     也保证 1.0 不被改写成 1、指数形式原样保留。
+//   - 解析得到的 number 保存原始文本、不做数值转换：保证 1.0 不被改写成 1、
+//     指数形式原样保留。程序里算出来的数值用 number_of() 构造，由 std.parse 的
+//     format_f64 渲染成最短的十进制文本。
 //   - struct 是值类型（传参是拷贝），所以解析游标和 StringBuilder 都必须
 //     折进返回值一路带回去，不能用「输出参数」模式。
 //
 // 运行：tap run examples/json_poc.tp
 
 import std.json as json;
+import std.parse as parse;
 import std.vec as vec;
 import std.string_builder as sb;
 
 // kind: 0=null 1=bool 2=number 3=string 4=array 5=object
-// number 存原始文本，不做数值转换（浮点算术当前不可用，且原始文本更保真）。
+// number 是十进制文本：解析来的保留输入原文，number_of() 构造的用 format_f64 渲染。
 // pos 是解析游标：因为没有多返回值，把它折进结构体里带出来。
 struct Json {
     pos: uint,
@@ -39,6 +41,15 @@ fn blank(pos: uint): Json {
         keys: vec.new<string>(),
         values: vec.new<Json>(),
     };
+}
+
+// 用程序里算出来的数值构造 JSON number。
+// 渲染交给 std.parse 的 format_f64：0.5 输出 "0.5"，不补齐到固定小数位。
+fn number_of(value: f64): Json {
+    let result: Json = blank(0);
+    result.kind = 2;
+    result.number = parse.format_f64(value);
+    return result;
 }
 
 // 新运算符 && / || / ! 让字符分类变成一行。
@@ -314,6 +325,27 @@ fn main(): i32 {
         }
         i++;
     }
+
+    // 反过来：用程序里算出来的值构造 JSON 再序列化。
+    // number_of 通过 format_f64 渲染，因此 1.5e-3 写成 "0.0015"，不补齐到固定小数位。
+    let ratio: ParsedFloat = parse.parse_f64("1.5e-3");
+    let built_keys: Vec<string> = vec.new<string>();
+    let built_values: Vec<Json> = vec.new<Json>();
+    built_keys = built_keys.push("half");
+    built_values = built_values.push(number_of(0.5));
+    built_keys = built_keys.push("eighth");
+    built_values = built_values.push(number_of(1.0 / 8.0));
+    built_keys = built_keys.push("ratio");
+    built_values = built_values.push(number_of(ratio.value));
+
+    let document: Json = blank(0);
+    document.kind = 5;
+    document.keys = built_keys;
+    document.values = built_values;
+
+    let built: StringBuilder = sb.new();
+    built = write_json(built, document);
+    print("built: %s\n", built.to_string());
 
     return 0;
 }

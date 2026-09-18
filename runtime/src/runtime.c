@@ -245,6 +245,24 @@ const char *__tap_bytes_to_string(const uint8_t *data, size_t length) {
     return result;
 }
 
+// 把 double 渲染成十进制字符串。先用 %.15g，再逐步提高精度直到结果能往返：
+// 这样 0.1 输出 "0.1"，而圆周率输出 "3.141592653589793"。
+// 精确的十进制展开需要大整数算法，交给 C 库的转换更可靠。
+// 非有限值输出 "inf" / "-inf" / "nan"，调用方需要自行处理（JSON 没有这些写法）。
+const char *__tap_format_f64(double value) {
+    char buffer[64];
+    for (int precision = 15; precision <= 17; precision++) {
+        snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
+        if (strtod(buffer, NULL) == value) break;
+    }
+
+    size_t length = strlen(buffer);
+    char *result = allocate_owned_string(length);
+    memcpy(result, buffer, length);
+    result[length] = '\0';
+    return result;
+}
+
 // 分配堆内存；size 为 0 时仍申请 1 字节，避免不同 C 库对 malloc(0) 的差异。
 void *__tap_malloc(size_t size) {
     return malloc(size == 0 ? 1 : size);
