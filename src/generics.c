@@ -568,12 +568,17 @@ static char *specialized_struct_name(
     return name;
 }
 
+// 载荷枚举降级生成的结构体，在诊断里仍然按「枚举」称呼。
+static const char *generic_type_noun(const StructNode *structure) {
+    return structure && structure->is_tagged_enum ? "enum" : "struct";
+}
+
 // 按具体类型实参克隆结构体字段，并把嵌套泛型类型一并实例化。
 static char *instantiate_struct(
     GenericContext *context, StructNode *template, ASTNode *type_arguments) {
     if (node_count(template->type_params) != node_count(type_arguments)) {
-        fprintf(stderr, "error: generic struct type argument count mismatch for '%s'\n",
-                template->name); // 中文：泛型结构体类型实参数量不匹配
+        fprintf(stderr, "error: generic %s type argument count mismatch for '%s'\n",
+                generic_type_noun(template), template->name); // 中文：泛型类型实参数量不匹配
         exit(1);
     }
 
@@ -582,6 +587,15 @@ static char *instantiate_struct(
     if (existing) return name;
 
     StructNode *copy = create_struct(name);
+    // 载荷枚举降级生成的结构体要保留来源枚举名，实例化后靠它映射回枚举声明。
+    copy->is_tagged_enum = template->is_tagged_enum;
+    if (template->tagged_enum_name) {
+        copy->tagged_enum_name = strdup(template->tagged_enum_name);
+        if (!copy->tagged_enum_name) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+    }
     add_struct(context->program, copy);
 
     TypeBinding *bindings = NULL;
@@ -631,7 +645,8 @@ static void materialize_type(GenericContext *context, VarTypeNode *type) {
     }
     if (!structure->type_params) {
         if (type->type_arguments && !type->struct_name) {
-            fprintf(stderr, "error: struct '%s' is not generic\n", name);
+            fprintf(stderr, "error: %s '%s' is not generic\n",
+                    generic_type_noun(structure), name);
             exit(1);
         }
         if (!type->struct_name) {
@@ -641,7 +656,8 @@ static void materialize_type(GenericContext *context, VarTypeNode *type) {
         return;
     }
     if (!type->type_arguments) {
-        fprintf(stderr, "error: generic struct '%s' requires type arguments\n", name);
+        fprintf(stderr, "error: generic %s '%s' requires type arguments\n",
+                generic_type_noun(structure), name);
         exit(1);
     }
 

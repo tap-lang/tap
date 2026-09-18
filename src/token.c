@@ -2,11 +2,11 @@
 
 const char *TokenNames[] = {
     "fn", "extern", "return", "print", "let", "const", "sizeof", "enum", "struct", "if", "for", "while", "break", "continue",
-    "else", "elseif", "import", "as",
+    "else", "elseif", "import", "as", "match",
     "identifier", "int", "uint", "i8", "u8", "i16", "u16", "i32", "u32",
     "i64", "u64", "i128", "u128", "float", "f32", "f64",
     "bool", "string",
-    "+", "-", "++", "--", "*", "/", "%", "=", "==", "!=", "!", "<", ">", "<=", ">=", "&&", "||", "&",
+    "+", "-", "++", "--", "*", "/", "%", "=", "=>", "==", "!=", "!", "<", ">", "<=", ">=", "&&", "||", "&",
     "(", ")", "{", "}", ";", ",", ":", ".", "[", "]",
     "EOF"
 };

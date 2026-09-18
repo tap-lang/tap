@@ -43,8 +43,10 @@ typedef struct ASTNode {
 | `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
 | `NODE_IMPORT` | `ImportNode` | 模块名、名称空间别名及导入声明的源文件位置 |
 | `NODE_FUNCTION` | `FunctionNode` | 函数名、泛型类型参数、普通参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明 |
-| `NODE_STRUCT` | `StructNode` | 结构体名、泛型类型参数和字段声明链表 |
+| `NODE_STRUCT` | `StructNode` | 结构体名、泛型类型参数和字段声明链表；`is_tagged_enum` 标记它由载荷枚举降级生成 |
 | `NODE_STRUCT_LITERAL` | `StructLiteralNode` | 结构体名、泛型类型实参和字段初始化链表 |
+| `NODE_ENUM` | `EnumNode` | 枚举名和成员声明链表；`has_payload` 标记是否带载荷 |
+| `NODE_ENUM_VARIANT` | `EnumVariantNode` | 成员名、载荷类型链表，以及降级时回填的 `tag` 和 `field_index` |
 | `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
@@ -62,6 +64,8 @@ typedef struct ASTNode {
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
 | `NODE_CONTINUE_STATEMENT` | `ASTNode` | 跳到当前循环的更新块 |
+| `NODE_MATCH_STATEMENT` | `MatchStatementNode` | 被匹配表达式和分支链表 |
+| `NODE_MATCH_ARM` | `MatchArmNode` | 模式（`enum_name` / `variant_name`，通配分支两者为 `NULL`）、载荷绑定变量链表和分支体 |
 | `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举和泛型类型实参，或通过 `element_type` 递归表示固定长度数组和指针 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或
@@ -106,6 +110,8 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 - `ForStatementNode`：经典三段式 `for` 循环。
 - `NODE_BREAK_STATEMENT`：`break;`，结束最内层循环。
 - `NODE_CONTINUE_STATEMENT`：`continue;`，进入最内层循环的更新阶段。
+- `MatchStatementNode`：`match (value) { Enum.Member(a, b) => ... }`，解构带载荷枚举；
+  分支体可以是代码块或单条语句，`_` 表示通配分支。
 
 `IfStatementNode.consequence` 指向真分支的语句链表。`alternative` 有两种形态：
 
@@ -248,6 +254,29 @@ Program
 
 `print_ast()` 只用于调试和测试，不参与代码生成。
 
+## 载荷枚举的降级
+
+模块和 Prelude 加载完成后、泛型单态化之前，`lower_payload_enums()`（`src/tagged.c`）会把
+**带载荷**的枚举展开成一个同名 `StructNode`：字段 `0` 是 `i32` 判别标签，之后按声明顺序
+展平各成员的载荷，字段名形如 `circle$0`（`$` 在源语言中写不出来，不会与用户字段冲突）。
+生成的 `StructNode` 带 `is_tagged_enum` 标记，用于和用户声明的同名结构体区分。
+
+降级同时回填每个成员的 `tag` 和 `field_index`。无载荷的枚举只回填 `tag`，保持 `i32` 表示，
+不做其他改写——这样既有的枚举语义完全不变。
+
+泛型枚举的 `type_params` 会被搬到生成的结构体上，因此泛型单态化能照常按实参实例化出
+`Option$i32`。实例化后的结构体保留 `tagged_enum_name` 记录来源枚举名，Codegen 靠它把
+`Option$i32` 映射回 `Option` 枚举声明：判别标签和字段下标取自模板枚举（各次实例化都相同），
+字段类型取自实例化后的结构体。
+
+之所以选择展开成结构体而不是让 Codegen 直接理解枚举，是因为结构体的传参、返回、字段访问和
+泛型实例化路径都已经存在，展开之后这些都能直接复用。代价是内存布局不紧凑（所有成员的载荷
+并存），因此布局被当作内部实现细节：源码只能通过构造和 `match` 访问枚举值，将来换更紧凑的
+编码不会影响源语言。
+
+`validate_var_type()` 负责把类型注解中的载荷枚举从 `enum_name` 改写成 `struct_name`；
+判定顺序是「枚举存在且不带载荷 → 保持枚举，否则查同名结构体」。
+
 ## 泛型单态化
 
 Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`，把
@@ -279,7 +308,8 @@ Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`
 1. 在 `NodeType` 中增加节点类型。
 2. 定义以 `ASTNode base` 开头的具体结构体。
 3. 添加构造函数并初始化全部字段。
-4. 在 Parser 中创建并连接节点。
+4. 在 Parser 中创建并连接节点。**新增语句只需要接入 `parse_statement()` 一处**：`parse_block`
+   和函数体都走它，不要再写第二份语句分派。
 5. 在 `print_ast()` 中添加可读输出。
 6. 在 `free_ast()` 中释放节点拥有的资源。
 7. 在 Codegen 中实现对应语义。

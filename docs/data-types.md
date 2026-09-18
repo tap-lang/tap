@@ -141,8 +141,11 @@ let number: Box<i32> = Box<i32> { value: 42 };
 
 ### 枚举类型
 
-枚举使用 `enum Name { ... }` 声明，成员按声明顺序从 `0` 开始递增。当前枚举在后端按
-`i32` 表示，因此可以用 `%d` 打印，也可以用于比较、函数参数和函数返回值。
+枚举使用 `enum Name { ... }` 声明。成员可以不带载荷，也可以带一个或多个载荷类型，后者即
+tagged union。
+
+不带载荷的枚举在后端按 `i32` 表示，成员按声明顺序从 `0` 开始递增，因此可以用 `%d` 打印，
+也可以用于比较、函数参数和函数返回值：
 
 ```text
 enum Direction {
@@ -160,9 +163,126 @@ fn turn(value: Direction): Direction {
 }
 ```
 
-- 枚举成员通过 `EnumName.MemberName` 访问，例如 `Direction.Left`。
+- 成员通过 `EnumName.MemberName` 访问，例如 `Direction.Left`。
 - 成员列表支持可选尾逗号。
-- 当前枚举不支持自定义成员值；`Direction.Up` 为 `0`，`Direction.Right` 为 `3`。
+- 不支持自定义成员值；`Direction.Up` 为 `0`，`Direction.Right` 为 `3`。
+
+### 带载荷枚举
+
+成员可以携带载荷类型，同一个枚举里可以混用带载荷和不带载荷的成员：
+
+```text
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Empty,
+}
+
+enum Message {
+    Quit,
+    Move(i32, i32),
+    Write(string),
+    ChangeColor(i32, i32, i32),
+}
+```
+
+**构造**使用 `EnumName.MemberName(值...)`；不带载荷的成员不写括号：
+
+```text
+let circle: Shape = Shape.Circle(1.5);
+let rect: Shape = Shape.Rect(3.0, 4.0);
+let empty: Shape = Shape.Empty;
+```
+
+**解构**使用 `match`。每个分支匹配一个成员，圆括号里按顺序绑定该成员的载荷；分支体可以是
+代码块，也可以是单条语句：
+
+```text
+match (shape) {
+    Shape.Circle(radius) => {
+        print("circle %f\n", radius);
+    }
+    Shape.Rect(width, height) => {
+        print("rect %f\n", width * height);
+    }
+    Shape.Empty => {
+        print("empty\n");
+    }
+}
+```
+
+通配分支用 `_`，它不绑定任何值：
+
+```text
+match (message) {
+    Message.Move(x, y) => print("move %d,%d\n", x, y);
+    _ => print("other\n");
+}
+```
+
+约束与语义：
+
+- `match` 的被匹配值必须是带载荷枚举类型的变量或表达式；不带载荷的枚举继续用 `==` 比较。
+- 分支必须覆盖全部成员，或者包含一个 `_` 通配分支，否则编译报错。
+- 同一成员不能出现在两个分支里；绑定数量必须与成员的载荷数量一致。
+- 载荷绑定的作用域是它所在的分支。
+- 带载荷枚举是值类型，可以用作变量、函数参数和返回值，也支持 `sizeof`。
+- 枚举值不能作为整体读取或比较，只能通过构造和 `match` 访问。具体内存布局是编译器的内部
+  实现细节。
+
+枚举可以声明类型参数，成员载荷里就能引用它们：
+
+```text
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+```
+
+构造时由目标类型决定类型实参，不需要写 `Option<i32>.Some(...)`：
+
+```text
+let present: Option<i32> = Option.Some(42);
+let absent: Option<i32> = Option.None;
+let ok: Result<i32, string> = Result.Ok(200);
+```
+
+`match` 的用法和非泛型一样，载荷绑定的类型由实例化后的成员载荷决定：
+
+```text
+fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
+    match (value) {
+        Option.Some(inner) => {
+            return inner;
+        }
+        Option.None => {
+            return fallback;
+        }
+    }
+    return fallback;
+}
+```
+
+同一个泛型枚举的不同实例化（例如 `Option<i32>` 和 `Option<string>`）可以共存，实例化后的类型
+也可以嵌套（`Option<Result<i32, string>>`）。类型实参数量不匹配、或者泛型枚举漏写类型实参，
+都会编译报错。
+
+带载荷枚举在编译器内部展开成一个同名结构体：字段 `0` 是 `i32` 判别标签，之后按声明顺序
+展平各成员的载荷。因此 `sizeof(Shape)` 是所有载荷之和加上标签，而不是最大载荷的大小；这个
+布局后续可能改得更紧凑。泛型枚举按实参实例化出各自的结构体，例如 `Option<i32>` 对应
+`Option$i32`。
+
+当前限制：
+
+- 不支持递归载荷枚举：成员载荷不能是它自己，按值展开会导致无限大小。
+- `match` 只能作为语句，不能直接产生值；需要返回值时在分支里提前 `return`。
+- 不支持嵌套模式和分支守卫。
+- 构造时不能显式写类型实参，只能由目标类型推断。
 
 ### 固定长度数组
 

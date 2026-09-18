@@ -252,6 +252,17 @@ static StructNode *find_struct(CodeGenContext *context, const char *name) {
     return NULL;
 }
 
+// 由结构体名反查它降级自哪个载荷枚举。泛型实例化后名字形如 Option$i32，靠
+// tagged_enum_name 才能映射回 Option 枚举声明。普通结构体返回 NULL。
+static EnumNode *struct_tagged_enum(CodeGenContext *context, const char *struct_name) {
+    if (!struct_name) return NULL;
+    StructNode *structure = find_struct(context, struct_name);
+    if (!structure || !structure->is_tagged_enum || !structure->tagged_enum_name) {
+        return NULL;
+    }
+    return find_enum(context, structure->tagged_enum_name);
+}
+
 // 在结构体声明中查找字段，并返回字段下标。
 static StructFieldNode *find_struct_field(
     StructNode *struct_node, const char *name, unsigned *index_out) {
@@ -263,6 +274,16 @@ static StructFieldNode *find_struct_field(
             if (index_out) *index_out = index;
             return struct_field;
         }
+    }
+    return NULL;
+}
+
+// 按字段下标取出结构体字段声明。
+static StructFieldNode *struct_field_at(StructNode *struct_node, unsigned index) {
+    unsigned current = 0;
+    for (ASTNode *field = struct_node ? struct_node->fields : NULL;
+         field; field = field->next, current++) {
+        if (current == index) return (StructFieldNode *)field;
     }
     return NULL;
 }
@@ -280,10 +301,11 @@ static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const c
     return LLVMStructCreateNamed(context->context, name);
 }
 
-// 解析 Enum.Member 形式的枚举成员，并返回成员从 0 开始的序号。
-static int enum_variant_value(CodeGenContext *context, const char *name, uint64_t *value_out) {
+// 解析 Enum.Member 形式的名称，返回枚举声明，并通过 variant_out 返回成员声明。
+static EnumNode *variant_reference(
+    CodeGenContext *context, const char *name, EnumVariantNode **variant_out) {
     const char *dot = strchr(name, '.');
-    if (!dot || dot == name || strchr(dot + 1, '.')) return 0;
+    if (!dot || dot == name || strchr(dot + 1, '.')) return NULL;
 
     size_t enum_name_length = (size_t)(dot - name);
     char *enum_name = malloc(enum_name_length + 1);
@@ -296,18 +318,46 @@ static int enum_variant_value(CodeGenContext *context, const char *name, uint64_
 
     EnumNode *enum_node = find_enum(context, enum_name);
     free(enum_name);
-    if (!enum_node) return 0;
+    if (!enum_node) return NULL;
 
-    uint64_t index = 0;
     const char *variant_name = dot + 1;
-    for (ASTNode *variant = enum_node->variants; variant; variant = variant->next, index++) {
-        if (variant->type == NODE_IDENTIFIER &&
-            strcmp(((IdentifierNode *)variant)->name, variant_name) == 0) {
-            if (value_out) *value_out = index;
-            return 1;
+    for (ASTNode *node = enum_node->variants; node; node = node->next) {
+        EnumVariantNode *variant = (EnumVariantNode *)node;
+        if (strcmp(variant->name, variant_name) == 0) {
+            if (variant_out) *variant_out = variant;
+            return enum_node;
         }
     }
-    return 0;
+    return NULL;
+}
+
+// 统计一个枚举成员声明的载荷数量。
+static unsigned variant_payload_count(const EnumVariantNode *variant) {
+    unsigned count = 0;
+    for (ASTNode *type = variant->payload_types; type; type = type->next) count++;
+    return count;
+}
+
+// 判断标识符是否是某个载荷枚举的无载荷成员，例如 Shape.Empty。
+// 这类成员不需要括号，直接写成 Enum.Member。
+static EnumNode *bare_variant_reference(
+    CodeGenContext *context, const char *name, EnumVariantNode **variant_out) {
+    EnumVariantNode *variant = NULL;
+    EnumNode *enum_node = variant_reference(context, name, &variant);
+    if (!enum_node || !enum_node->has_payload) return NULL;
+    if (variant_payload_count(variant) != 0) return NULL;
+    if (variant_out) *variant_out = variant;
+    return enum_node;
+}
+
+// 解析 Enum.Member 形式的枚举成员，并返回成员的判别序号。
+// 只对无载荷枚举成立：带载荷的成员必须写成 Enum.Member(...) 构造。
+static int enum_variant_value(CodeGenContext *context, const char *name, uint64_t *value_out) {
+    EnumVariantNode *variant = NULL;
+    EnumNode *enum_node = variant_reference(context, name, &variant);
+    if (!enum_node || enum_node->has_payload) return 0;
+    if (value_out) *value_out = variant->tag;
+    return 1;
 }
 
 // 在程序的顶层常量列表中查找已经解析出的全局常量。
@@ -715,6 +765,15 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         }
         if (expression && expression->type == NODE_IDENTIFIER) {
             IdentifierNode *identifier = (IdentifierNode *)expression;
+            // 载荷枚举的无载荷成员，例如 Shape.Empty。
+            EnumVariantNode *bare = NULL;
+            EnumNode *bare_enum =
+                bare_variant_reference(context, identifier->name, &bare);
+            if (bare_enum) {
+                EnumNode *target_enum =
+                    struct_tagged_enum(context, target_type->struct_name);
+                return target_enum && strcmp(target_enum->name, bare_enum->name) == 0;
+            }
             Symbol *symbol = find_symbol(context, identifier->name);
             if (symbol && symbol->declared_type && symbol->declared_type->struct_name) {
                 return strcmp(symbol->declared_type->struct_name,
@@ -726,6 +785,15 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                    strcmp(field->field_type->struct_name, target_type->struct_name) == 0;
         }
         if (expression && expression->type == NODE_FUNCTION_CALL) {
+            // 载荷枚举的构造表达式产生该枚举（同名结构体）类型的值。
+            EnumVariantNode *variant = NULL;
+            EnumNode *enum_node = variant_reference(
+                context, ((FunctionCallNode *)expression)->name, &variant);
+            if (enum_node && enum_node->has_payload) {
+                EnumNode *target_enum =
+                    struct_tagged_enum(context, target_type->struct_name);
+                return target_enum && strcmp(target_enum->name, enum_node->name) == 0;
+            }
             FunctionNode *function =
                 find_function(context, ((FunctionCallNode *)expression)->name);
             if (!function) {
@@ -1013,6 +1081,10 @@ static LLVMValueRef cast_value(CodeGenContext *context, LLVMValueRef value,
 
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call);
+static LLVMValueRef generate_variant_value(
+    CodeGenContext *context, const char *struct_name,
+    EnumNode *enum_node, EnumVariantNode *variant,
+    ASTNode *arguments, const char *filename, int line, int column);
 static LLVMValueRef generate_logical_binary(CodeGenContext *context, BinaryOpNode *binary);
 static LLVMValueRef condition_value(CodeGenContext *context, ASTNode *condition);
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
@@ -1157,7 +1229,26 @@ static LLVMValueRef generate_expression_for_type(
             return generate_struct_literal_value(
                 context, (StructLiteralNode *)expression, target_type);
         }
+        if (expression && expression->type == NODE_FUNCTION_CALL) {
+            // 载荷枚举构造只在有目标类型时才成立，这里负责真正生成值。
+            FunctionCallNode *call = (FunctionCallNode *)expression;
+            EnumVariantNode *variant = NULL;
+            EnumNode *enum_node = variant_reference(context, call->name, &variant);
+            if (enum_node && enum_node->has_payload) {
+                return generate_variant_value(context, target_type->struct_name,
+                    enum_node, variant,
+                    call->arguments, call->filename, call->line, call->column);
+            }
+        }
         if (expression && expression->type == NODE_IDENTIFIER) {
+            // 载荷枚举的无载荷成员：Shape.Empty 直接构造只带标签的值。
+            EnumVariantNode *bare = NULL;
+            EnumNode *bare_enum = bare_variant_reference(
+                context, ((IdentifierNode *)expression)->name, &bare);
+            if (bare_enum) {
+                return generate_variant_value(context, target_type->struct_name,
+                    bare_enum, bare, NULL, NULL, 0, 0);
+            }
             IdentifierNode *identifier = (IdentifierNode *)expression;
             StructFieldNode *field = NULL;
             LLVMValueRef field_address =
@@ -1752,6 +1843,48 @@ static LLVMValueRef generate_method_call(
 }
 
 // 生成函数调用表达式，包括内建字符串方法和参数类型转换。
+// 生成载荷枚举的构造值：写入判别标签，再把实参逐个放进该成员对应的载荷字段。
+// struct_name 是具体结构体名（泛型实例化后形如 Option$i32），字段类型从它取；
+// 判别标签和字段下标来自枚举声明，各次实例化都相同。
+// 无载荷成员传入空的 arguments，只写标签。
+static LLVMValueRef generate_variant_value(
+    CodeGenContext *context, const char *struct_name,
+    EnumNode *enum_node, EnumVariantNode *variant,
+    ASTNode *arguments, const char *filename, int line, int column) {
+    unsigned expected = variant_payload_count(variant);
+    unsigned actual = 0;
+    for (ASTNode *argument = arguments; argument; argument = argument->next) actual++;
+    if (expected != actual) {
+        print_diagnostic(stderr, "error", filename, line, column,
+                         "variant '%s.%s' expects %u value(s), but got %u",
+                         enum_node->name, variant->name, expected, actual); // 中文：成员载荷数量不匹配
+        exit(1);
+    }
+
+    StructNode *struct_node = find_struct(context, struct_name);
+    LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, struct_name);
+    LLVMValueRef value = LLVMGetUndef(struct_type);
+    value = LLVMBuildInsertValue(context->builder, value,
+        LLVMConstInt(LLVMInt32TypeInContext(context->context), variant->tag, 0),
+        0, "variant_tag");
+
+    ASTNode *argument = arguments;
+    for (unsigned index = 0; index < expected; index++, argument = argument->next) {
+        StructFieldNode *field =
+            struct_field_at(struct_node, variant->field_index + index);
+        if (!field) {
+            fprintf(stderr, "error: malformed payload enum '%s'\n",
+                    enum_node->name); // 中文：载荷枚举的内部结构异常
+            exit(1);
+        }
+        LLVMValueRef field_value =
+            generate_expression_for_type(context, argument, field->field_type);
+        value = LLVMBuildInsertValue(context->builder, value, field_value,
+                                     variant->field_index + index, "variant_payload");
+    }
+    return value;
+}
+
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call) {
     const char *receiver_name = NULL;
     size_t receiver_length = 0;
@@ -1878,6 +2011,16 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 if (enum_variant_value(context, identifier->name, &enum_value)) {
                     return LLVMConstInt(get_llvm_type(context, LITERAL_I32), enum_value, 0);
                 }
+                // 载荷枚举的成员需要目标类型才能确定结果类型，不能单独作为值使用。
+                EnumVariantNode *variant = NULL;
+                EnumNode *enum_node =
+                    variant_reference(context, identifier->name, &variant);
+                if (enum_node && enum_node->has_payload) {
+                    fprintf(stderr,
+                        "error: variant '%s' must be used where an enum type is expected\n",
+                        identifier->name); // 中文：载荷枚举成员必须用于期望枚举类型的场合
+                    exit(1);
+                }
                 StructFieldNode *field = NULL;
                 LLVMValueRef field_address =
                     generate_field_address(context, identifier->name, &field, NULL);
@@ -1938,6 +2081,14 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
         case NODE_FUNCTION_CALL:
             {
                 FunctionCallNode *call = (FunctionCallNode *)expression;
+                // 载荷枚举构造需要目标类型才能确定结果类型，与结构体字面量一致。
+                EnumVariantNode *variant = NULL;
+                EnumNode *enum_node = variant_reference(context, call->name, &variant);
+                if (enum_node && enum_node->has_payload) {
+                    print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                        "variant construction must be used where an enum type is expected"); // 中文：载荷枚举构造必须用于期望枚举类型的场合
+                    exit(1);
+                }
                 FunctionNode *function = find_function(context, call->name);
                 const VarTypeNode *return_type = function_return_var_type(function);
                 if (return_type && return_type->is_array) {
@@ -2405,6 +2556,230 @@ static void generate_for_statement(CodeGenContext *context, ForStatementNode *fo
     LLVMPositionBuilderAtEnd(context->builder, end_block);
 }
 
+// 取出表达式的完整声明类型；标量表达式返回 NULL。
+static const VarTypeNode *expression_var_type(
+    CodeGenContext *context, ASTNode *expression) {
+    if (!expression) return NULL;
+    if (expression->type == NODE_IDENTIFIER) {
+        Symbol *symbol =
+            find_symbol(context, ((IdentifierNode *)expression)->name);
+        return symbol ? symbol->declared_type : NULL;
+    }
+    if (expression->type == NODE_FUNCTION_CALL) {
+        FunctionCallNode *call = (FunctionCallNode *)expression;
+        FunctionNode *function = find_function(context, call->name);
+        if (!function) {
+            function = resolve_method_call(context, call, NULL, NULL, NULL);
+        }
+        return function_return_var_type(function);
+    }
+    if (expression->type == NODE_INDEX_EXPRESSION) {
+        return indexed_value_type(context, expression);
+    }
+    return NULL;
+}
+
+// 在枚举声明中按名字查找成员。
+static EnumVariantNode *find_enum_variant(EnumNode *enum_node, const char *name) {
+    for (ASTNode *node = enum_node->variants; node; node = node->next) {
+        EnumVariantNode *variant = (EnumVariantNode *)node;
+        if (strcmp(variant->name, name) == 0) return variant;
+    }
+    return NULL;
+}
+
+// 取出 match 被匹配值所属的载荷枚举；不满足条件时给出诊断并退出。
+static EnumNode *matched_payload_enum(
+    CodeGenContext *context, MatchStatementNode *match_node,
+    const VarTypeNode **matched_type_out) {
+    const VarTypeNode *matched =
+        expression_var_type(context, match_node->expression);
+    EnumNode *enum_node =
+        matched ? struct_tagged_enum(context, matched->struct_name) : NULL;
+    if (!enum_node || !enum_node->has_payload) {
+        fprintf(stderr,
+            "error: match requires a value of a payload enum type\n"); // 中文：match 需要载荷枚举类型的值
+        exit(1);
+    }
+    if (matched_type_out) *matched_type_out = matched;
+    return enum_node;
+}
+
+// 校验 match：分支必须覆盖全部成员或包含通配分支，绑定数量必须与载荷数量一致。
+static void validate_match_statement(
+    CodeGenContext *context, MatchStatementNode *match_node) {
+    EnumNode *enum_node = matched_payload_enum(context, match_node, NULL);
+
+    int has_wildcard = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next) {
+        MatchArmNode *arm = (MatchArmNode *)node;
+        if (!arm->variant_name) {
+            if (arm->bindings) {
+                print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
+                    "wildcard arm cannot bind payload values"); // 中文：通配分支不能绑定载荷
+                exit(1);
+            }
+            has_wildcard = 1;
+            continue;
+        }
+        if (strcmp(arm->enum_name, enum_node->name) != 0) {
+            print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
+                "arm pattern '%s.%s' does not belong to enum '%s'",
+                arm->enum_name, arm->variant_name, enum_node->name); // 中文：分支模式不属于该枚举
+            exit(1);
+        }
+        EnumVariantNode *variant = find_enum_variant(enum_node, arm->variant_name);
+        if (!variant) {
+            print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
+                "enum '%s' has no variant '%s'",
+                enum_node->name, arm->variant_name); // 中文：枚举没有该成员
+            exit(1);
+        }
+        unsigned bindings = 0;
+        for (ASTNode *binding = arm->bindings; binding; binding = binding->next) {
+            bindings++;
+        }
+        unsigned payload = variant_payload_count(variant);
+        if (bindings != payload) {
+            print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
+                "variant '%s.%s' has %u payload value(s), but the arm binds %u",
+                enum_node->name, variant->name, payload, bindings); // 中文：绑定数量与载荷数量不一致
+            exit(1);
+        }
+    }
+
+    // 逐个成员统计覆盖次数：重复分支和遗漏分支都在这里报出来。
+    for (ASTNode *node = enum_node->variants; node; node = node->next) {
+        EnumVariantNode *variant = (EnumVariantNode *)node;
+        unsigned matches = 0;
+        MatchArmNode *first_arm = NULL;
+        for (ASTNode *arm_node = match_node->arms;
+             arm_node; arm_node = arm_node->next) {
+            MatchArmNode *arm = (MatchArmNode *)arm_node;
+            if (arm->variant_name && strcmp(arm->variant_name, variant->name) == 0) {
+                if (matches == 0) first_arm = arm;
+                matches++;
+            }
+        }
+        if (matches > 1) {
+            print_diagnostic(stderr, "error", first_arm->filename, first_arm->line,
+                first_arm->column, "variant '%s.%s' is matched more than once",
+                enum_node->name, variant->name); // 中文：成员被重复匹配
+            exit(1);
+        }
+        if (matches == 0 && !has_wildcard) {
+            fprintf(stderr,
+                "error: match is not exhaustive: variant '%s.%s' is not covered\n",
+                enum_node->name, variant->name); // 中文：match 未穷尽
+            exit(1);
+        }
+    }
+}
+
+// 生成 match 语句：按判别标签分派到各分支，并把该分支的载荷绑定到局部变量。
+static void generate_match_statement(
+    CodeGenContext *context, MatchStatementNode *match_node) {
+    validate_match_statement(context, match_node);
+
+    const VarTypeNode *matched = NULL;
+    EnumNode *enum_node = matched_payload_enum(context, match_node, &matched);
+    StructNode *struct_node = find_struct(context, matched->struct_name);
+    LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, matched->struct_name);
+    LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
+
+    // 被匹配值是变量时直接复用它的存储槽，否则求值后放进临时槽。
+    LLVMValueRef storage = NULL;
+    if (match_node->expression->type == NODE_IDENTIFIER) {
+        Symbol *symbol = find_symbol(
+            context, ((IdentifierNode *)match_node->expression)->name);
+        if (symbol && symbol->declared_type && symbol->declared_type->struct_name &&
+            strcmp(symbol->declared_type->struct_name, matched->struct_name) == 0) {
+            storage = symbol->value;
+        }
+    }
+    if (!storage) {
+        LLVMValueRef value =
+            generate_expression_for_type(context, match_node->expression, matched);
+        storage = create_entry_alloca(context, struct_type, "match_value");
+        LLVMBuildStore(context->builder, value, storage);
+    }
+
+    LLVMValueRef tag_pointer = LLVMBuildStructGEP2(
+        context->builder, struct_type, storage, 0, "match_tag_pointer");
+    LLVMValueRef tag =
+        LLVMBuildLoad2(context->builder, int32_type, tag_pointer, "match_tag");
+
+    LLVMValueRef function =
+        LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    LLVMBasicBlockRef end_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "match_end");
+
+    unsigned arm_count = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next) arm_count++;
+    LLVMBasicBlockRef *arm_blocks = arm_count
+        ? malloc(sizeof(LLVMBasicBlockRef) * arm_count) : NULL;
+    if (arm_count && !arm_blocks) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    unsigned index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        arm_blocks[index] =
+            LLVMAppendBasicBlockInContext(context->context, function, "match_arm");
+    }
+
+    // 通配分支承担 default；没有通配时由穷尽性检查保证 default 不可达。
+    LLVMBasicBlockRef default_block = end_block;
+    index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        if (!((MatchArmNode *)node)->variant_name) default_block = arm_blocks[index];
+    }
+
+    LLVMValueRef dispatch =
+        LLVMBuildSwitch(context->builder, tag, default_block, arm_count);
+    index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        MatchArmNode *arm = (MatchArmNode *)node;
+        if (!arm->variant_name) continue;
+        EnumVariantNode *variant = find_enum_variant(enum_node, arm->variant_name);
+        LLVMAddCase(dispatch, LLVMConstInt(int32_type, variant->tag, 0),
+                    arm_blocks[index]);
+    }
+
+    index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        MatchArmNode *arm = (MatchArmNode *)node;
+        LLVMPositionBuilderAtEnd(context->builder, arm_blocks[index]);
+
+        if (arm->variant_name) {
+            EnumVariantNode *variant = find_enum_variant(enum_node, arm->variant_name);
+            unsigned offset = 0;
+            for (ASTNode *binding = arm->bindings;
+                 binding; binding = binding->next, offset++) {
+                unsigned field_index = variant->field_index + offset;
+                StructFieldNode *field = struct_field_at(struct_node, field_index);
+                LLVMTypeRef field_type = get_llvm_var_type(context, field->field_type);
+                LLVMValueRef pointer = LLVMBuildStructGEP2(context->builder,
+                    struct_type, storage, field_index, "payload_pointer");
+                const char *name = ((IdentifierNode *)binding)->name;
+                LLVMValueRef slot = create_entry_alloca(context, field_type, name);
+                LLVMBuildStore(context->builder,
+                    LLVMBuildLoad2(context->builder, field_type, pointer, "payload"),
+                    slot);
+                insert_typed_symbol(context, name, slot, field->field_type, 0);
+            }
+        }
+
+        generate_statement_list(context, arm->body);
+        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(context->builder))) {
+            LLVMBuildBr(context->builder, end_block);
+        }
+    }
+
+    free(arm_blocks);
+    LLVMPositionBuilderAtEnd(context->builder, end_block);
+}
+
 // 逐条生成语句列表，遇到已终结的基本块时停止。
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement) {
     for (; statement; statement = statement->next) {
@@ -2540,6 +2915,9 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_FOR_STATEMENT:
                 generate_for_statement(context, (ForStatementNode *)statement);
+                break;
+            case NODE_MATCH_STATEMENT:
+                generate_match_statement(context, (MatchStatementNode *)statement);
                 break;
             case NODE_BREAK_STATEMENT:
                 if (!context->current_loop) {
@@ -2714,13 +3092,17 @@ static void generate_global_constants(CodeGenContext *context, ProgramNode *prog
 }
 
 // 校验命名类型引用；解析阶段先把标识符类型暂存为 enum_name。
+// 带载荷的枚举在降级后就是同名结构体，因此这里要把它改写成 struct_name。
 static void validate_var_type(CodeGenContext *context, VarTypeNode *type) {
     if (!type) return;
-    if (type->enum_name && !find_enum(context, type->enum_name)) {
-        StructNode *struct_node = find_struct(context, type->enum_name);
-        if (struct_node) {
-            type->struct_name = type->enum_name;
-            type->enum_name = NULL;
+    if (type->enum_name) {
+        EnumNode *enum_node = find_enum(context, type->enum_name);
+        if (!enum_node || enum_node->has_payload) {
+            StructNode *struct_node = find_struct(context, type->enum_name);
+            if (struct_node) {
+                type->struct_name = type->enum_name;
+                type->enum_name = NULL;
+            }
         }
     }
     if (type->enum_name && !find_enum(context, type->enum_name)) {
@@ -2757,6 +3139,14 @@ static void validate_statement_types(CodeGenContext *context, ASTNode *statement
                 validate_statement_types(context, for_node->body);
                 break;
             }
+            case NODE_MATCH_STATEMENT: {
+                // match 本身的校验需要局部符号表，放在生成阶段做（见 generate_match_statement）。
+                MatchStatementNode *match_node = (MatchStatementNode *)statement;
+                for (ASTNode *arm = match_node->arms; arm; arm = arm->next) {
+                    validate_statement_types(context, ((MatchArmNode *)arm)->body);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -2776,9 +3166,9 @@ static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
             }
         }
         for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
-            IdentifierNode *variant_node = (IdentifierNode *)variant;
+            EnumVariantNode *variant_node = (EnumVariantNode *)variant;
             for (ASTNode *other = variant->next; other; other = other->next) {
-                if (strcmp(variant_node->name, ((IdentifierNode *)other)->name) == 0) {
+                if (strcmp(variant_node->name, ((EnumVariantNode *)other)->name) == 0) {
                     fprintf(stderr, "error: duplicate enum variant '%s.%s'\n",
                             enum_node->name, variant_node->name); // 中文：重复的枚举成员
                     exit(1);
@@ -2797,7 +3187,7 @@ static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
                 exit(1);
             }
         }
-        if (find_enum(context, struct_node->name)) {
+        if (!struct_node->is_tagged_enum && find_enum(context, struct_node->name)) {
             fprintf(stderr, "error: type '%s' is already declared as enum\n",
                     struct_node->name); // 中文：类型名已声明为枚举
             exit(1);

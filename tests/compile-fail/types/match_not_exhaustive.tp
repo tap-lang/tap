@@ -1,0 +1,21 @@
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+}
+
+fn main(): i32 {
+    let shape: Shape = Shape.Circle(1.0);
+    match (shape) {
+        Shape.Circle(radius) => {
+            print("%f\n", radius);
+        }
+    }
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: match is not exhaustive: variant 'Shape.Rect' is not covered
+- .exit
+1
+-- */

@@ -291,6 +291,28 @@ static EnumNode *parse_enum(Parser *parser) {
     EnumNode *enum_node = create_enum(enum_name);
     free(enum_name);
 
+    // 可选的泛型类型参数，形如 enum Option<T>。
+    if (parser->current_token->type == TOKEN_LESS_THAN) {
+        consume(parser, TOKEN_LESS_THAN);
+        for (;;) {
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "expected generic type parameter"); // 中文：期望泛型类型参数
+            }
+            for (ASTNode *node = enum_node->type_params; node; node = node->next) {
+                if (strcmp(((IdentifierNode *)node)->name,
+                           parser->current_token->lexeme) == 0) {
+                    parser_error(parser, "duplicate generic type parameter"); // 中文：重复的泛型类型参数
+                }
+            }
+            add_enum_type_param(
+                enum_node, create_identifier(parser->current_token->lexeme));
+            consume(parser, TOKEN_IDENTIFIER);
+            if (parser->current_token->type != TOKEN_COMMA) break;
+            consume(parser, TOKEN_COMMA);
+        }
+        consume(parser, TOKEN_GREATER_THAN);
+    }
+
     consume(parser, TOKEN_LBRACE);
     if (parser->current_token->type == TOKEN_RBRACE) {
         parser_error(parser, "enum must declare at least one variant"); // 中文：枚举必须至少声明一个成员
@@ -303,8 +325,23 @@ static EnumNode *parse_enum(Parser *parser) {
         }
         char *variant_name = strdup(parser->current_token->lexeme);
         consume(parser, TOKEN_IDENTIFIER);
-        IdentifierNode *variant = create_identifier(variant_name);
+        EnumVariantNode *variant = create_enum_variant(variant_name);
         free(variant_name);
+
+        // 可选的载荷类型列表，形如 Variant(T1, T2)。
+        if (parser->current_token->type == TOKEN_LPAREN) {
+            consume(parser, TOKEN_LPAREN);
+            if (parser->current_token->type == TOKEN_RPAREN) {
+                parser_error(parser, "variant payload must declare at least one type"); // 中文：成员载荷至少要声明一个类型
+            }
+            for (;;) {
+                add_enum_variant_payload(variant, parse_type(parser));
+                if (parser->current_token->type != TOKEN_COMMA) break;
+                consume(parser, TOKEN_COMMA);
+            }
+            consume(parser, TOKEN_RPAREN);
+        }
+
         add_enum_variant(enum_node, variant);
 
         if (parser->current_token->type == TOKEN_COMMA) {
@@ -415,80 +452,89 @@ static StructNode *parse_struct(Parser *parser) {
 }
 
 // 解析代码块（由花括号包围的语句序列）
+static ASTNode *parse_statement(Parser *parser);
+static ASTNode *parse_match_statement(Parser *parser);
+
+// 解析一条语句；不消费包围代码块的右大括号。
+static ASTNode *parse_statement(Parser *parser) {
+    if (parser->current_token->type == TOKEN_PRINT) {
+        // 解析打印语句
+        consume(parser, TOKEN_PRINT);
+        consume(parser, TOKEN_LPAREN);
+
+        // 创建打印节点
+        PrintNode *print_node = create_print();
+
+        // 解析打印参数列表（支持多个表达式，逗号分隔）
+        if (parser->current_token->type != TOKEN_RPAREN) {
+            // 解析第一个参数
+            ASTNode *expression = parse_expression(parser);
+            add_print_argument(print_node, expression);
+
+            // 解析更多参数
+            while (parser->current_token->type == TOKEN_COMMA) {
+                consume(parser, TOKEN_COMMA);
+                expression = parse_expression(parser);
+                add_print_argument(print_node, expression);
+            }
+        }
+
+        consume(parser, TOKEN_RPAREN);
+        consume(parser, TOKEN_SEMICOLON);
+        return (ASTNode *)print_node;
+    }
+    if (parser->current_token->type == TOKEN_LET ||
+        parser->current_token->type == TOKEN_CONST) {
+        return (ASTNode *)parse_var_decl(parser, 1);
+    }
+    if (parser->current_token->type == TOKEN_RETURN) {
+        // 解析返回语句
+        consume(parser, TOKEN_RETURN);
+
+        // 解析返回表达式（支持整数、变量和表达式）
+        ASTNode *expression = parse_expression(parser);
+
+        consume(parser, TOKEN_SEMICOLON);
+        return (ASTNode *)create_return(expression);
+    }
+    if (parser->current_token->type == TOKEN_IF) {
+        return parse_if_statement(parser);
+    }
+    if (parser->current_token->type == TOKEN_FOR) {
+        return parse_for_statement(parser);
+    }
+    if (parser->current_token->type == TOKEN_WHILE) {
+        return parse_while_statement(parser);
+    }
+    if (parser->current_token->type == TOKEN_BREAK ||
+        parser->current_token->type == TOKEN_CONTINUE) {
+        return parse_loop_control_statement(parser);
+    }
+    if (parser->current_token->type == TOKEN_MATCH) {
+        return parse_match_statement(parser);
+    }
+    if (is_module_component(parser->current_token)) {
+        return parse_expression_statement(parser);
+    }
+
+    parser_error(parser, "expected statement"); // 中文：期望语句
+    return NULL;
+}
+
 static ASTNode *parse_block(Parser *parser) {
     // 创建一个临时的函数节点来存储代码块中的语句
     FunctionNode *block = create_function("block");
-    
+
     // 解析代码块中的语句
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
-        // 解析语句
-        if (parser->current_token->type == TOKEN_PRINT) {
-            // 解析打印语句
-            consume(parser, TOKEN_PRINT);
-            consume(parser, TOKEN_LPAREN);
-            
-            // 创建打印节点
-            PrintNode *print_node = create_print();
-            
-            // 解析打印参数列表（支持多个表达式，逗号分隔）
-            if (parser->current_token->type != TOKEN_RPAREN) {
-                // 解析第一个参数
-                ASTNode *expression = parse_expression(parser);
-                add_print_argument(print_node, expression);
-                
-                // 解析更多参数
-                while (parser->current_token->type == TOKEN_COMMA) {
-                    consume(parser, TOKEN_COMMA);
-                    expression = parse_expression(parser);
-                    add_print_argument(print_node, expression);
-                }
-            }
-            
-            consume(parser, TOKEN_RPAREN);
-            consume(parser, TOKEN_SEMICOLON);
-            
-            // 添加到代码块
-            add_statement(block, (ASTNode *)print_node);
-        } else if (parser->current_token->type == TOKEN_LET ||
-                   parser->current_token->type == TOKEN_CONST) {
-            VarDeclNode *var_decl = parse_var_decl(parser, 1);
-            add_statement(block, (ASTNode *)var_decl);
-        } else if (parser->current_token->type == TOKEN_RETURN) {
-            // 解析返回语句
-            consume(parser, TOKEN_RETURN);
-            
-            // 解析返回表达式（支持整数、变量和表达式）
-            ASTNode *expression = parse_expression(parser);
-            
-            consume(parser, TOKEN_SEMICOLON);
-            
-            // 创建返回节点并添加到代码块
-            ReturnNode *return_node = create_return(expression);
-            add_statement(block, (ASTNode *)return_node);
-        } else if (parser->current_token->type == TOKEN_IF) {
-            // 解析条件语句
-            ASTNode *if_statement = parse_if_statement(parser);
-            add_statement(block, if_statement);
-        } else if (parser->current_token->type == TOKEN_FOR) {
-            add_statement(block, parse_for_statement(parser));
-        } else if (parser->current_token->type == TOKEN_WHILE) {
-            add_statement(block, parse_while_statement(parser));
-        } else if (parser->current_token->type == TOKEN_BREAK ||
-                   parser->current_token->type == TOKEN_CONTINUE) {
-            add_statement(block, parse_loop_control_statement(parser));
-        } else if (is_module_component(parser->current_token)) {
-            ASTNode *statement = parse_expression_statement(parser);
-            add_statement(block, statement);
-        } else {
-            parser_error(parser, "expected statement"); // 中文：期望语句
-        }
+        add_statement(block, parse_statement(parser));
     }
-    
+
     // 保存语句列表并释放临时函数节点
     ASTNode *statements = block->body;
     free(block->name);
     free(block);
-    
+
     return statements;
 }
 
@@ -536,6 +582,106 @@ static ASTNode *parse_if_statement(Parser *parser) {
     // 创建条件语句节点
     IfStatementNode *if_node = create_if_statement(condition, consequence, alternative);
     return (ASTNode *)if_node;
+}
+
+// 解析 match 解构语句：
+//   match (value) {
+//       Enum.Variant(a, b) => { ... }
+//       _ => { ... }
+//   }
+// 分支体既可以是代码块，也可以是单条语句。
+static ASTNode *parse_match_statement(Parser *parser) {
+    consume(parser, TOKEN_MATCH);
+    consume(parser, TOKEN_LPAREN);
+    ASTNode *expression = parse_expression(parser);
+    consume(parser, TOKEN_RPAREN);
+
+    MatchStatementNode *statement = create_match_statement(expression);
+
+    consume(parser, TOKEN_LBRACE);
+    if (parser->current_token->type == TOKEN_RBRACE) {
+        parser_error(parser, "match must declare at least one arm"); // 中文：match 至少要有一个分支
+    }
+
+    while (parser->current_token->type != TOKEN_RBRACE &&
+           parser->current_token->type != TOKEN_EOF) {
+        int arm_line = parser->current_token->line;
+        int arm_column = parser->current_token->column;
+        MatchArmNode *arm = NULL;
+
+        if (parser->current_token->type == TOKEN_IDENTIFIER &&
+            strcmp(parser->current_token->lexeme, "_") == 0) {
+            // 通配分支。
+            consume(parser, TOKEN_IDENTIFIER);
+            if (parser->current_token->type == TOKEN_LPAREN) {
+                parser_error(parser, "wildcard arm cannot bind payload values"); // 中文：通配分支不能绑定载荷
+            }
+            arm = create_match_arm(NULL, NULL);
+        } else {
+            if (!is_module_component(parser->current_token)) {
+                parser_error(parser, "expected match pattern"); // 中文：期望 match 模式
+            }
+            char *enum_name = strdup(parser->current_token->lexeme);
+            consume(parser, parser->current_token->type);
+
+            if (parser->current_token->type != TOKEN_DOT) {
+                free(enum_name);
+                parser_error(parser, "match pattern must be Enum.Variant or _"); // 中文：match 模式必须是 Enum.Variant 或 _
+            }
+            consume(parser, TOKEN_DOT);
+            if (!is_module_component(parser->current_token)) {
+                free(enum_name);
+                parser_error(parser, "expected variant name"); // 中文：期望枚举成员名称
+            }
+            char *variant_name = strdup(parser->current_token->lexeme);
+            consume(parser, parser->current_token->type);
+
+            arm = create_match_arm(enum_name, variant_name);
+            free(enum_name);
+            free(variant_name);
+
+            // 可选的载荷绑定列表。
+            if (parser->current_token->type == TOKEN_LPAREN) {
+                consume(parser, TOKEN_LPAREN);
+                if (parser->current_token->type == TOKEN_RPAREN) {
+                    parser_error(parser, "binding list must declare at least one name"); // 中文：绑定列表至少要有一个名字
+                }
+                for (;;) {
+                    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                        parser_error(parser, "expected binding name"); // 中文：期望绑定变量名
+                    }
+                    char *binding_name = strdup(parser->current_token->lexeme);
+                    consume(parser, TOKEN_IDENTIFIER);
+                    IdentifierNode *binding = create_identifier(binding_name);
+                    free(binding_name);
+                    add_match_binding(arm, binding);
+
+                    if (parser->current_token->type != TOKEN_COMMA) break;
+                    consume(parser, TOKEN_COMMA);
+                }
+                consume(parser, TOKEN_RPAREN);
+            }
+        }
+
+        arm->filename = strdup(parser->lexer->filename);
+        arm->line = arm_line;
+        arm->column = arm_column;
+
+        consume(parser, TOKEN_FAT_ARROW);
+
+        if (parser->current_token->type == TOKEN_LBRACE) {
+            consume(parser, TOKEN_LBRACE);
+            arm->body = parse_block(parser);
+            consume(parser, TOKEN_RBRACE);
+        } else {
+            arm->body = parse_statement(parser);
+        }
+
+        add_match_arm(statement, arm);
+    }
+
+    consume(parser, TOKEN_RBRACE);
+    return (ASTNode *)statement;
 }
 
 // 解析普通函数定义或无函数体的外部函数声明。
@@ -643,76 +789,11 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
         return function;
     }
     
-    // 解析函数体
+    // 解析函数体：语句分派统一交给 parse_statement，避免和 parse_block 重复。
     consume(parser, TOKEN_LBRACE);
-
-    // 解析函数体中的语句
-    while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
-        // 解析语句
-        if (parser->current_token->type == TOKEN_PRINT) {
-            // 解析打印语句
-            consume(parser, TOKEN_PRINT);
-            consume(parser, TOKEN_LPAREN);
-            
-            // 创建打印节点
-            PrintNode *print_node = create_print();
-            
-            // 解析打印参数列表（支持多个表达式，逗号分隔）
-            if (parser->current_token->type != TOKEN_RPAREN) {
-                // 解析第一个参数
-                ASTNode *expression = parse_expression(parser);
-                add_print_argument(print_node, expression);
-                
-                // 解析更多参数
-                while (parser->current_token->type == TOKEN_COMMA) {
-                    consume(parser, TOKEN_COMMA);
-                    expression = parse_expression(parser);
-                    add_print_argument(print_node, expression);
-                }
-            }
-            
-            consume(parser, TOKEN_RPAREN);
-            consume(parser, TOKEN_SEMICOLON);
-            
-            // 添加到函数体
-            add_statement(function, (ASTNode *)print_node);
-        } else if (parser->current_token->type == TOKEN_LET ||
-                   parser->current_token->type == TOKEN_CONST) {
-            VarDeclNode *var_decl = parse_var_decl(parser, 1);
-            add_statement(function, (ASTNode *)var_decl);
-        } else if (parser->current_token->type == TOKEN_RETURN) {
-            // 解析返回语句
-            consume(parser, TOKEN_RETURN);
-            
-            // 解析返回表达式（支持整数、变量和表达式）
-            ASTNode *expression = parse_expression(parser);
-            
-            consume(parser, TOKEN_SEMICOLON);
-            
-            // 创建返回节点并添加到函数体
-            ReturnNode *return_node = create_return(expression);
-            add_statement(function, (ASTNode *)return_node);
-        } else if (parser->current_token->type == TOKEN_IF) {
-            // 解析条件语句
-            ASTNode *if_statement = parse_if_statement(parser);
-            add_statement(function, if_statement);
-        } else if (parser->current_token->type == TOKEN_FOR) {
-            add_statement(function, parse_for_statement(parser));
-        } else if (parser->current_token->type == TOKEN_WHILE) {
-            add_statement(function, parse_while_statement(parser));
-        } else if (parser->current_token->type == TOKEN_BREAK ||
-                   parser->current_token->type == TOKEN_CONTINUE) {
-            add_statement(function, parse_loop_control_statement(parser));
-        } else if (is_module_component(parser->current_token)) {
-            ASTNode *statement = parse_expression_statement(parser);
-            add_statement(function, statement);
-        } else {
-            parser_error(parser, "expected statement"); // 中文：期望语句
-        }
-    }
-    
+    function->body = parse_block(parser);
     consume(parser, TOKEN_RBRACE);
-    
+
     return function;
 }
 

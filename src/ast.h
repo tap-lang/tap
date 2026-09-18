@@ -26,6 +26,7 @@ enum NodeType {
     NODE_INDEX_EXPRESSION,          // 数组索引表达式节点
     NODE_INDEX_ASSIGNMENT,          // 数组索引赋值节点
     NODE_ENUM,                      // 枚举声明节点
+    NODE_ENUM_VARIANT,              // 枚举成员声明节点
     NODE_STRUCT,                    // 结构体声明节点
     NODE_STRUCT_FIELD,              // 结构体字段声明节点
     NODE_STRUCT_LITERAL,            // 结构体字面量节点
@@ -35,6 +36,8 @@ enum NodeType {
     NODE_FOR_STATEMENT,             // for 循环节点
     NODE_BREAK_STATEMENT,           // break 语句节点
     NODE_CONTINUE_STATEMENT,        // continue 语句节点
+    NODE_MATCH_STATEMENT,           // match 解构语句节点
+    NODE_MATCH_ARM,                 // match 分支节点
     NODE_VAR_TYPE                   // 数据类型节点
 };
 
@@ -115,11 +118,22 @@ typedef struct VarTypeNode {
     struct VarTypeNode *element_type; // 数组/指针拥有的递归元素类型
 } VarTypeNode;
 
+// 枚举成员声明节点
+typedef struct {
+    ASTNode base;
+    char *name;             // 成员名
+    ASTNode *payload_types; // 载荷类型列表（VarTypeNode），无载荷时为 NULL
+    unsigned tag;           // 降级时回填：从 0 开始的成员序号
+    unsigned field_index;   // 降级时回填：首个载荷字段在内部结构体中的下标
+} EnumVariantNode;
+
 // 枚举声明节点
 typedef struct {
     ASTNode base;
     char *name;            // 枚举类型名
-    ASTNode *variants;     // 枚举成员列表（IdentifierNode）
+    ASTNode *type_params;  // 泛型类型参数列表（IdentifierNode）
+    ASTNode *variants;     // 枚举成员列表（EnumVariantNode）
+    int has_payload;       // 任一成员带载荷时置位；由降级 pass 回填
 } EnumNode;
 
 // 结构体声明节点
@@ -128,6 +142,8 @@ typedef struct {
     char *name;            // 结构体类型名
     ASTNode *type_params;  // 泛型类型参数列表（IdentifierNode）
     ASTNode *fields;       // 字段声明列表（StructFieldNode）
+    int is_tagged_enum;    // 由载荷枚举降级生成，而非用户声明
+    char *tagged_enum_name; // 降级生成时记录来源枚举名；实例化后名字带 $ 后缀，靠它映射回枚举
 } StructNode;
 
 // 结构体字段声明节点
@@ -267,12 +283,32 @@ typedef struct {
     ASTNode *arguments;    // 参数列表
 } FunctionCallNode;
 
+// match 分支节点
+typedef struct {
+    ASTNode base;
+    char *enum_name;       // 模式中的枚举名；通配分支为 NULL
+    char *variant_name;    // 模式中的成员名；通配分支为 NULL
+    ASTNode *bindings;     // 载荷绑定变量列表（IdentifierNode），可空
+    ASTNode *body;         // 分支语句链表
+    char *filename;        // 分支所在文件，用于诊断
+    int line;
+    int column;
+} MatchArmNode;
+
+// match 解构语句节点
+typedef struct {
+    ASTNode base;
+    ASTNode *expression;   // 被匹配的枚举值
+    ASTNode *arms;         // MatchArmNode 链表
+} MatchStatementNode;
+
 // 创建节点的函数声明
 ProgramNode *create_program();
 ImportNode *create_import(
     const char *module_name, const char *alias, const char *filename, int line, int column);
 FunctionNode *create_function(char *name);
 EnumNode *create_enum(char *name);
+EnumVariantNode *create_enum_variant(char *name);
 StructNode *create_struct(char *name);
 StructFieldNode *create_struct_field(char *name, VarTypeNode *field_type);
 StructLiteralNode *create_struct_literal(char *struct_name);
@@ -311,7 +347,13 @@ FunctionCallNode *create_function_call(const char *name);
 void add_function(ProgramNode *program, FunctionNode *function);
 void add_constant(ProgramNode *program, VarDeclNode *constant);
 void add_enum(ProgramNode *program, EnumNode *enum_node);
-void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant);
+void add_enum_type_param(EnumNode *enum_node, IdentifierNode *type_param);
+void add_enum_variant(EnumNode *enum_node, EnumVariantNode *variant);
+void add_enum_variant_payload(EnumVariantNode *variant, VarTypeNode *type);
+MatchStatementNode *create_match_statement(ASTNode *expression);
+MatchArmNode *create_match_arm(char *enum_name, char *variant_name);
+void add_match_arm(MatchStatementNode *statement, MatchArmNode *arm);
+void add_match_binding(MatchArmNode *arm, IdentifierNode *binding);
 void add_struct(ProgramNode *program, StructNode *struct_node);
 void add_struct_type_param(StructNode *struct_node, IdentifierNode *type_param);
 void add_struct_field(StructNode *struct_node, StructFieldNode *field);

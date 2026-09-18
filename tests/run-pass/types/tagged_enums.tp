@@ -1,0 +1,70 @@
+// 带载荷枚举（tagged union）：声明、构造、match 解构与通配分支。
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Empty,
+}
+
+enum Message {
+    Quit,
+    Move(i32, i32),
+    Write(string),
+    ChangeColor(i32, i32, i32),
+}
+
+fn area(shape: Shape): f64 {
+    match (shape) {
+        Shape.Circle(radius) => {
+            return 3.141592653589793 * radius * radius;
+        }
+        Shape.Rect(width, height) => {
+            return width * height;
+        }
+        Shape.Empty => {
+            return 0.0;
+        }
+    }
+    return -1.0;
+}
+
+// 分支体也可以直接写单条语句，不必包在代码块里。
+fn label(message: Message): i32 {
+    match (message) {
+        Message.Move(x, y) => return x + y;
+        Message.Write(text) => return text.len();
+        _ => return 0;
+    }
+    return -1;
+}
+
+fn make_square(side: f64): Shape {
+    return Shape.Rect(side, side);
+}
+
+fn main(): i32 {
+    let circle: Shape = Shape.Circle(2.0);
+    let rect: Shape = Shape.Rect(3.0, 4.0);
+    let empty: Shape = Shape.Empty;
+    print("area: %f %f %f\n", area(circle), area(rect), area(empty));
+
+    let move_message: Message = Message.Move(3, 4);
+    let write_message: Message = Message.Write("tap");
+    let quit_message: Message = Message.Quit;
+    print("label: %d %d %d\n",
+        label(move_message), label(write_message), label(quit_message));
+
+    let square: Shape = make_square(5.0);
+    print("square area: %f\n", area(square));
+    print("sizeof: %llu\n", sizeof(Shape));
+    return 0;
+}
+
+/** -- test
+- .stdout
+area: 12.566371 12.000000 0.000000
+label: 7 3 0
+square area: 25.000000
+sizeof: 32
+- .exit
+0
+-- */

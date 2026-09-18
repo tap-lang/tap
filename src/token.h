@@ -24,6 +24,7 @@ enum TokenType {
     TOKEN_ELSEIF,    // elseif 语句
     TOKEN_IMPORT,    // import 模块导入
     TOKEN_AS,        // as 导入别名
+    TOKEN_MATCH,     // match 载荷枚举解构
 
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符
@@ -54,6 +55,7 @@ enum TokenType {
     TOKEN_DIVIDE,                   // /
     TOKEN_MODULO,                   // %
     TOKEN_ASSIGN,                   // =
+    TOKEN_FAT_ARROW,                // => match 分支
     TOKEN_EQUAL,                    // ==
     TOKEN_NOT_EQUAL,                // !=
     TOKEN_NOT,                      // !

@@ -1,0 +1,28 @@
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+}
+
+fn main(): i32 {
+    let shape: Shape = Shape.Circle(1.0);
+    match (shape) {
+        Shape.Circle(radius) => {
+            print("%f\n", radius);
+        }
+        Shape.Circle(radius) => {
+            print("%f\n", radius);
+        }
+        Shape.Rect(width, height) => {
+            print("%f\n", width);
+        }
+    }
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: variant 'Shape.Circle' is matched more than once
+--> tests/compile-fail/types/match_duplicate_arm.tp:9:9
+- .exit
+1
+-- */

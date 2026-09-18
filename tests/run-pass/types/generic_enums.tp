@@ -1,0 +1,87 @@
+// 泛型载荷枚举：Option<T>、Result<T, E>，多种实例化共存与嵌套实例化。
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
+    match (value) {
+        Option.Some(inner) => {
+            return inner;
+        }
+        Option.None => {
+            return fallback;
+        }
+    }
+    return fallback;
+}
+
+fn status_code(result: Result<i32, string>): i32 {
+    match (result) {
+        Result.Ok(code) => {
+            return code;
+        }
+        Result.Err(message) => {
+            return 0 - message.len();
+        }
+    }
+    return -1;
+}
+
+fn make_some(value: i32): Option<i32> {
+    return Option.Some(value);
+}
+
+fn main(): i32 {
+    let present: Option<i32> = Option.Some(42);
+    let absent: Option<i32> = Option.None;
+    print("unwrap: %d %d\n", unwrap_or(present, -1), unwrap_or(absent, -1));
+
+    let ok: Result<i32, string> = Result.Ok(200);
+    let err: Result<i32, string> = Result.Err("boom");
+    print("status: %d %d\n", status_code(ok), status_code(err));
+
+    print("made: %d\n", unwrap_or(make_some(7), -1));
+
+    // 同一个泛型枚举的不同实例化可以共存。
+    let text: Option<string> = Option.Some("tap");
+    match (text) {
+        Option.Some(value) => {
+            print("text: %s\n", value);
+        }
+        Option.None => {
+            print("text: <none>\n");
+        }
+    }
+
+    // 嵌套实例化，分支体内可以再套 match。
+    let nested: Option<Result<i32, string>> = Option.Some(Result.Ok(5));
+    match (nested) {
+        Option.Some(inner) => {
+            print("nested status: %d\n", status_code(inner));
+        }
+        Option.None => {
+            print("nested: <none>\n");
+        }
+    }
+
+    print("sizes: %llu %llu\n", sizeof(Option<i32>), sizeof(Option<string>));
+    return 0;
+}
+
+/** -- test
+- .stdout
+unwrap: 42 -1
+status: 200 -4
+made: 7
+text: tap
+nested status: 5
+sizes: 8 16
+- .exit
+0
+-- */

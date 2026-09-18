@@ -185,6 +185,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "break", 5) == 0) return TOKEN_BREAK;
         if (memcmp(text, "const", 5) == 0) return TOKEN_CONST;
         if (memcmp(text, "false", 5) == 0) return TOKEN_BOOL;
+        if (memcmp(text, "match", 5) == 0) return TOKEN_MATCH;
         if (memcmp(text, "print", 5) == 0) return TOKEN_PRINT;
         if (memcmp(text, "float", 5) == 0) return TOKEN_FLOAT;
         if (memcmp(text, "while", 5) == 0) return TOKEN_WHILE;
@@ -490,7 +491,10 @@ Token *get_next_token(Lexer *lexer) {
         case '%':
             return create_token(lexer, TOKEN_MODULO, lexer->current - 1, lexer->current);
         case '=':
-            if (peek(lexer) == '=') {
+            if (peek(lexer) == '>') {
+                advance(lexer);
+                return create_token(lexer, TOKEN_FAT_ARROW, lexer->current - 2, lexer->current);
+            } else if (peek(lexer) == '=') {
                 advance(lexer);
                 return create_token(lexer, TOKEN_EQUAL, lexer->current - 2, lexer->current);
             } else {

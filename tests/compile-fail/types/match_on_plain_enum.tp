@@ -1,0 +1,25 @@
+// 无载荷枚举仍然按 i32 表示，用 if 比较即可；match 只用于带载荷的枚举。
+enum Direction {
+    Up,
+    Down,
+}
+
+fn main(): i32 {
+    let direction: Direction = Direction.Up;
+    match (direction) {
+        Direction.Up => {
+            print("up\n");
+        }
+        Direction.Down => {
+            print("down\n");
+        }
+    }
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: match requires a value of a payload enum type
+- .exit
+1
+-- */

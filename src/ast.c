@@ -322,6 +322,35 @@ static void dump_stmt(ASTNode *n, int depth) {
         print_indent(depth);
         printf("Continue\n");
         break;
+    case NODE_MATCH_STATEMENT: {
+        MatchStatementNode *match_node = (MatchStatementNode *)n;
+        print_indent(depth);
+        printf("Match\n");
+        print_indent(depth + 2);
+        printf("expression:\n");
+        dump_expr(match_node->expression, depth + 4);
+        for (ASTNode *arm = match_node->arms; arm; arm = arm->next) {
+            MatchArmNode *match_arm = (MatchArmNode *)arm;
+            print_indent(depth + 2);
+            if (match_arm->variant_name) {
+                printf("arm: %s.%s", match_arm->enum_name, match_arm->variant_name);
+            } else {
+                printf("arm: _");
+            }
+            if (match_arm->bindings) {
+                printf("(");
+                for (ASTNode *binding = match_arm->bindings;
+                     binding; binding = binding->next) {
+                    printf("%s", ((IdentifierNode *)binding)->name);
+                    if (binding->next) printf(", ");
+                }
+                printf(")");
+            }
+            printf("\n");
+            dump_stmt_list(match_arm->body, depth + 4);
+        }
+        break;
+    }
     default:
         print_indent(depth);
         printf("(unknown stmt node type %d)\n", n->type);
@@ -340,12 +369,31 @@ void print_ast(const ProgramNode *program) {
     for (ASTNode *node = program->enums; node; node = node->next) {
         if (node->type == NODE_ENUM) {
             EnumNode *enum_node = (EnumNode *)node;
-            printf("  Enum: %s\n", enum_node->name);
-            for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
-                if (variant->type == NODE_IDENTIFIER) {
-                    print_indent(4);
-                    printf("Variant: %s\n", ((IdentifierNode *)variant)->name);
+            printf("  Enum: %s", enum_node->name);
+            if (enum_node->type_params) {
+                printf("<");
+                for (ASTNode *type = enum_node->type_params; type; type = type->next) {
+                    printf("%s", ((IdentifierNode *)type)->name);
+                    if (type->next) printf(", ");
                 }
+                printf(">");
+            }
+            printf("\n");
+            for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
+                if (variant->type != NODE_ENUM_VARIANT) continue;
+                EnumVariantNode *enum_variant = (EnumVariantNode *)variant;
+                print_indent(4);
+                printf("Variant: %s", enum_variant->name);
+                if (enum_variant->payload_types) {
+                    printf("(");
+                    for (ASTNode *type = enum_variant->payload_types;
+                         type; type = type->next) {
+                        print_var_type((VarTypeNode *)type);
+                        if (type->next) printf(", ");
+                    }
+                    printf(")");
+                }
+                printf("\n");
             }
         }
     }
@@ -484,8 +532,42 @@ EnumNode *create_enum(char *name) {
     enum_node->base.type = NODE_ENUM;
     enum_node->base.next = NULL;
     enum_node->name = strdup(name);
+    enum_node->type_params = NULL;
     enum_node->variants = NULL;
+    enum_node->has_payload = 0;
     return enum_node;
+}
+
+// 追加一个泛型类型参数。
+void add_enum_type_param(EnumNode *enum_node, IdentifierNode *type_param) {
+    if (!enum_node->type_params) {
+        enum_node->type_params = (ASTNode *)type_param;
+        return;
+    }
+
+    ASTNode *current = enum_node->type_params;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)type_param;
+}
+
+// 创建一个枚举成员声明；载荷类型后续由 add_enum_variant_payload 追加。
+EnumVariantNode *create_enum_variant(char *name) {
+    EnumVariantNode *variant = (EnumVariantNode *)malloc(sizeof(EnumVariantNode));
+    if (!variant) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    variant->base.type = NODE_ENUM_VARIANT;
+    variant->base.next = NULL;
+    variant->name = strdup(name);
+    if (!variant->name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    variant->payload_types = NULL;
+    variant->tag = 0;
+    variant->field_index = 0;
+    return variant;
 }
 
 // 创建结构体声明节点，字段稍后通过 add_struct_field 追加。
@@ -500,6 +582,8 @@ StructNode *create_struct(char *name) {
     struct_node->name = strdup(name);
     struct_node->type_params = NULL;
     struct_node->fields = NULL;
+    struct_node->is_tagged_enum = 0;
+    struct_node->tagged_enum_name = NULL;
     return struct_node;
 }
 
@@ -1005,7 +1089,7 @@ void add_struct_init_field(StructLiteralNode *literal, StructInitFieldNode *fiel
 }
 
 // 添加枚举成员到枚举声明，保持源码中的成员顺序。
-void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant) {
+void add_enum_variant(EnumNode *enum_node, EnumVariantNode *variant) {
     if (!enum_node->variants) {
         enum_node->variants = (ASTNode *)variant;
         return;
@@ -1014,6 +1098,78 @@ void add_enum_variant(EnumNode *enum_node, IdentifierNode *variant) {
     ASTNode *current = enum_node->variants;
     while (current->next) current = current->next;
     current->next = (ASTNode *)variant;
+}
+
+// 为枚举成员追加一个载荷类型；枚举是否带载荷由降级 pass 统一判定。
+void add_enum_variant_payload(EnumVariantNode *variant, VarTypeNode *type) {
+    if (!variant->payload_types) {
+        variant->payload_types = (ASTNode *)type;
+        return;
+    }
+
+    ASTNode *current = variant->payload_types;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)type;
+}
+
+// 创建 match 解构语句节点。
+MatchStatementNode *create_match_statement(ASTNode *expression) {
+    MatchStatementNode *statement =
+        (MatchStatementNode *)malloc(sizeof(MatchStatementNode));
+    if (!statement) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    statement->base.type = NODE_MATCH_STATEMENT;
+    statement->base.next = NULL;
+    statement->expression = expression;
+    statement->arms = NULL;
+    return statement;
+}
+
+// 创建 match 分支；enum_name 与 variant_name 同时为 NULL 表示通配分支。
+MatchArmNode *create_match_arm(char *enum_name, char *variant_name) {
+    MatchArmNode *arm = (MatchArmNode *)malloc(sizeof(MatchArmNode));
+    if (!arm) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    arm->base.type = NODE_MATCH_ARM;
+    arm->base.next = NULL;
+    arm->enum_name = enum_name ? strdup(enum_name) : NULL;
+    arm->variant_name = variant_name ? strdup(variant_name) : NULL;
+    if ((enum_name && !arm->enum_name) || (variant_name && !arm->variant_name)) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    arm->bindings = NULL;
+    arm->body = NULL;
+    arm->filename = NULL;
+    arm->line = 0;
+    arm->column = 0;
+    return arm;
+}
+
+void add_match_arm(MatchStatementNode *statement, MatchArmNode *arm) {
+    if (!statement->arms) {
+        statement->arms = (ASTNode *)arm;
+        return;
+    }
+
+    ASTNode *current = statement->arms;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)arm;
+}
+
+void add_match_binding(MatchArmNode *arm, IdentifierNode *binding) {
+    if (!arm->bindings) {
+        arm->bindings = (ASTNode *)binding;
+        return;
+    }
+
+    ASTNode *current = arm->bindings;
+    while (current->next) current = current->next;
+    current->next = (ASTNode *)binding;
 }
 
 void add_import(ProgramNode *program, ImportNode *import_node) {
@@ -1190,7 +1346,29 @@ void free_ast(ASTNode *node) {
         case NODE_ENUM: {
             EnumNode *enum_node = (EnumNode *)node;
             free(enum_node->name);
+            free_ast(enum_node->type_params);
             free_ast(enum_node->variants);
+            break;
+        }
+        case NODE_ENUM_VARIANT: {
+            EnumVariantNode *variant = (EnumVariantNode *)node;
+            free(variant->name);
+            free_ast(variant->payload_types);
+            break;
+        }
+        case NODE_MATCH_STATEMENT: {
+            MatchStatementNode *statement = (MatchStatementNode *)node;
+            free_ast(statement->expression);
+            free_ast(statement->arms);
+            break;
+        }
+        case NODE_MATCH_ARM: {
+            MatchArmNode *arm = (MatchArmNode *)node;
+            free(arm->enum_name);
+            free(arm->variant_name);
+            free(arm->filename);
+            free_ast(arm->bindings);
+            free_ast(arm->body);
             break;
         }
         case NODE_STRUCT: {
@@ -1198,6 +1376,7 @@ void free_ast(ASTNode *node) {
             free(struct_node->name);
             free_ast(struct_node->type_params);
             free_ast(struct_node->fields);
+            free(struct_node->tagged_enum_name);
             break;
         }
         case NODE_STRUCT_FIELD: {

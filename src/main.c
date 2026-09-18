@@ -10,6 +10,7 @@
 #include "parser.h"
 #include "module.h"
 #include "prelude.h"
+#include "tagged.h"
 #include "generics.h"
 #include "codegen.h"
 #include "run.h"
@@ -160,6 +161,7 @@ int main(int argc, char *argv[]) {
 
     if (load_modules(program, input_file, argv[0]) != 0 
         || load_prelude(program, argv[0]) != 0
+        || lower_payload_enums(program) != 0
         || specialize_generics(program) != 0
     ) {
         free_ast((ASTNode *)program);

@@ -107,6 +107,39 @@ for (let i: i32 = 0; i < 10; i++) {
 例如 `for (;;) { ... }`。`break;` 结束当前循环，`continue;` 执行更新表达式后进入下一轮；
 嵌套循环中两者只作用于最内层循环。
 
+## 带载荷枚举
+
+枚举成员可以携带载荷，即 tagged union：
+
+```text
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Empty,
+}
+
+fn area(shape: Shape): f64 {
+    match (shape) {
+        Shape.Circle(radius) => {
+            return 3.141592653589793 * radius * radius;
+        }
+        Shape.Rect(width, height) => {
+            return width * height;
+        }
+        Shape.Empty => {
+            return 0.0;
+        }
+    }
+    return 0.0;
+}
+```
+
+用 `EnumName.MemberName(值...)` 构造，不带载荷的成员不写括号。`match` 按成员解构，圆括号里
+按顺序绑定载荷；分支体可以是代码块或单条语句，`_` 是通配分支。分支必须覆盖全部成员或包含
+`_`，否则编译报错。不带载荷的枚举仍然按 `i32` 表示，继续用 `==` 比较。
+
+细节和当前限制见[数据类型文档](docs/data-types.md#带载荷枚举)。
+
 ## 模块导入
 
 使用点分隔模块名导入其他 `.tp` 文件。默认名称空间取模块名最后一段，

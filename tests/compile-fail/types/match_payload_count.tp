@@ -1,0 +1,25 @@
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+}
+
+fn main(): i32 {
+    let shape: Shape = Shape.Circle(1.0);
+    match (shape) {
+        Shape.Circle(radius) => {
+            print("%f\n", radius);
+        }
+        Shape.Rect(width, height, extra) => {
+            print("%f\n", width);
+        }
+    }
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: variant 'Shape.Rect' has 2 payload value(s), but the arm binds 3
+--> tests/compile-fail/types/match_payload_count.tp:12:9
+- .exit
+1
+-- */

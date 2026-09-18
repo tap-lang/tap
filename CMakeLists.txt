@@ -59,6 +59,7 @@ add_executable(tap
     src/parser.c
     src/module.c
     src/generics.c
+    src/tagged.c
     src/prelude.c
     src/lexer.c
     src/token.c

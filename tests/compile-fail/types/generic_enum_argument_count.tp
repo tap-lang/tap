@@ -1,0 +1,16 @@
+enum Pair<T> {
+    Both(T, T),
+    Neither,
+}
+
+fn main(): i32 {
+    let bad: Pair<i32, string> = Pair.Both(1, 2);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: generic enum type argument count mismatch for 'Pair'
+- .exit
+1
+-- */
