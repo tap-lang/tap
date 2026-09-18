@@ -1119,7 +1119,14 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
     if (expression && expression->type == NODE_BINARY_OP && is_integer_type(target)) {
         BinaryOpNode *binary = (BinaryOpNode *)expression;
         if (binary->op_type >= OP_ADD && binary->op_type <= OP_MODULO) {
-            return generate_integer_binary(context, binary, target);
+            // 窄目标类型不能改变表达式本身的求值宽度：先把表达式按它自己的自然类型求值，
+            // 再截断到目标类型。只有目标更宽时才直接用目标类型，这样 i128 这类宽字面量
+            // 仍能在宽类型下参与运算而不丢失精度。
+            enum LiteralType natural = expression_type(context, expression);
+            enum LiteralType operand =
+                integer_type_bits(target) > integer_type_bits(natural) ? target : natural;
+            LLVMValueRef value = generate_integer_binary(context, binary, operand);
+            return cast_value(context, value, operand, target);
         }
     }
 

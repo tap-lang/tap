@@ -78,6 +78,9 @@ fn main(): i32 {
 | `std.vec_string` | `get(vec: StringVec, index: i32): string` | 读取指定元素；越界时输出错误并返回空字符串 |
 | `std.vec_string` | `set(vec: StringVec, index: i32, value: string): StringVec` | 替换指定元素；越界时输出错误并保持原值 |
 | `std.vec_string` | `free(vec: StringVec): i32` | 释放动态数组内部缓冲区，成功返回 `0` |
+| `std.parse` | `parse_i64(text: string): ParsedInt` | 解析十进制整数，返回 `{ value: i64, ok: bool }` |
+| `std.parse` | `parse_f64(text: string): ParsedFloat` | 解析十进制浮点，返回 `{ value: f64, ok: bool }` |
+| `std.parse` | `format_i64(value: i64): string` | 把整数格式化为十进制字符串 |
 
 `std.env` 示例：
 
@@ -204,6 +207,42 @@ fn main(): i32 {
 `StringBuilder` 内部使用 `ByteVec`。`append()` 追加字符串的 UTF-8 字节，
 `append_byte()` 追加单个字节，`to_string()` 返回独立快照。
 
+`std.parse` 示例：
+
+```text
+import std.parse;
+
+fn main(): i32 {
+    let parsed: ParsedInt = parse.parse_i64("-456");
+    if (parsed.ok) {
+        print("value=%lld text=%s\n", parsed.value, parse.format_i64(parsed.value));
+    } else {
+        print("not a number\n");
+    }
+
+    let ratio: ParsedFloat = parse.parse_f64("1.5e-3");
+    print("ratio=%f\n", ratio.value);
+    return 0;
+}
+```
+
+`parse_i64` 接受可选正负号，`parse_f64` 额外接受小数部分和 `e` / `E` 指数。两者都要求整个
+输入被完整消费：空串、只有符号、含有非数字字符或末尾有多余字符时 `ok` 为 `false`，此时
+`value` 没有意义。浮点的数字要求与 C 的 `strtod` 一致，整数部分和小数部分至少一侧要有数字，
+因此 `.5` 和 `1.` 都合法。
+
+结果结构体是值类型，字段访问需要先绑定到变量：
+
+```text
+let result: ParsedInt = parse.parse_i64(text);
+if (result.ok) {
+    print("%lld\n", result.value);
+}
+```
+
+当前没有 `format_f64`：把 `double` 渲染成十进制需要大整数算法或 Runtime 的 `snprintf`
+支持，尚未提供。
+
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
 
 ## Runtime ABI
@@ -270,9 +309,12 @@ Runtime 的 C ABI 声明位于
 
 ## Current Limits
 
-- 标准库函数目前只覆盖 `i32` 相关能力。
+- 大部分标准库函数仍只覆盖 `i32` 相关能力；`std.parse` 使用 `i64` 和 `f64`。
 - `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()` 和内容比较，动态构建可使用
-  `std.string_builder`；尚无 `+` 拼接、查找、数值转换和 Unicode 码点级 API。
+  `std.string_builder`，字符串与数值互转可使用 `std.parse`；尚无 `+` 拼接、查找和
+  Unicode 码点级 API。
+- `std.parse` 只解析十进制，不识别十六进制、下划线分隔符或 `inf` / `nan`；也还没有
+  `format_f64`，浮点到字符串仍需借助其他手段。
 - 内建数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
   `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。动态字符串数组请使用
   `std.vec_string`。

@@ -2,7 +2,7 @@
 
 # 编译器和编译选项
 # CC = clang
-CC = gcc
+CC ?= gcc
 LIBS = -lLLVM-21 -lm
 
 # Sanitizers are opt-in because their VM reservation conflicts with macOS nano malloc.
