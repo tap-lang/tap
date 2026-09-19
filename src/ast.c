@@ -641,6 +641,7 @@ IdentifierNode *create_identifier(char *name) {
     identifier->base.type = NODE_IDENTIFIER;
     identifier->base.next = NULL;
     identifier->name = strdup(name);
+    identifier->enum_type_arguments = NULL;
     return identifier;
 }
 
@@ -977,6 +978,7 @@ FunctionCallNode *create_function_call(const char *name) {
     function_call->column = 0;
     function_call->name = strdup(name);
     function_call->type_arguments = NULL;
+    function_call->enum_type_arguments = NULL;
     function_call->arguments = NULL;
     return function_call;
 }
@@ -1248,11 +1250,16 @@ void add_argument(FunctionCallNode *function_call, ASTNode *argument) {
 
 // 向函数调用追加一个显式泛型类型实参。
 void add_type_argument(FunctionCallNode *function_call, VarTypeNode *type_argument) {
-    if (!function_call->type_arguments) {
-        function_call->type_arguments = (ASTNode *)type_argument;
+    append_type_argument(&function_call->type_arguments, type_argument);
+}
+
+// 把泛型实参追加到链表尾部；链表可能属于函数调用或标识符。
+void append_type_argument(ASTNode **list, VarTypeNode *type_argument) {
+    if (!*list) {
+        *list = (ASTNode *)type_argument;
         return;
     }
-    ASTNode *current = function_call->type_arguments;
+    ASTNode *current = *list;
     while (current->next) current = current->next;
     current->next = (ASTNode *)type_argument;
 }
@@ -1401,6 +1408,7 @@ void free_ast(ASTNode *node) {
         case NODE_IDENTIFIER: {
             IdentifierNode *identifier = (IdentifierNode *)node;
             free(identifier->name);
+            free_ast(identifier->enum_type_arguments);
             break;
         }
         case NODE_LITERAL: {
@@ -1478,6 +1486,7 @@ void free_ast(ASTNode *node) {
             free(function_call->name);
             free(function_call->filename);
             free_ast(function_call->type_arguments);
+            free_ast(function_call->enum_type_arguments);
             free_ast(function_call->arguments);
             break;
         }

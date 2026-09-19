@@ -719,6 +719,14 @@ static void materialize_statements(GenericContext *context, ASTNode *statement) 
                 materialize_statements(context, node->body);
                 break;
             }
+            case NODE_MATCH_STATEMENT: {
+                MatchStatementNode *node = (MatchStatementNode *)statement;
+                materialize_expression(context, node->expression);
+                for (ASTNode *arm = node->arms; arm; arm = arm->next) {
+                    materialize_statements(context, ((MatchArmNode *)arm)->body);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -759,9 +767,20 @@ static void materialize_expression(GenericContext *context, ASTNode *expression)
             for (ASTNode *type = call->type_arguments; type; type = type->next) {
                 materialize_type(context, (VarTypeNode *)type);
             }
+            for (ASTNode *type = call->enum_type_arguments; type; type = type->next) {
+                materialize_type(context, (VarTypeNode *)type);
+            }
             for (ASTNode *argument = call->arguments; argument;
                  argument = argument->next) {
                 materialize_expression(context, argument);
+            }
+            break;
+        }
+        case NODE_IDENTIFIER: {
+            // Enum<T>.Member 这种裸成员写法也带显式类型实参。
+            IdentifierNode *identifier = (IdentifierNode *)expression;
+            for (ASTNode *type = identifier->enum_type_arguments; type; type = type->next) {
+                materialize_type(context, (VarTypeNode *)type);
             }
             break;
         }
@@ -1340,6 +1359,18 @@ static void process_statements(GenericContext *context, ASTNode *statement,
                 free_ast((ASTNode *)ignored);
                 process_statements(context, for_node->update, return_type);
                 process_statements(context, for_node->body, return_type);
+                break;
+            }
+            case NODE_MATCH_STATEMENT: {
+                // 分支体是函数体的一部分，泛型方法调用同样需要在这里特化。
+                MatchStatementNode *match_node = (MatchStatementNode *)statement;
+                VarTypeNode *ignored = process_expression(
+                    context, match_node->expression, NULL);
+                free_ast((ASTNode *)ignored);
+                for (ASTNode *arm = match_node->arms; arm; arm = arm->next) {
+                    process_statements(
+                        context, ((MatchArmNode *)arm)->body, return_type);
+                }
                 break;
             }
             default:

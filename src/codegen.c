@@ -1215,6 +1215,46 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
     return cast_value(context, generate_expression(context, expression), source, target);
 }
 
+// 校验构造上显式写的类型实参（`Enum<T>.Member(...)`）。
+// 实例化始终由目标类型驱动，显式实参起的是断言作用：数量要和枚举声明一致，每一项也要和
+// 推断出的实参相符。这样写错了会直接报错，而不是被静默忽略。
+// 类型实参在泛型单态化阶段已经解析过，这里可以直接比较。
+static void validate_variant_type_arguments(
+    CodeGenContext *context, const EnumNode *enum_node,
+    ASTNode *explicit_arguments, const VarTypeNode *target_type) {
+    (void)context;
+    if (!explicit_arguments) return;
+
+    unsigned declared = 0;
+    for (ASTNode *node = enum_node->type_params; node; node = node->next) declared++;
+    unsigned given = 0;
+    for (ASTNode *node = explicit_arguments; node; node = node->next) given++;
+    if (declared != given) {
+        fprintf(stderr,
+            "error: enum '%s' takes %u type argument(s), but %u were given\n",
+            enum_node->name, declared, given); // 中文：枚举类型实参数量不匹配
+        exit(1);
+    }
+
+    // 目标类型不是同一个泛型枚举的实例化时无从比较，到此为止。
+    if (!target_type || !target_type->type_arguments) return;
+
+    ASTNode *explicit_node = explicit_arguments;
+    ASTNode *inferred_node = target_type->type_arguments;
+    unsigned index = 1;
+    for (; explicit_node && inferred_node;
+         explicit_node = explicit_node->next, inferred_node = inferred_node->next) {
+        if (!var_type_equal((VarTypeNode *)explicit_node,
+                            (VarTypeNode *)inferred_node)) {
+            fprintf(stderr,
+                "error: type argument %u of enum '%s' does not match the target type\n",
+                index, enum_node->name); // 中文：显式类型实参与目标类型不符
+            exit(1);
+        }
+        index++;
+    }
+}
+
 // 根据完整目标类型生成表达式，结构体和数组保留高层类型信息。
 static LLVMValueRef generate_expression_for_type(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type) {
@@ -1244,6 +1284,8 @@ static LLVMValueRef generate_expression_for_type(
             EnumVariantNode *variant = NULL;
             EnumNode *enum_node = variant_reference(context, call->name, &variant);
             if (enum_node && enum_node->has_payload) {
+                validate_variant_type_arguments(
+                    context, enum_node, call->enum_type_arguments, target_type);
                 return generate_variant_value(context, target_type->struct_name,
                     enum_node, variant,
                     call->arguments, call->filename, call->line, call->column);
@@ -1251,14 +1293,16 @@ static LLVMValueRef generate_expression_for_type(
         }
         if (expression && expression->type == NODE_IDENTIFIER) {
             // 载荷枚举的无载荷成员：Shape.Empty 直接构造只带标签的值。
+            IdentifierNode *identifier = (IdentifierNode *)expression;
             EnumVariantNode *bare = NULL;
             EnumNode *bare_enum = bare_variant_reference(
-                context, ((IdentifierNode *)expression)->name, &bare);
+                context, identifier->name, &bare);
             if (bare_enum) {
+                validate_variant_type_arguments(
+                    context, bare_enum, identifier->enum_type_arguments, target_type);
                 return generate_variant_value(context, target_type->struct_name,
                     bare_enum, bare, NULL, NULL, 0, 0);
             }
-            IdentifierNode *identifier = (IdentifierNode *)expression;
             StructFieldNode *field = NULL;
             LLVMValueRef field_address =
                 generate_field_address(context, identifier->name, &field, NULL);

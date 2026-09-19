@@ -244,13 +244,22 @@ enum Result<T, E> {
 }
 ```
 
-构造时由目标类型决定类型实参，不需要写 `Option<i32>.Some(...)`：
+构造时类型实参由目标类型推断，也可以显式写出来：
 
 ```text
 let present: Option<i32> = Option.Some(42);
 let absent: Option<i32> = Option.None;
 let ok: Result<i32, string> = Result.Ok(200);
+
+// 显式写法，和上面完全等价
+let explicit: Option<i32> = Option<i32>.Some(42);
+let absent_explicit: Option<i32> = Option<i32>.None;
 ```
+
+两种写法生成的类型完全相同。显式写法多两项检查：类型实参数量要和枚举声明一致，每一项也要和
+推断出的结果相符，所以写错了会直接报错而不是被静默忽略。实例化始终由目标类型驱动，因此
+**没有目标类型时显式实参也帮不上忙**——`let x = Option<i32>.Some(42);` 仍然不支持，和结构体
+字面量一样需要类型标注。
 
 `match` 的用法和非泛型一样，载荷绑定的类型由实例化后的成员载荷决定：
 
@@ -282,7 +291,7 @@ fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
 - 不支持递归载荷枚举：成员载荷不能是它自己，按值展开会导致无限大小。
 - `match` 只能作为语句，不能直接产生值；需要返回值时在分支里提前 `return`。
 - 不支持嵌套模式和分支守卫。
-- 构造时不能显式写类型实参，只能由目标类型推断。
+- 构造时类型实参只能由目标类型推断或显式写出，没有目标类型时不能省略类型标注。
 
 ### 固定长度数组
 

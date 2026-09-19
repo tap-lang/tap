@@ -187,6 +187,7 @@ typedef struct {
 typedef struct {
     ASTNode base;
     char *name;            // 标识符名称
+    ASTNode *enum_type_arguments; // 显式枚举类型实参，仅 Enum<T>.Member 形式使用
 } IdentifierNode;
 
 // 字面量节点
@@ -279,7 +280,8 @@ typedef struct {
     int line;
     int column;
     char *name;            // 函数名
-    ASTNode *type_arguments; // 显式泛型实参列表（VarTypeNode）
+    ASTNode *type_arguments; // 显式泛型实参列表（VarTypeNode），用于泛型函数
+    ASTNode *enum_type_arguments; // 显式枚举类型实参，仅 Enum<T>.Member(...) 构造使用
     ASTNode *arguments;    // 参数列表
 } FunctionCallNode;
 
@@ -368,6 +370,7 @@ void add_param_type(FunctionNode *function, VarTypeNode *type);
 void add_statement(FunctionNode *function, ASTNode *statement);
 void add_argument(FunctionCallNode *function_call, ASTNode *argument);
 void add_type_argument(FunctionCallNode *function_call, VarTypeNode *type_argument);
+void append_type_argument(ASTNode **list, VarTypeNode *type_argument);
 
 // 条件语句节点
 typedef struct {

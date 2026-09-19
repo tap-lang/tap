@@ -47,7 +47,7 @@ typedef struct ASTNode {
 | `NODE_STRUCT_LITERAL` | `StructLiteralNode` | 结构体名、泛型类型实参和字段初始化链表 |
 | `NODE_ENUM` | `EnumNode` | 枚举名和成员声明链表；`has_payload` 标记是否带载荷 |
 | `NODE_ENUM_VARIANT` | `EnumVariantNode` | 成员名、载荷类型链表，以及降级时回填的 `tag` 和 `field_index` |
-| `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称 |
+| `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称；`enum_type_arguments` 保存 `Enum<T>.Member` 的显式枚举类型实参 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
 | `NODE_PRINT` | `PrintNode` | `arguments` 指向打印参数链表 |
@@ -59,7 +59,7 @@ typedef struct ASTNode {
 | `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
 | `NODE_INDEX_EXPRESSION` | `IndexExpressionNode` | 数组表达式和下标表达式 |
 | `NODE_INDEX_ASSIGNMENT` | `IndexAssignmentNode` | 索引目标和新的元素值 |
-| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名、显式泛型类型实参和普通实参链表 |
+| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名、显式泛型类型实参和普通实参链表；`enum_type_arguments` 保存 `Enum<T>.Member(...)` 的显式枚举类型实参 |
 | `NODE_IF_STATEMENT` | `IfStatementNode` | 条件、真分支和假分支 |
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |

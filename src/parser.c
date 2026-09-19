@@ -73,8 +73,9 @@ static ASTNode *parse_loop_control_statement(Parser *parser);
 static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name);
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
 
-// 前瞻检查 `<...>` 后是否紧跟左括号，用于区分泛型调用和比较表达式。
-static int looks_like_generic_call(Parser *parser) {
+// 前瞻跳过 `<...>`，判断紧随其后的 token 是不是 expected。
+// 泛型实参和小于号在语法上有歧义，靠这个把几种用法区分开。
+static int generic_arguments_followed_by(Parser *parser, enum TokenType expected) {
     if (parser->current_token->type != TOKEN_LESS_THAN) return 0;
 
     char *saved_current = parser->lexer->current;
@@ -95,7 +96,7 @@ static int looks_like_generic_call(Parser *parser) {
     }
     if (depth == 0) {
         Token *token = get_next_token(parser->lexer);
-        result = token->type == TOKEN_LPAREN;
+        result = token->type == expected;
         free_token(token);
     }
 
@@ -105,36 +106,19 @@ static int looks_like_generic_call(Parser *parser) {
     return result;
 }
 
-// 前瞻检查 `<...>` 后是否紧跟左花括号，用于识别泛型结构体字面量。
+// 泛型函数调用：`name<T>(...)`。
+static int looks_like_generic_call(Parser *parser) {
+    return generic_arguments_followed_by(parser, TOKEN_LPAREN);
+}
+
+// 泛型结构体字面量：`Name<T> { ... }`。
 static int looks_like_generic_struct_literal(Parser *parser) {
-    if (parser->current_token->type != TOKEN_LESS_THAN) return 0;
+    return generic_arguments_followed_by(parser, TOKEN_LBRACE);
+}
 
-    char *saved_current = parser->lexer->current;
-    int saved_line = parser->lexer->line;
-    int saved_column = parser->lexer->column;
-    int depth = 1;
-    int result = 0;
-
-    while (depth > 0) {
-        Token *token = get_next_token(parser->lexer);
-        if (token->type == TOKEN_EOF) {
-            free_token(token);
-            break;
-        }
-        if (token->type == TOKEN_LESS_THAN) depth++;
-        if (token->type == TOKEN_GREATER_THAN) depth--;
-        free_token(token);
-    }
-    if (depth == 0) {
-        Token *token = get_next_token(parser->lexer);
-        result = token->type == TOKEN_LBRACE;
-        free_token(token);
-    }
-
-    parser->lexer->current = saved_current;
-    parser->lexer->line = saved_line;
-    parser->lexer->column = saved_column;
-    return result;
+// 泛型枚举的显式类型实参：`Enum<T>.Member(...)`。
+static int looks_like_generic_variant(Parser *parser) {
+    return generic_arguments_followed_by(parser, TOKEN_DOT);
 }
 
 static int is_module_component(const Token *token) {
@@ -1066,6 +1050,27 @@ static ASTNode *parse_primary(Parser *parser) {
             return literal;
         }
 
+        // 泛型枚举的显式类型实参：`Enum<T>.Member(...)` 或 `Enum<T>.Member`。
+        // 实参先收集成链表，等构造调用或标识符建好后再挂上去。
+        ASTNode *explicit_arguments = NULL;
+        if (looks_like_generic_variant(parser)) {
+            consume(parser, TOKEN_LESS_THAN);
+            for (;;) {
+                append_type_argument(&explicit_arguments, parse_type(parser));
+                if (parser->current_token->type != TOKEN_COMMA) break;
+                consume(parser, TOKEN_COMMA);
+            }
+            consume(parser, TOKEN_GREATER_THAN);
+
+            consume(parser, TOKEN_DOT);
+            if (!is_module_component(parser->current_token)) {
+                free(name);
+                parser_error(parser, "expected variant name after type arguments"); // 中文：期望类型实参之后的成员名
+            }
+            name = append_name_component(name, parser->current_token->lexeme);
+            consume(parser, parser->current_token->type);
+        }
+
         while (parser->current_token->type == TOKEN_DOT) {
             consume(parser, TOKEN_DOT);
             if (!is_module_component(parser->current_token)) {
@@ -1083,11 +1088,13 @@ static ASTNode *parse_primary(Parser *parser) {
             call->filename = strdup(parser->lexer->filename);
             call->line = line;
             call->column = column;
+            call->enum_type_arguments = explicit_arguments;
             free(name);
             return function_call;
         }
 
         IdentifierNode *identifier = create_identifier(name);
+        identifier->enum_type_arguments = explicit_arguments;
         free(name);
         return (ASTNode *)identifier;
     }
