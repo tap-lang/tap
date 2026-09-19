@@ -71,7 +71,7 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 
 ## 文件 ABI
 
-`std.file` 的流式读写底层是以下 Runtime ABI：
+`std.fs` 的流式读写底层是以下 Runtime ABI：
 
 | C ABI | 行为 |
 |---|---|

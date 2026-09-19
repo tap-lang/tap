@@ -1,36 +1,36 @@
-// std.file 的整文件便捷封装：write_text / append_text / read_text / exists。
+// std.fs 的整文件便捷封装：write_text / append_text / read_text / exists。
 // 这些只是流式接口的组合，没有额外的 Runtime ABI。
 //
 // read_text 返回带 ok 的结构体，用来区分「文件打不开」和「文件是空的」——
 // 空串表示失败会让这两种情况混在一起。
 //
 // 注意：测试的工作目录是仓库根目录，这里建的临时文件是相对路径。
-import std.file as file;
+import std.fs as fs;
 
 fn main(): i32 {
     let path: string = "std_file_text.tmp";
 
-    print("exists before=%d\n", file.exists(path));
-    let missing: FileText = file.read_text(path);
+    print("exists before=%d\n", fs.exists(path));
+    let missing: FileText = fs.read_text(path);
     print("missing ok=%d\n", missing.ok);
 
-    print("write=%lld\n", file.write_text(path, "first\n"));
-    print("append=%lld\n", file.append_text(path, "second\n"));
-    print("exists after=%d\n", file.exists(path));
+    print("write=%lld\n", fs.write_text(path, "first\n"));
+    print("append=%lld\n", fs.append_text(path, "second\n"));
+    print("exists after=%d\n", fs.exists(path));
 
-    let loaded: FileText = file.read_text(path);
+    let loaded: FileText = fs.read_text(path);
     let text: string = loaded.text;
     print("ok=%d len=%llu\n", loaded.ok, text.len());
     print("content=[%s]\n", text);
 
     // 空文件：ok 仍为 true，但长度为 0，和上面的 missing 区分得开。
-    print("truncate=%lld\n", file.write_text(path, ""));
-    let empty: FileText = file.read_text(path);
+    print("truncate=%lld\n", fs.write_text(path, ""));
+    let empty: FileText = fs.read_text(path);
     let empty_text: string = empty.text;
     print("empty ok=%d len=%llu\n", empty.ok, empty_text.len());
 
-    print("remove=%d\n", file.remove(path));
-    print("exists end=%d\n", file.exists(path));
+    print("remove=%d\n", fs.remove(path));
+    print("exists end=%d\n", fs.exists(path));
     return 0;
 }
 
