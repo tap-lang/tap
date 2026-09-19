@@ -251,9 +251,17 @@ const char *__tap_bytes_to_string(const uint8_t *data, size_t length) {
 // 非有限值输出 "inf" / "-inf" / "nan"，调用方需要自行处理（JSON 没有这些写法）。
 const char *__tap_format_f64(double value) {
     char buffer[64];
-    for (int precision = 15; precision <= 17; precision++) {
-        snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
-        if (strtod(buffer, NULL) == value) break;
+
+    // NaN 的符号位没有意义，而且各平台 0.0/0.0 产生的默认 NaN 符号并不一致
+    //（x86-64 给 -nan，ARM64 给 nan）。统一成 "nan"，输出才可移植。
+    // 这里用 value != value 判断，避免因为引入 math.h 而牵扯 libm 链接。
+    if (value != value) {
+        snprintf(buffer, sizeof(buffer), "nan");
+    } else {
+        for (int precision = 15; precision <= 17; precision++) {
+            snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
+            if (strtod(buffer, NULL) == value) break;
+        }
     }
 
     size_t length = strlen(buffer);
