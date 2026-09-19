@@ -1,0 +1,52 @@
+// 泛型载荷枚举的显式类型实参：Enum<T>.Member(...) 与 Enum<T>.Member。
+// 显式写和不写（由目标类型推断）生成的类型完全相同，显式写法多了两项检查：
+// 类型实参数量要和枚举声明一致，每一项也要和推断结果相符。
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
+    match (value) {
+        Option.Some(inner) => { return inner; }
+        Option.None => { return fallback; }
+    }
+    return fallback;
+}
+
+fn main(): i32 {
+    let present: Option<i32> = Option<i32>.Some(42);
+    let absent: Option<i32> = Option<i32>.None;
+    print("option: %d %d\n", unwrap_or(present, -1), unwrap_or(absent, -1));
+
+    let ok: Result<i32, string> = Result<i32, string>.Ok(200);
+    let err: Result<i32, string> = Result<i32, string>.Err("boom");
+    match (ok) {
+        Result.Ok(code) => { print("ok: %d\n", code); }
+        Result.Err(message) => { print("ok: %s\n", message); }
+    }
+    match (err) {
+        Result.Ok(code) => { print("err: %d\n", code); }
+        Result.Err(message) => { print("err: %s\n", message); }
+    }
+
+    // 两种写法可以混用，生成的类型完全相同。
+    let mixed: Option<i32> = Option.Some(7);
+    print("mixed: %d\n", unwrap_or(mixed, -1));
+    return 0;
+}
+
+/** -- test
+- .stdout
+option: 42 -1
+ok: 200
+err: boom
+mixed: 7
+- .exit
+0
+-- */

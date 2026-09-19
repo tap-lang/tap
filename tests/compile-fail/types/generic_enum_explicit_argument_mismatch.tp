@@ -1,0 +1,17 @@
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+fn main(): i32 {
+    // 显式写的实参和目标类型推断出的不一致。
+    let bad: Option<i32> = Option<string>.Some("x");
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: type argument 1 of enum 'Option' does not match the target type
+- .exit
+1
+-- */

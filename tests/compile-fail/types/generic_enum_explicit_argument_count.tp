@@ -1,0 +1,17 @@
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+fn main(): i32 {
+    // 枚举只声明了一个类型参数。
+    let bad: Option<i32> = Option<i32, string>.Some(1);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: enum 'Option' takes 1 type argument(s), but 2 were given
+- .exit
+1
+-- */
