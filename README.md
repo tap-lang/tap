@@ -2,6 +2,8 @@
 
 一个后端使用LLVM的编程语言 `tap`。
 
+[![CI](https://github.com/tap-lang/tap/actions/workflows/ci.yml/badge.svg)](https://github.com/tap-lang/tap/actions/workflows/ci.yml)   [![Cygwin](https://github.com/tap-lang/tap/actions/workflows/cygwin.yml/badge.svg)](https://github.com/tap-lang/tap/actions/workflows/cygwin.yml)   [![MSVC](https://github.com/tap-lang/tap/actions/workflows/msvc.yml/badge.svg)](https://github.com/tap-lang/tap/actions/workflows/msvc.yml)
+
 ## 代码示例
 ```tap
 fn main(){
