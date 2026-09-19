@@ -1,6 +1,13 @@
 # tap lang
 
-一个后端使用LLVM的编程语言 `tap` ：自研词法 / 语法分析，生成 **LLVM IR**，默认链接为可执行文件（依赖本机 LLVM 工具链）。
+一个后端使用LLVM的编程语言 `tap`。
+
+## 代码示例
+```tap
+fn main(){
+    print("Hello tap! 你好，世界！😀\n");
+}
+```
 
 ## 依赖
 
