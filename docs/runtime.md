@@ -69,6 +69,25 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 这是 `std.parse` 里唯一不纯 tap 的函数；其余解析和整数格式化都由 tap 自己实现。
 返回值与其他 Runtime 字符串一样在进程退出时统一释放。
 
+## 文件 ABI
+
+`std.file` 的流式读写底层是以下 Runtime ABI：
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_file_open(path, mode): *i8` | 打开文件；失败返回 `NULL`。`mode` 与 `fopen` 一致 |
+| `__tap_file_is_open(handle): i32` | 句柄是否在打开登记表里；`NULL` 或已关闭返回 `0` |
+| `__tap_file_read(handle, count): string` | 读取最多 `count` 字节；末尾或失败返回空串 |
+| `__tap_file_write(handle, data): i64` | 写入全部字节并返回写入数；失败返回 `-1` |
+| `__tap_file_close(handle): i32` | 关闭并从登记表移除；成功返回 `0` |
+| `__tap_file_eof(handle): i32` | 是否已到末尾；句柄无效返回 `0` |
+| `__tap_file_remove(path): i32` | 删除文件；成功返回 `0` |
+
+**登记表是必需的，不是可选的优化**：tap 的 struct 是值类型，`close()` 拿到的是副本，无法把
+调用方手里的句柄置空；而 `fclose` 之后指针值不变，再读写就是 use-after-close。Runtime 记录
+当前打开的句柄（上限 64，超出时 `open` 失败），把已关闭的句柄判定为无效，于是误用只会得到
+空结果或 `-1`，而不是崩溃。
+
 ## 底层内存 ABI
 
 Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或容器标准库使用：

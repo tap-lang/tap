@@ -353,3 +353,103 @@ int32_t __tap_random(int32_t maximum) {
     state ^= state << 5;
     return (int32_t)(state % (uint32_t)maximum);
 }
+
+// tap 的 struct 是值类型，close() 拿到的是副本，没法把调用方手里的句柄置空；
+// 而 fclose 之后指针值本身不变，再读写就是 use-after-close。
+// 这张登记表让已关闭（或从未打开）的句柄被判定为无效，把崩溃变成安全的空结果。
+#define TAP_OPEN_FILE_CAPACITY 64
+static FILE *open_files[TAP_OPEN_FILE_CAPACITY];
+
+static int file_slot_of(FILE *file) {
+    if (!file) return -1;
+    for (int index = 0; index < TAP_OPEN_FILE_CAPACITY; index++) {
+        if (open_files[index] == file) return index;
+    }
+    return -1;
+}
+
+static int file_register(FILE *file) {
+    if (!file) return -1;
+    for (int index = 0; index < TAP_OPEN_FILE_CAPACITY; index++) {
+        if (open_files[index] == NULL) {
+            open_files[index] = file;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static void file_unregister(FILE *file) {
+    int slot = file_slot_of(file);
+    if (slot >= 0) open_files[slot] = NULL;
+}
+
+// 打开文件；失败返回 NULL。mode 与 C 的 fopen 一致，调用方应带 b
+//（"rb" 读 / "wb" 写 / "ab" 追加），否则 Windows 会把 \n 翻译成 \r\n。
+void *__tap_file_open(const char *path, const char *mode) {
+    if (!path || !mode) return NULL;
+    FILE *file = fopen(path, mode);
+    if (!file) return NULL;
+    if (file_register(file) != 0) {
+        fclose(file);
+        fprintf(stderr, "too many open files (limit %d)\n", TAP_OPEN_FILE_CAPACITY);
+        return NULL;
+    }
+    return file;
+}
+
+// 判断句柄是否有效；句柄为 NULL 或已关闭时返回 0。
+int32_t __tap_file_is_open(void *handle) {
+    return file_slot_of((FILE *)handle) >= 0;
+}
+
+// 读取最多 count 个字节，返回 Runtime 管理的字符串。
+// 已到末尾、句柄无效或读取失败时返回空字符串，用 __tap_file_eof 区分。
+const char *__tap_file_read(void *handle, uint64_t count) {
+    FILE *file = (FILE *)handle;
+    // 传空串而不是 NULL：长度为 0 时 bytes_to_string 仍会走一次 memcpy。
+    if (file_slot_of(file) < 0) return __tap_bytes_to_string((const uint8_t *)"", 0);
+
+    uint8_t *buffer = malloc((size_t)count + 1);
+    if (!buffer) {
+        fprintf(stderr, "failed to allocate read buffer\n");
+        exit(1);
+    }
+    size_t received = fread(buffer, 1, (size_t)count, file);
+    const char *result = __tap_bytes_to_string(buffer, received);
+    free(buffer);
+    return result;
+}
+
+// 写入字符串的全部字节，返回实际写入的字节数；句柄无效或失败返回 -1。
+int64_t __tap_file_write(void *handle, const char *data) {
+    FILE *file = (FILE *)handle;
+    if (file_slot_of(file) < 0 || !data) return -1;
+
+    size_t length = strlen(data);
+    if (length == 0) return 0;
+    size_t written = fwrite(data, 1, length, file);
+    if (written != length) return -1;
+    return (int64_t)written;
+}
+
+// 关闭文件；成功返回 0，句柄无效或关闭失败返回 -1。
+int32_t __tap_file_close(void *handle) {
+    FILE *file = (FILE *)handle;
+    if (file_slot_of(file) < 0) return -1;
+    file_unregister(file);
+    return fclose(file) == 0 ? 0 : -1;
+}
+
+// 是否已经读到文件末尾；句柄无效时返回 0。
+int32_t __tap_file_eof(void *handle) {
+    FILE *file = (FILE *)handle;
+    if (file_slot_of(file) < 0) return 0;
+    return feof(file) != 0;
+}
+
+// 删除文件；成功返回 0，失败返回 -1。
+int32_t __tap_file_remove(const char *path) {
+    if (!path) return -1;
+    return remove(path) == 0 ? 0 : -1;
+}

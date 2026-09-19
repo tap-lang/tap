@@ -17,3 +17,7 @@ src/version.h
 output
 a.out
 *.exe
+
+# std/file 的测试在仓库根目录（也就是测试的工作目录）建临时文件，正常会在结束时删掉；
+# 万一中断留下残余，也不该污染 git status。
+*.tmp

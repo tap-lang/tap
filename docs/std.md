@@ -87,6 +87,19 @@ fn main(): i32 {
 | `std.json` | `append_escaped(builder, text): StringBuilder` | 把转义结果追加进构建器，不含两侧引号 |
 | `std.json` | `append_quoted(builder, text): StringBuilder` | 追加转义结果并补上两侧引号 |
 | `std.json` | `unescape(text: string): Unescaped` | 反转义 JSON 字符串内容，返回 `{ text: string, ok: bool }` |
+| `std.file` | `File` | 已打开文件的句柄（`handle` 是不透明指针） |
+| `std.file` | `open(path, mode): File` | 打开文件；`mode` 与 C 的 `fopen` 一致，务必带 `b`（`rb` / `wb` / `ab`） |
+| `std.file` | `is_open(file): bool` | 句柄是否有效；已关闭或打开失败时返回 `false` |
+| `std.file` | `read(file, count): string` | 读取最多 `count` 个字节；到末尾或失败返回空字符串 |
+| `std.file` | `write(file, data): i64` | 写入 `data` 的全部字节，返回写入数；失败返回 `-1` |
+| `std.file` | `read_all(file): string` | 读到末尾，把剩余内容拼成一个字符串 |
+| `std.file` | `eof(file): bool` | 是否已经读到文件末尾 |
+| `std.file` | `close(file): i32` | 关闭文件，成功返回 `0` |
+| `std.file` | `remove(path): i32` | 删除文件，成功返回 `0` |
+| `std.file` | `read_text(path): FileText` | 整个文件读成字符串，返回 `{ text: string, ok: bool }` |
+| `std.file` | `write_text(path, data): i64` | 覆盖写入，返回写入字节数；打不开返回 `-1` |
+| `std.file` | `append_text(path, data): i64` | 追加到末尾，返回写入字节数；打不开返回 `-1` |
+| `std.file` | `exists(path): bool` | 能否以只读方式打开；不存在或无权限返回 `false` |
 
 `std.env` 示例：
 
@@ -296,6 +309,52 @@ fn main(): i32 {
 `false`，此时 `text` 是出错前已经解出的部分。
 
 `escape` 和 `unescape` 都不含两侧引号——引号由 `escape_quoted` / `append_quoted` 补上。
+
+`std.file` 示例：
+
+```text
+import std.file as file;
+
+fn main(): i32 {
+    let out: File = file.open("notes.txt", "wb");
+    if (!file.is_open(out)) {
+        print("cannot open\n");
+        return 1;
+    }
+    file.write(out, "hello tap\n");
+    file.close(out);
+
+    let input: File = file.open("notes.txt", "rb");
+    let first: string = file.read(input, 5);
+    let rest: string = file.read_all(input);
+    print("%s|%s eof=%d\n", first, rest, file.eof(input));
+    print("close=%d\n", file.close(input));
+    return file.remove("notes.txt");
+}
+```
+
+两件必须知道的事：
+
+- **`File` 是值类型**，`close()` 拿到的是副本，没法把调用方手里的句柄置空。所以 Runtime
+  维护了一张打开句柄的登记表（上限 64）：关闭之后 `is_open` 返回 `false`，继续读写也只会
+  安全地返回空结果或 `-1`，不会变成 use-after-close。
+- **`mode` 务必带 `b`**（`rb` / `wb` / `ab`）。少了 `b`，Windows 上会把 `\n` 翻译成 `\r\n`，
+  文本和二进制都会出错。
+
+`read` 到末尾和出错都返回空字符串，用 `eof` 区分。
+
+`read_text` / `write_text` / `append_text` / `exists` 是流式接口的组合，没有额外 Runtime ABI。
+`read_text` 返回带 `ok` 的结构体而不是空字符串——否则「文件打不开」和「文件是空的」就分不
+开了：
+
+```text
+let loaded: FileText = file.read_text("notes.txt");
+if (!loaded.ok) {
+    print("cannot read\n");
+    return 1;
+}
+let notes: string = loaded.text;
+```
 
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
 

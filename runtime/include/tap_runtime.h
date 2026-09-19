@@ -49,6 +49,22 @@ TAP_RUNTIME_API const char *__tap_bytes_to_string(
 // 非有限值输出 "inf" / "-inf" / "nan"。
 TAP_RUNTIME_API const char *__tap_format_f64(double value);
 
+// 打开文件；失败返回 NULL。mode 与 C 的 fopen 一致，调用方应带 b，
+// 否则 Windows 上会把 \n 翻译成 \r\n。
+TAP_RUNTIME_API void *__tap_file_open(const char *path, const char *mode);
+// 句柄是否有效；句柄为 NULL 时返回 0。
+TAP_RUNTIME_API int32_t __tap_file_is_open(void *handle);
+// 读取最多 count 个字节；返回 Runtime 管理的字符串，末尾或失败时为空串。
+TAP_RUNTIME_API const char *__tap_file_read(void *handle, uint64_t count);
+// 写入字符串的全部字节；返回实际写入的字节数，失败返回 -1。
+TAP_RUNTIME_API int64_t __tap_file_write(void *handle, const char *data);
+// 关闭文件；成功返回 0。
+TAP_RUNTIME_API int32_t __tap_file_close(void *handle);
+// 是否已读到文件末尾；句柄无效时返回 0。
+TAP_RUNTIME_API int32_t __tap_file_eof(void *handle);
+// 删除文件；成功返回 0。
+TAP_RUNTIME_API int32_t __tap_file_remove(const char *path);
+
 // 分配堆内存；size 为 0 时 Runtime 会按 1 字节处理。
 TAP_RUNTIME_API void *__tap_malloc(size_t size);
 // 调整堆内存大小；size 为 0 时 Runtime 会按 1 字节处理。
