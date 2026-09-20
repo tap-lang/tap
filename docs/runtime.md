@@ -69,6 +69,16 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 这是 `std.parse` 里唯一不纯 tap 的函数；其余解析和整数格式化都由 tap 自己实现。
 返回值与其他 Runtime 字符串一样在进程退出时统一释放。
 
+## 终止 ABI
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_panic(message): i32` | 打印 `panic: <message>` 到标准错误并 `exit(1)`；不会返回 |
+
+Prelude 的 `panic()` 就是它的一层包装，`std.result` 的 `unwrap` / `expect` 也建在它之上。
+前缀用 `panic: ` 和编译期诊断的 `error: ` 区分开；输出到标准错误，和标准库的
+越界诊断（走标准输出）不同。
+
 ## 文件 ABI
 
 `std.fs` 的流式读写底层是以下 Runtime ABI：

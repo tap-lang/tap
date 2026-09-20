@@ -1,0 +1,98 @@
+// match 的表达式形式：分支写成 `模式 => 值`，整个 match 求出一个值。
+// 和结构体字面量一样需要目标类型，所以变量声明必须写类型标注。
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+enum Shape {
+    Dot(Point),
+    Empty,
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn divide(a: i32, b: i32): Result<i32, string> {
+    if (b == 0) {
+        return Result<i32, string>.Err("divide by zero");
+    }
+    return Result<i32, string>.Ok(a / b);
+}
+
+// 分支值可以是结构体，也可以直接用在 return 上。
+fn origin(shape: Shape): Point {
+    return match (shape) {
+        Shape.Dot(point) => point,
+        Shape.Empty => Point { x: 0, y: 0 },
+    };
+}
+
+// 通配分支同样能给出值。
+fn sum_or_zero(shape: Shape): i32 {
+    return match (shape) {
+        Shape.Dot(point) => point.x + point.y,
+        _ => 0,
+    };
+}
+
+fn main(): i32 {
+    let good: Result<i32, string> = divide(10, 2);
+    let bad: Result<i32, string> = divide(10, 0);
+
+    let value: i32 = match (good) {
+        Result.Ok(number) => number,
+        Result.Err(message) => 0,
+    };
+    let fallback: i32 = match (bad) {
+        Result.Ok(number) => number,
+        Result.Err(message) => -1,
+    };
+    print("value=%d fallback=%d\n", value, fallback);
+
+    // 分支值也能是 string。
+    let message: string = match (bad) {
+        Result.Ok(number) => "fine",
+        Result.Err(reason) => reason,
+    };
+    print("message=%s\n", message);
+
+    let dot: Shape = Shape.Dot(Point { x: 3, y: 4 });
+    let copy: Point = match (dot) {
+        Shape.Dot(point) => point,
+        Shape.Empty => Point { x: -1, y: -1 },
+    };
+    print("copy=%d,%d\n", copy.x, copy.y);
+
+    // 字段链上不能直接调方法，先绑定变量。
+    let from_empty: Point = origin(Shape.Empty);
+    print("origin=%d,%d\n", from_empty.x, from_empty.y);
+    print("sum=%d\n", sum_or_zero(dot));
+    print("sum_empty=%d\n", sum_or_zero(Shape.Empty));
+
+    // 嵌套：外层分支的值又是一个 match。
+    let nested: i32 = match (dot) {
+        Shape.Dot(point) => match (good) {
+            Result.Ok(number) => number + point.x,
+            Result.Err(message) => 0,
+        },
+        _ => -1,
+    };
+    print("nested=%d\n", nested);
+    return 0;
+}
+
+/** -- test
+- .stdout
+value=5 fallback=-1
+message=divide by zero
+copy=3,4
+origin=0,0
+sum=7
+sum_empty=0
+nested=8
+- .exit
+0
+-- */

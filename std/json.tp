@@ -8,14 +8,8 @@
 //
 // 本模块只处理字符串内容，不含两侧引号——引号由 append_quoted / escape_quoted 补上。
 // 非 ASCII 字节原样透传（JSON 允许直接出现 UTF-8 字节）。
+import std.result;
 import std.string_builder as sb;
-
-// unescape 的结果。ok 为 false 时表示输入含非法转义序列，
-// text 是出错前已经解出的部分。
-struct Unescaped {
-    text: string,
-    ok: bool,
-}
 
 // 读取 4 位十六进制的结果。
 struct Hex4 {
@@ -163,7 +157,7 @@ fn append_code_point(builder: StringBuilder, code_point: i32): StringBuilder {
 
 // 反转义 JSON 字符串内容（不含两侧引号）。
 // 遇到非法转义、被截断的 \uXXXX、或孤立的代理时返回 ok = false。
-fn unescape(text: string): Unescaped {
+fn unescape(text: string): Result<string, string> {
     let builder: StringBuilder = sb.new();
     let length: uint = text.len();
     let index: uint = 0;
@@ -178,7 +172,7 @@ fn unescape(text: string): Unescaped {
 
         // 反斜杠后面必须有字符。
         if (index + 1 >= length) {
-            return Unescaped { text: finish(builder), ok: false };
+            return Result<string, string>.Err("trailing backslash");
         }
         let marker: u8 = text.byte_at(index + 1);
         if (marker == 34) {
@@ -208,7 +202,7 @@ fn unescape(text: string): Unescaped {
         } elseif (marker == 117) {
             let first: Hex4 = read_hex4(text, index + 2, length);
             if (!first.ok) {
-                return Unescaped { text: finish(builder), ok: false };
+                return Result<string, string>.Err("invalid unicode escape");
             }
             let code_point: i32 = first.value;
             let consumed: uint = 6;
@@ -217,25 +211,25 @@ fn unescape(text: string): Unescaped {
                 // 高代理后面必须紧跟 \uDC00-\uDFFF 形式的低代理，两者合成一个码点。
                 if (index + 12 > length || text.byte_at(index + 6) != 92 ||
                     text.byte_at(index + 7) != 117) {
-                    return Unescaped { text: finish(builder), ok: false };
+                    return Result<string, string>.Err("expected low surrogate");
                 }
                 let second: Hex4 = read_hex4(text, index + 8, length);
                 if (!second.ok || second.value < 56320 || second.value > 57343) {
-                    return Unescaped { text: finish(builder), ok: false };
+                    return Result<string, string>.Err("invalid low surrogate");
                 }
                 code_point = 65536 + (code_point - 55296) * 1024 + (second.value - 56320);
                 consumed = 12;
             } elseif (code_point >= 56320 && code_point <= 57343) {
                 // 孤立的低代理无法编码成 UTF-8。
-                return Unescaped { text: finish(builder), ok: false };
+                return Result<string, string>.Err("lone low surrogate");
             }
 
             builder = append_code_point(builder, code_point);
             index = index + consumed;
         } else {
-            return Unescaped { text: finish(builder), ok: false };
+            return Result<string, string>.Err("unknown escape sequence");
         }
     }
 
-    return Unescaped { text: finish(builder), ok: true };
+    return Result<string, string>.Ok(finish(builder));
 }

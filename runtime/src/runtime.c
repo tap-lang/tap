@@ -453,3 +453,12 @@ int32_t __tap_file_remove(const char *path) {
     if (!path) return -1;
     return remove(path) == 0 ? 0 : -1;
 }
+
+// 打印错误信息并以状态 1 终止程序，用于调用方无法合理恢复的情况。
+// 前缀用 `panic: ` 和编译期诊断的 `error: ` 区分开。
+// 函数不会返回；返回值只是为了让 tap 侧能把它当普通调用使用。
+int32_t __tap_panic(const char *message) {
+    fprintf(stderr, "panic: %s\n", message ? message : "(no message)");
+    exit(1);
+    return 0;
+}

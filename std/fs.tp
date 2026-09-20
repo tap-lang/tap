@@ -5,6 +5,7 @@
 //     仍然持有旧句柄。关掉就不要再用了，目前没有析构也没有 defer。
 //   - mode 与 C 的 `fopen` 一致，**务必带 b**（`"rb"` / `"wb"` / `"ab"`）。
 //     少了 b，Windows 上会把 `\n` 翻译成 `\r\n`。
+import std.result;
 import std.string_builder as sb;
 
 // 文件读写所需的内部 Runtime ABI。
@@ -57,23 +58,16 @@ fn remove(path: string): i32 {
     return __tap_file_remove(path);
 }
 
-// read_text 的结果。ok 为 false 时 text 没有意义——文件打不开。
-// 用结构体而不是空字符串表示失败，是为了区分「文件不存在」和「文件是空的」。
-struct FileText {
-    text: string,
-    ok: bool,
-}
-
-// 把整个文件读成字符串；打不开时 ok 为 false。
+// 把整个文件读成字符串；打不开时返回 Err。
 // 适合已知不会太大的文件；大文件请用 open + 分次 read。
-fn read_text(path: string): FileText {
+fn read_text(path: string): Result<string, string> {
     let file: File = open(path, "rb");
     if (!is_open(file)) {
-        return FileText { text: "", ok: false };
+        return Result<string, string>.Err("cannot open file");
     }
     let text: string = read_all(file);
     close(file);
-    return FileText { text: text, ok: true };
+    return Result<string, string>.Ok(text);
 }
 
 // 把字符串写入文件（覆盖已有内容），返回写入的字节数；打不开时返回 -1。

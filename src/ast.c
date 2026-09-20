@@ -1146,6 +1146,7 @@ MatchArmNode *create_match_arm(char *enum_name, char *variant_name) {
     }
     arm->bindings = NULL;
     arm->body = NULL;
+    arm->value = NULL;
     arm->filename = NULL;
     arm->line = 0;
     arm->column = 0;
@@ -1376,6 +1377,7 @@ void free_ast(ASTNode *node) {
             free(arm->filename);
             free_ast(arm->bindings);
             free_ast(arm->body);
+            free_ast(arm->value);
             break;
         }
         case NODE_STRUCT: {

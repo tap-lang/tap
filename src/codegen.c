@@ -477,6 +477,10 @@ static const char *llvm_call_name(const char *name) {
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression);
 static LLVMValueRef generate_expression_for_type(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type);
+static LLVMValueRef generate_match_expression(
+    CodeGenContext *context, MatchStatementNode *match_node,
+    const VarTypeNode *target_type);
+static int match_is_expression(MatchStatementNode *match_node);
 static const VarTypeNode *indexed_value_type(
     CodeGenContext *context, ASTNode *expression);
 static const char *index_base_name(ASTNode *expression);
@@ -722,6 +726,12 @@ static int reference_assignable_to(
 static int expression_assignable_to(CodeGenContext *context, ASTNode *expression,
                                     const VarTypeNode *target_type) {
     if (!target_type || target_type->is_array) return 0;
+    // match 表达式在这里不做分支值的校验：分支的载荷绑定要到生成阶段才写进符号表，
+    // 提前查会查不到。类型检查交给 generate_match_expression，那时绑定已经可见。
+    if (expression && expression->type == NODE_MATCH_STATEMENT &&
+        match_is_expression((MatchStatementNode *)expression)) {
+        return 1;
+    }
     if (target_type->is_pointer) {
         if (expression && expression->type == NODE_FUNCTION_CALL &&
             is_runtime_memory_pointer_result((FunctionCallNode *)expression)) {
@@ -1191,6 +1201,15 @@ static LLVMValueRef generate_struct_literal_value(
 // 按目标标量类型生成表达式，并在必要时执行类型转换。
 static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *expression,
                                            enum LiteralType target) {
+    // 标量目标也要拦一下：变量声明的标量分支走的是这里，不是 generate_expression_for_type。
+    if (expression && expression->type == NODE_MATCH_STATEMENT &&
+        match_is_expression((MatchStatementNode *)expression)) {
+        VarTypeNode *target_type = create_var_type(target);
+        LLVMValueRef value = generate_match_expression(
+            context, (MatchStatementNode *)expression, target_type);
+        free_ast((ASTNode *)target_type);
+        return value;
+    }
     if (expression && expression->type == NODE_LITERAL && is_integer_type(target)) {
         LiteralNode *literal = (LiteralNode *)expression;
         if (is_integer_type(literal->literal_type)) {
@@ -1255,9 +1274,29 @@ static void validate_variant_type_arguments(
     }
 }
 
+// 判断 match 是否为表达式形式：只要有一个分支带值就算。
+static int match_is_expression(MatchStatementNode *match_node) {
+    for (ASTNode *node = match_node->arms; node; node = node->next) {
+        if (((MatchArmNode *)node)->value) return 1;
+    }
+    return 0;
+}
+
 // 根据完整目标类型生成表达式，结构体和数组保留高层类型信息。
 static LLVMValueRef generate_expression_for_type(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type) {
+    // match 的表达式形式要在这里处理：它必须拿到目标类型才知道每个分支按什么类型求值。
+    if (expression && expression->type == NODE_MATCH_STATEMENT &&
+        match_is_expression((MatchStatementNode *)expression)) {
+        if (!target_type) {
+            fprintf(stderr,
+                "error: match expression needs a target type"
+                " (add a type annotation)\n");
+            exit(1); // 中文：match 表达式需要目标类型（补上类型标注）
+        }
+        return generate_match_expression(
+            context, (MatchStatementNode *)expression, target_type);
+    }
     if (!target_type) return generate_expression(context, expression);
     if (target_type->is_array) {
         return generate_array_value(context, expression, target_type);
@@ -2833,6 +2872,124 @@ static void generate_match_statement(
     LLVMPositionBuilderAtEnd(context->builder, end_block);
 }
 
+// match 的表达式形式：每个分支产出一个值，全部写进同一个结果槽，末尾统一读出来。
+// 结果类型由调用处提供（和结构体字面量一样需要目标类型），所以不需要推导分支类型。
+static LLVMValueRef generate_match_expression(
+    CodeGenContext *context, MatchStatementNode *match_node,
+    const VarTypeNode *target_type) {
+    validate_match_statement(context, match_node);
+
+    // 每个分支都必须有值，否则这个 match 没有结果。
+    for (ASTNode *node = match_node->arms; node; node = node->next) {
+        if (!((MatchArmNode *)node)->value) {
+            fprintf(stderr,
+                "error: every arm of a match expression must produce a value\n");
+            exit(1); // 中文：match 表达式的每个分支都必须有值
+        }
+    }
+
+    const VarTypeNode *matched = NULL;
+    EnumNode *enum_node = matched_payload_enum(context, match_node, &matched);
+    StructNode *struct_node = find_struct(context, matched->struct_name);
+    LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, matched->struct_name);
+    LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
+    LLVMTypeRef result_type = get_llvm_var_type(context, target_type);
+
+    LLVMValueRef storage = NULL;
+    if (match_node->expression->type == NODE_IDENTIFIER) {
+        Symbol *symbol = find_symbol(
+            context, ((IdentifierNode *)match_node->expression)->name);
+        if (symbol && symbol->declared_type && symbol->declared_type->struct_name &&
+            strcmp(symbol->declared_type->struct_name, matched->struct_name) == 0) {
+            storage = symbol->value;
+        }
+    }
+    if (!storage) {
+        LLVMValueRef value =
+            generate_expression_for_type(context, match_node->expression, matched);
+        storage = create_entry_alloca(context, struct_type, "match_value");
+        LLVMBuildStore(context->builder, value, storage);
+    }
+
+    LLVMValueRef tag_pointer = LLVMBuildStructGEP2(
+        context->builder, struct_type, storage, 0, "match_tag_pointer");
+    LLVMValueRef tag =
+        LLVMBuildLoad2(context->builder, int32_type, tag_pointer, "match_tag");
+
+    // 结果槽放在入口块，保证每个分支都能写进去。
+    LLVMValueRef result_slot = create_entry_alloca(context, result_type, "match_result");
+
+    LLVMValueRef function =
+        LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    LLVMBasicBlockRef end_block =
+        LLVMAppendBasicBlockInContext(context->context, function, "match_end");
+
+    unsigned arm_count = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next) arm_count++;
+    LLVMBasicBlockRef *arm_blocks = arm_count
+        ? malloc(sizeof(LLVMBasicBlockRef) * arm_count) : NULL;
+    if (arm_count && !arm_blocks) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    unsigned index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        arm_blocks[index] =
+            LLVMAppendBasicBlockInContext(context->context, function, "match_arm");
+    }
+
+    LLVMBasicBlockRef default_block = end_block;
+    index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        if (!((MatchArmNode *)node)->variant_name) default_block = arm_blocks[index];
+    }
+
+    LLVMValueRef dispatch =
+        LLVMBuildSwitch(context->builder, tag, default_block, arm_count);
+    index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        MatchArmNode *arm = (MatchArmNode *)node;
+        if (!arm->variant_name) continue;
+        EnumVariantNode *variant = find_enum_variant(enum_node, arm->variant_name);
+        LLVMAddCase(dispatch, LLVMConstInt(int32_type, variant->tag, 0),
+                    arm_blocks[index]);
+    }
+
+    index = 0;
+    for (ASTNode *node = match_node->arms; node; node = node->next, index++) {
+        MatchArmNode *arm = (MatchArmNode *)node;
+        LLVMPositionBuilderAtEnd(context->builder, arm_blocks[index]);
+
+        if (arm->variant_name) {
+            EnumVariantNode *variant = find_enum_variant(enum_node, arm->variant_name);
+            unsigned offset = 0;
+            for (ASTNode *binding = arm->bindings;
+                 binding; binding = binding->next, offset++) {
+                unsigned field_index = variant->field_index + offset;
+                StructFieldNode *field = struct_field_at(struct_node, field_index);
+                LLVMTypeRef field_type = get_llvm_var_type(context, field->field_type);
+                LLVMValueRef pointer = LLVMBuildStructGEP2(context->builder,
+                    struct_type, storage, field_index, "payload_pointer");
+                const char *name = ((IdentifierNode *)binding)->name;
+                LLVMValueRef slot = create_entry_alloca(context, field_type, name);
+                LLVMBuildStore(context->builder,
+                    LLVMBuildLoad2(context->builder, field_type, pointer, "payload"),
+                    slot);
+                insert_typed_symbol(context, name, slot, field->field_type, 0);
+            }
+        }
+
+        LLVMValueRef arm_value =
+            generate_expression_for_type(context, arm->value, target_type);
+        LLVMBuildStore(context->builder, arm_value, result_slot);
+        LLVMBuildBr(context->builder, end_block);
+    }
+
+    free(arm_blocks);
+    LLVMPositionBuilderAtEnd(context->builder, end_block);
+    return LLVMBuildLoad2(context->builder, result_type, result_slot, "match_result_value");
+}
+
 // 逐条生成语句列表，遇到已终结的基本块时停止。
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement) {
     for (; statement; statement = statement->next) {
@@ -2849,6 +3006,15 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     declaration->expression->type == NODE_REFERENCE) {
                     declaration->type = infer_reference_type(
                         context, (ReferenceNode *)declaration->expression);
+                }
+                // 没有标注时目标类型是猜的，分支值会被静默截断，所以直接要求写类型。
+                if (!declaration->type && declaration->expression &&
+                    declaration->expression->type == NODE_MATCH_STATEMENT &&
+                    match_is_expression(
+                        (MatchStatementNode *)declaration->expression)) {
+                    fprintf(stderr,
+                        "error: match expression needs an explicit type annotation\n");
+                    exit(1); // 中文：match 表达式需要显式的类型标注
                 }
                 validate_var_type(context, declaration->type);
                 if (declaration->type && declaration->type->is_array) {

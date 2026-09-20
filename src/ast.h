@@ -291,7 +291,8 @@ typedef struct {
     char *enum_name;       // 模式中的枚举名；通配分支为 NULL
     char *variant_name;    // 模式中的成员名；通配分支为 NULL
     ASTNode *bindings;     // 载荷绑定变量列表（IdentifierNode），可空
-    ASTNode *body;         // 分支语句链表
+    ASTNode *body;         // 分支语句链表（语句形式）
+    ASTNode *value;        // 分支值表达式（表达式形式），二选一
     char *filename;        // 分支所在文件，用于诊断
     int line;
     int column;

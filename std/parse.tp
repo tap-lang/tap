@@ -1,26 +1,15 @@
 // 字符串与数值之间的转换。解析和整数格式化全部用 tap 实现。
 //
-// 解析结果用结构体返回：`ok` 为 false 时 `value` 没有意义。这样调用方可以自行决定
-// 是报错、跳过还是用默认值，不会像 assert 那样直接终止程序。
+// 解析失败返回 `Result.Err`，错误信息是 `string`。这样调用方必须明确处理，或者用
+// `result.unwrap_or` 显式给出兜底值，不会像 assert 那样直接终止程序。
 //
 // format_f64 是唯一的例外：精确的十进制展开需要大整数算法，这里下沉到 Runtime 的
 // C 库转换，换取正确且可往返的输出。
+import std.result;
 import std.string_builder as sb;
 
 // 浮点到字符串的内部 Runtime ABI。
 extern fn __tap_format_f64(value: f64): string;
-
-// parse_i64 的结果。
-struct ParsedInt {
-    value: i64,
-    ok: bool,
-}
-
-// parse_f64 的结果。
-struct ParsedFloat {
-    value: f64,
-    ok: bool,
-}
 
 // 判断字节是否为 ASCII 十进制数字。
 fn is_digit_byte(value: u8): bool {
@@ -34,7 +23,7 @@ fn digit_of(value: u8): i64 {
 
 // 解析十进制整数，接受可选的正负号。
 // 空串、只有符号、含非数字字符或末尾有多余字符时返回 ok = false。
-fn parse_i64(text: string): ParsedInt {
+fn parse_i64(text: string): Result<i64, string> {
     let length: uint = text.len();
     let index: uint = 0;
     let negative: bool = false;
@@ -54,7 +43,7 @@ fn parse_i64(text: string): ParsedInt {
     while (index < length) {
         let byte: u8 = text.byte_at(index);
         if (!is_digit_byte(byte)) {
-            return ParsedInt { value: 0, ok: false };
+            return Result<i64, string>.Err("invalid character in integer");
         }
         value = value * 10 + digit_of(byte);
         digits++;
@@ -63,18 +52,18 @@ fn parse_i64(text: string): ParsedInt {
 
     // 空串或只有正负号时没有任何数字被消费。
     if (digits == 0) {
-        return ParsedInt { value: 0, ok: false };
+        return Result<i64, string>.Err("no digits in integer");
     }
     if (negative) {
         value = -value;
     }
-    return ParsedInt { value: value, ok: true };
+    return Result<i64, string>.Ok(value);
 }
 
 // 解析十进制浮点，接受可选正负号、小数部分和 e/E 指数。
 // 空串、只有符号、没有任何数字、指数缺少数字或末尾有多余字符时返回 ok = false。
 // 数字要求与 C 的 strtod 一致：整数部分和小数部分至少一侧有数字，".5" 和 "1." 都合法。
-fn parse_f64(text: string): ParsedFloat {
+fn parse_f64(text: string): Result<f64, string> {
     let length: uint = text.len();
     let index: uint = 0;
     let negative: bool = false;
@@ -122,7 +111,7 @@ fn parse_f64(text: string): ParsedFloat {
     // 至少要有一位数字，整数部分或小数部分任意一侧即可。因此 ".5" 和 "1." 都能解析，
     // 与 C 的 strtod 一致；"." 或只有符号则失败。
     if (digits == 0) {
-        return ParsedFloat { value: 0.0, ok: false };
+        return Result<f64, string>.Err("no digits in float");
     }
 
     if (index < length) {
@@ -150,7 +139,7 @@ fn parse_f64(text: string): ParsedFloat {
                 index++;
             }
             if (exponent_digits == 0) {
-                return ParsedFloat { value: 0.0, ok: false };
+                return Result<f64, string>.Err("missing exponent digits");
             }
 
             // 用循环累乘 10 构造缩放因子，避免依赖 libm 的 pow。
@@ -170,12 +159,12 @@ fn parse_f64(text: string): ParsedFloat {
 
     // 到这里还有剩余字符说明输入不是合法的完整数值。
     if (index != length) {
-        return ParsedFloat { value: 0.0, ok: false };
+        return Result<f64, string>.Err("trailing characters in float");
     }
     if (negative) {
         value = -value;
     }
-    return ParsedFloat { value: value, ok: true };
+    return Result<f64, string>.Ok(value);
 }
 
 // 把整数格式化为十进制字符串。

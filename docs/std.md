@@ -23,6 +23,7 @@ tap 标准库由两部分组成：
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，失败返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | 当 `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
+| `panic(message: string): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
 
 说明：`read_key()` 返回 Runtime 读到的真实键值，不会把方向键映射为 WASD。POSIX 方向键会在一次调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 方向键通常返回 `72/80/77/75`。
 
@@ -78,15 +79,20 @@ fn main(): i32 {
 | `std.vec_string` | `get(vec: StringVec, index: i32): string` | 读取指定元素；越界时输出错误并返回空字符串 |
 | `std.vec_string` | `set(vec: StringVec, index: i32, value: string): StringVec` | 替换指定元素；越界时输出错误并保持原值 |
 | `std.vec_string` | `free(vec: StringVec): i32` | 释放动态数组内部缓冲区，成功返回 `0` |
-| `std.parse` | `parse_i64(text: string): ParsedInt` | 解析十进制整数，返回 `{ value: i64, ok: bool }` |
-| `std.parse` | `parse_f64(text: string): ParsedFloat` | 解析十进制浮点，返回 `{ value: f64, ok: bool }` |
+| `std.result` | `Result<T, E>` | 可恢复错误：`Ok(T)` 携带成功值，`Err(E)` 携带错误信息 |
+| `std.result` | `is_ok(value): bool` / `is_err(value): bool` | 判断成功或失败 |
+| `std.result` | `unwrap_or(value, fallback): T` | 取成功值；失败时用 `fallback` |
+| `std.result` | `unwrap(value): T` | 取成功值；失败时 `panic`（错误信息用 `Err` 的） |
+| `std.result` | `expect(value, message): T` | 取成功值；失败时用 `message` `panic` |
+| `std.parse` | `parse_i64(text: string): Result<i64, string>` | 解析十进制整数，失败返回 `Err` |
+| `std.parse` | `parse_f64(text: string): Result<f64, string>` | 解析十进制浮点，失败返回 `Err` |
 | `std.parse` | `format_i64(value: i64): string` | 把整数格式化为十进制字符串 |
 | `std.parse` | `format_f64(value: f64): string` | 把浮点数格式化为最短可往返的十进制字符串 |
 | `std.json` | `escape(text: string): string` | 转义为 JSON 字符串内容，不含两侧引号 |
 | `std.json` | `escape_quoted(text: string): string` | 转义并补上两侧引号，结果可直接放进 JSON |
 | `std.json` | `append_escaped(builder, text): StringBuilder` | 把转义结果追加进构建器，不含两侧引号 |
 | `std.json` | `append_quoted(builder, text): StringBuilder` | 追加转义结果并补上两侧引号 |
-| `std.json` | `unescape(text: string): Unescaped` | 反转义 JSON 字符串内容，返回 `{ text: string, ok: bool }` |
+| `std.json` | `unescape(text: string): Result<string, string>` | 反转义 JSON 字符串内容，非法转义返回 `Err` |
 | `std.fs` | `File` | 已打开文件的句柄（`handle` 是不透明指针） |
 | `std.fs` | `open(path, mode): File` | 打开文件；`mode` 与 C 的 `fopen` 一致，务必带 `b`（`rb` / `wb` / `ab`） |
 | `std.fs` | `is_open(file): bool` | 句柄是否有效；已关闭或打开失败时返回 `false` |
@@ -96,7 +102,7 @@ fn main(): i32 {
 | `std.fs` | `eof(file): bool` | 是否已经读到文件末尾 |
 | `std.fs` | `close(file): i32` | 关闭文件，成功返回 `0` |
 | `std.fs` | `remove(path): i32` | 删除文件，成功返回 `0` |
-| `std.fs` | `read_text(path): FileText` | 整个文件读成字符串，返回 `{ text: string, ok: bool }` |
+| `std.fs` | `read_text(path): Result<string, string>` | 整个文件读成字符串，打不开返回 `Err` |
 | `std.fs` | `write_text(path, data): i64` | 覆盖写入，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `append_text(path, data): i64` | 追加到末尾，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `exists(path): bool` | 能否以只读方式打开；不存在或无权限返回 `false` |
@@ -230,37 +236,33 @@ fn main(): i32 {
 
 ```text
 import std.parse;
+import std.result;
 
 fn main(): i32 {
-    let parsed: ParsedInt = parse.parse_i64("-456");
-    if (parsed.ok) {
-        print("value=%lld text=%s\n", parsed.value, parse.format_i64(parsed.value));
-    } else {
-        print("not a number\n");
-    }
+    let parsed: Result<i64, string> = parse.parse_i64("-456");
+    print("value=%lld text=%s\n",
+        result.unwrap_or(parsed, 0), parse.format_i64(result.unwrap_or(parsed, 0)));
 
-    let ratio: ParsedFloat = parse.parse_f64("1.5e-3");
-    print("ratio=%f\n", ratio.value);
+    let ratio: Result<f64, string> = parse.parse_f64("1.5e-3");
+    print("ratio=%f\n", result.unwrap_or(ratio, 0.0));
 
     // format_f64 取最短的、能往返的表示，不补齐到固定小数位。
-    let tenth: ParsedFloat = parse.parse_f64("0.1");
-    print("text=%s\n", parse.format_f64(tenth.value));
+    let tenth: Result<f64, string> = parse.parse_f64("0.1");
+    print("text=%s\n", parse.format_f64(result.unwrap_or(tenth, 0.0)));
     return 0;
 }
 ```
 
 `parse_i64` 接受可选正负号，`parse_f64` 额外接受小数部分和 `e` / `E` 指数。两者都要求整个
-输入被完整消费：空串、只有符号、含有非数字字符或末尾有多余字符时 `ok` 为 `false`，此时
-`value` 没有意义。浮点的数字要求与 C 的 `strtod` 一致，整数部分和小数部分至少一侧要有数字，
-因此 `.5` 和 `1.` 都合法。
+输入被完整消费：空串、只有符号、含有非数字字符或末尾有多余字符时返回 `Err`，错误信息说明
+原因。浮点的数字要求与 C 的 `strtod` 一致，整数部分和小数部分至少一侧要有数字，因此 `.5` 和
+`1.` 都合法。
 
-结果结构体是值类型，字段访问需要先绑定到变量：
+不想处理分支时用 `result.unwrap_or` 给个兜底值：
 
 ```text
-let result: ParsedInt = parse.parse_i64(text);
-if (result.ok) {
-    print("%lld\n", result.value);
-}
+let parsed: Result<i64, string> = parse.parse_i64(text);
+print("%lld\n", result.unwrap_or(parsed, 0));
 ```
 
 `format_f64` 取最短的、能往返的表示：`0.1` 输出 `0.1`，圆周率输出 `3.141592653589793`，
@@ -277,6 +279,7 @@ if (result.ok) {
 
 ```text
 import std.json;
+import std.result;
 import std.string_builder as sb;
 
 fn main(): i32 {
@@ -291,12 +294,10 @@ fn main(): i32 {
     print("%s\n", sb.to_string(out));
 
     // 输入：反转义，非法转义序列通过 ok 报告
-    let decoded: Unescaped = json.unescape("a\\u0041\\uD83D\\uDE00b");
-    if (decoded.ok) {
-        // 字段访问要先绑定到变量，不能在字段链上直接调方法。
-        let text: string = decoded.text;
-        print("len=%llu\n", text.len());
-    }
+    let decoded: Result<string, string> = json.unescape("a\\u0041\\uD83D\\uDE00b");
+    // 字段访问要先绑定到变量，不能在字段链上直接调方法。
+    let text: string = result.unwrap_or(decoded, "");
+    print("len=%llu\n", text.len());
     return 0;
 }
 ```
@@ -314,6 +315,7 @@ fn main(): i32 {
 
 ```text
 import std.fs as fs;
+import std.result;
 
 fn main(): i32 {
     let out: File = fs.open("notes.txt", "wb");
@@ -348,15 +350,50 @@ fn main(): i32 {
 开了：
 
 ```text
-let loaded: FileText = fs.read_text("notes.txt");
-if (!loaded.ok) {
-    print("cannot read\n");
-    return 1;
-}
-let notes: string = loaded.text;
+let loaded: Result<string, string> = fs.read_text("notes.txt");
+let notes: string = result.unwrap_or(loaded, "");
 ```
 
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
+
+## 错误处理约定
+
+标准库统一用 `std.result` 的 `Result<T, E>` 表示**可恢复错误**。`E` 实践中多用 `string`，
+用来说明失败原因。
+
+| 场景 | 做法 |
+|---|---|
+| 可恢复错误（解析、文件打开、转义非法） | 返回 `Result<T, string>`，调用方自行处理或给兜底值 |
+| 程序员错误（索引越界、字符串越界） | 打印诊断并终止程序，不返回 `Result` |
+
+区分这类的标准是**能不能在调用处合理恢复**：文件不存在是运行环境的正常情况，调用方能换路径
+或用默认值；而 `get(i)` 越界几乎总是逻辑错误，返回 `Result` 只会让每次随机访问都变啰嗦。
+
+取值用 `match` 的表达式形式，或者用 `result.unwrap_or` 给兜底值：
+
+```text
+let parsed: Result<i64, string> = parse.parse_i64(text);
+let value: i64 = match (parsed) {
+    Result.Ok(number) => number,
+    Result.Err(message) => 0,
+};
+print("%lld\n", result.unwrap_or(parsed, 0));
+```
+
+**失败就终止**用 `panic`（Prelude 提供，无需导入）：打印 `panic: <message>` 到标准错误，
+并以状态 `1` 结束进程。它不会返回。
+
+`Result` 上有两个顺势 panic 的快捷方式，只在 `Result<T, string>` 上可用——tap 还没有
+「把任意类型转成字符串」的手段，所以错误类型必须是 `string` 才报得出有用的信息：
+
+```text
+let number: Result<i64, string> = parse.parse_i64(text);
+print("%lld\n", result.unwrap(number));                       // 失败时 panic，用 Err 的信息
+print("%lld\n", result.expect(number, "config must be int")); // 失败时 panic，用指定的信息
+```
+
+另外 `assert(condition, message)` 是**内建语句**（不是 Prelude 函数）：失败时打印
+`Assertion failed at 文件:行:列: message` 并终止，比 `panic` 多了位置信息。
 
 ## Runtime ABI
 

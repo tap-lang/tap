@@ -1,0 +1,51 @@
+// std.result：可恢复错误的统一表示。
+// Result 是泛型载荷枚举，取值靠 match 的表达式形式，或 unwrap_or 给兜底值。
+import std.result;
+
+fn main(): i32 {
+    let good: Result<i32, string> = Result<i32, string>.Ok(42);
+    let bad: Result<i32, string> = Result<i32, string>.Err("boom");
+
+    print("ok=%d err=%d\n", result.is_ok(good), result.is_err(bad));
+    print("is_err=%d\n", result.is_err(bad));
+
+    // 兜底值。
+    print("unwrap_or=%d\n", result.unwrap_or(good, 0));
+    print("unwrap_or_fallback=%d\n", result.unwrap_or(bad, -1));
+
+    // match 表达式直接取成功值。
+    let value: i32 = match (good) {
+        Result.Ok(number) => number,
+        Result.Err(message) => 0,
+    };
+    print("match=%d\n", value);
+
+    // match 表达式取错误信息。
+    let reason: string = match (bad) {
+        Result.Ok(number) => "ok",
+        Result.Err(message) => message,
+    };
+    print("reason=%s\n", reason);
+
+    // 错误类型不限于 string。
+    let code: Result<i32, i32> = Result<i32, i32>.Err(7);
+    let number: i32 = match (code) {
+        Result.Ok(inner) => inner,
+        Result.Err(status) => status,
+    };
+    print("code=%d\n", number);
+    return 0;
+}
+
+/** -- test
+- .stdout
+ok=1 err=1
+is_err=1
+unwrap_or=42
+unwrap_or_fallback=-1
+match=42
+reason=boom
+code=7
+- .exit
+0
+-- */

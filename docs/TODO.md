@@ -9,7 +9,8 @@
 6. [x] 带载荷枚举（tagged union）：构造、`match` 解构、穷尽性检查。
 7. [x] 泛型载荷枚举（`Option<T>`、`Result<T, E>`），支持多种实例化共存与嵌套实例化。
 8. [x] 构造时显式写类型实参（`Option<i32>.Some(42)`），并校验实参数量与逐项类型。
-9. `match` 作为表达式（`let x = match ...`）、嵌套模式、分支守卫。
+9. [x] `match` 作为表达式（`let x = match ...`），分支值可以是标量或结构体，支持嵌套。
+   仍缺嵌套模式（`Shape.Dot(Point { x: 0, y: 0 })`）和分支守卫。
 10. [x] JSON 转义 API（`std.json` 的 `escape` / `escape_quoted` / `append_escaped` /
     `append_quoted` / `unescape`，覆盖控制字符、`\uXXXX` 和代理对）。
 11. [x] format_f64：`std.parse` 的 `format_f64` 通过 Runtime 的 `__tap_format_f64` 调用

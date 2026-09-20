@@ -367,6 +367,31 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
                 clone_expression(index->array, template, bindings),
                 clone_expression(index->index, template, bindings));
         }
+        case NODE_MATCH_STATEMENT: {
+            MatchStatementNode *match_node = (MatchStatementNode *)source;
+            MatchStatementNode *copy = create_match_statement(
+                clone_expression(match_node->expression, template, bindings));
+            for (ASTNode *node = match_node->arms; node; node = node->next) {
+                MatchArmNode *source_arm = (MatchArmNode *)node;
+                MatchArmNode *copy_arm = create_match_arm(
+                    source_arm->enum_name, source_arm->variant_name);
+                for (ASTNode *binding = source_arm->bindings;
+                     binding; binding = binding->next) {
+                    add_match_binding(copy_arm,
+                        (IdentifierNode *)clone_expression(binding, template, bindings));
+                }
+                copy_arm->body =
+                    clone_statement_list(source_arm->body, template, bindings);
+                copy_arm->value =
+                    clone_expression(source_arm->value, template, bindings);
+                copy_arm->filename =
+                    source_arm->filename ? strdup(source_arm->filename) : NULL;
+                copy_arm->line = source_arm->line;
+                copy_arm->column = source_arm->column;
+                add_match_arm(copy, copy_arm);
+            }
+            return (ASTNode *)copy;
+        }
         case NODE_STRUCT_LITERAL: {
             StructLiteralNode *literal = (StructLiteralNode *)source;
             StructLiteralNode *copy = create_struct_literal(literal->struct_name);
@@ -440,6 +465,9 @@ static ASTNode *clone_statement(ASTNode *source, FunctionNode *template,
             return (ASTNode *)copy;
         }
         case NODE_FUNCTION_CALL:
+            return clone_expression(source, template, bindings);
+        case NODE_MATCH_STATEMENT:
+            // 语句形式的 match 走 clone_expression 里那个分支就够了。
             return clone_expression(source, template, bindings);
         case NODE_IF_STATEMENT: {
             IfStatementNode *statement = (IfStatementNode *)source;

@@ -437,7 +437,7 @@ static StructNode *parse_struct(Parser *parser) {
 
 // 解析代码块（由花括号包围的语句序列）
 static ASTNode *parse_statement(Parser *parser);
-static ASTNode *parse_match_statement(Parser *parser);
+static ASTNode *parse_match(Parser *parser, int as_value);
 
 // 解析一条语句；不消费包围代码块的右大括号。
 static ASTNode *parse_statement(Parser *parser) {
@@ -495,7 +495,7 @@ static ASTNode *parse_statement(Parser *parser) {
         return parse_loop_control_statement(parser);
     }
     if (parser->current_token->type == TOKEN_MATCH) {
-        return parse_match_statement(parser);
+        return parse_match(parser, 0);
     }
     if (is_module_component(parser->current_token)) {
         return parse_expression_statement(parser);
@@ -574,7 +574,7 @@ static ASTNode *parse_if_statement(Parser *parser) {
 //       _ => { ... }
 //   }
 // 分支体既可以是代码块，也可以是单条语句。
-static ASTNode *parse_match_statement(Parser *parser) {
+static ASTNode *parse_match(Parser *parser, int as_value) {
     consume(parser, TOKEN_MATCH);
     consume(parser, TOKEN_LPAREN);
     ASTNode *expression = parse_expression(parser);
@@ -653,7 +653,16 @@ static ASTNode *parse_match_statement(Parser *parser) {
 
         consume(parser, TOKEN_FAT_ARROW);
 
-        if (parser->current_token->type == TOKEN_LBRACE) {
+        if (as_value) {
+            // 表达式形式：分支体就是这个分支的值。
+            // 末尾可以写逗号或分号分隔，也可以什么都不写。
+            arm->value = parse_expression(parser);
+            if (parser->current_token->type == TOKEN_COMMA) {
+                consume(parser, TOKEN_COMMA);
+            } else if (parser->current_token->type == TOKEN_SEMICOLON) {
+                consume(parser, TOKEN_SEMICOLON);
+            }
+        } else if (parser->current_token->type == TOKEN_LBRACE) {
             consume(parser, TOKEN_LBRACE);
             arm->body = parse_block(parser);
             consume(parser, TOKEN_RBRACE);
@@ -1110,6 +1119,11 @@ static ASTNode *parse_primary(Parser *parser) {
 }
 
 static ASTNode *parse_factor(Parser *parser) {
+    // match 出现在表达式位置时按「表达式形式」解析：每个分支是一个值。
+    if (parser->current_token->type == TOKEN_MATCH) {
+        return parse_match(parser, 1);
+    }
+
     if (parser->current_token->type == TOKEN_REFERENCE) {
         consume(parser, TOKEN_REFERENCE);
         return (ASTNode *)create_reference(parse_factor(parser));

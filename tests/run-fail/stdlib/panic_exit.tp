@@ -1,0 +1,16 @@
+fn main(): i32 {
+    // panic 打印到标准错误并以状态 1 终止，后面的代码不会执行。
+    print("before\n");
+    panic("boom");
+    print("after\n");
+    return 0;
+}
+
+/** -- test
+- .stdout
+before
+- .stderr
+panic: boom
+- .exit
+1
+-- */

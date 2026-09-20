@@ -65,6 +65,9 @@ TAP_RUNTIME_API int32_t __tap_file_eof(void *handle);
 // 删除文件；成功返回 0。
 TAP_RUNTIME_API int32_t __tap_file_remove(const char *path);
 
+// 打印 `panic: <message>` 并以状态 1 终止；不会返回。
+TAP_RUNTIME_API int32_t __tap_panic(const char *message);
+
 // 分配堆内存；size 为 0 时 Runtime 会按 1 字节处理。
 TAP_RUNTIME_API void *__tap_malloc(size_t size);
 // 调整堆内存大小；size 为 0 时 Runtime 会按 1 字节处理。

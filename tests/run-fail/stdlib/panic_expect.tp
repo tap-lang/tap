@@ -1,0 +1,16 @@
+import std.parse;
+import std.result;
+
+fn main(): i32 {
+    // expect 撞上 Err：panic，用调用方给的信息而不是 Err 自己的。
+    let bad: Result<f64, string> = parse.parse_f64("1.2.3");
+    print("value=%f\n", result.expect(bad, "config must be a number"));
+    return 0;
+}
+
+/** -- test
+- .stderr
+panic: config must be a number
+- .exit
+1
+-- */
