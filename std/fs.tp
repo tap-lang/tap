@@ -5,7 +5,6 @@
 //     仍然持有旧句柄。关掉就不要再用了，目前没有析构也没有 defer。
 //   - mode 与 C 的 `fopen` 一致，**务必带 b**（`"rb"` / `"wb"` / `"ab"`）。
 //     少了 b，Windows 上会把 `\n` 翻译成 `\r\n`。
-import std.result;
 import std.string_builder as sb;
 
 // 文件读写所需的内部 Runtime ABI。

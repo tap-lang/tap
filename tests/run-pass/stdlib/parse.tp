@@ -1,20 +1,19 @@
 // std.parse 的字符串与数值互转：整数解析、浮点解析、整数与浮点格式化。
 // 解析失败返回 Result.Err，错误信息是 string。
 import std.parse;
-import std.result;
 
 fn main(): i32 {
     let a: Result<i64, string> = parse.parse_i64("123");
     let b: Result<i64, string> = parse.parse_i64("-456");
     let c: Result<i64, string> = parse.parse_i64("+7");
     print("i64: %lld %lld %lld\n",
-        result.unwrap_or(a, 0), result.unwrap_or(b, 0), result.unwrap_or(c, 0));
+        unwrap_or(a, 0), unwrap_or(b, 0), unwrap_or(c, 0));
 
     let empty: Result<i64, string> = parse.parse_i64("");
     let sign_only: Result<i64, string> = parse.parse_i64("-");
     let trailing: Result<i64, string> = parse.parse_i64("12a");
     print("i64 fail: %d %d %d\n",
-        result.is_err(empty), result.is_err(sign_only), result.is_err(trailing));
+        is_err(empty), is_err(sign_only), is_err(trailing));
 
     // 失败原因通过 match 取出来。
     let reason: string = match (trailing) {
@@ -28,35 +27,35 @@ fn main(): i32 {
     let e1: Result<f64, string> = parse.parse_f64("1e3");
     let e2: Result<f64, string> = parse.parse_f64("1.5e-3");
     let bad: Result<f64, string> = parse.parse_f64("1.2.3");
-    print("f64: %f %f\n", result.unwrap_or(x, 0.0), result.unwrap_or(y, 0.0));
-    print("f64 exp: %f %f\n", result.unwrap_or(e1, 0.0), result.unwrap_or(e2, 0.0));
-    print("f64 fail: %d\n", result.is_err(bad));
+    print("f64: %f %f\n", unwrap_or(x, 0.0), unwrap_or(y, 0.0));
+    print("f64 exp: %f %f\n", unwrap_or(e1, 0.0), unwrap_or(e2, 0.0));
+    print("f64 fail: %d\n", is_err(bad));
 
     let parsed: Result<i64, string> = parse.parse_i64("-456");
     print("format: %s %s %s\n",
         parse.format_i64(0), parse.format_i64(-42), parse.format_i64(1000000));
-    print("roundtrip: %s\n", parse.format_i64(result.unwrap_or(parsed, 0)));
+    print("roundtrip: %s\n", parse.format_i64(unwrap_or(parsed, 0)));
 
     // format_f64 取最短的、能往返的表示，不用补齐到固定小数位。
     let tenth: Result<f64, string> = parse.parse_f64("0.1");
     let pi: Result<f64, string> = parse.parse_f64("3.141592653589793");
     let tiny: Result<f64, string> = parse.parse_f64("1e-7");
     print("f64 fmt: %s %s %s\n",
-        parse.format_f64(result.unwrap_or(tenth, 0.0)),
-        parse.format_f64(result.unwrap_or(y, 0.0)),
-        parse.format_f64(result.unwrap_or(pi, 0.0)));
+        parse.format_f64(unwrap_or(tenth, 0.0)),
+        parse.format_f64(unwrap_or(y, 0.0)),
+        parse.format_f64(unwrap_or(pi, 0.0)));
     print("f64 fmt exp: %s %s\n",
-        parse.format_f64(result.unwrap_or(e1, 0.0)),
-        parse.format_f64(result.unwrap_or(tiny, 0.0)));
+        parse.format_f64(unwrap_or(e1, 0.0)),
+        parse.format_f64(unwrap_or(tiny, 0.0)));
 
     // format 之后再 parse 应回到同一个值。
-    let text: string = parse.format_f64(result.unwrap_or(tenth, 0.0));
+    let text: string = parse.format_f64(unwrap_or(tenth, 0.0));
     let back: Result<f64, string> = parse.parse_f64(text);
-    print("f64 roundtrip: %s ok=%d\n", text, result.is_ok(back));
+    print("f64 roundtrip: %s ok=%d\n", text, is_ok(back));
 
     // 非有限值输出 inf / nan：JSON 没有这两种写法，调用方需要自行处理。
-    let one: f64 = result.unwrap_or(e1, 0.0) / result.unwrap_or(e1, 0.0);
-    let zero: f64 = result.unwrap_or(e1, 0.0) - result.unwrap_or(e1, 0.0);
+    let one: f64 = unwrap_or(e1, 0.0) / unwrap_or(e1, 0.0);
+    let zero: f64 = unwrap_or(e1, 0.0) - unwrap_or(e1, 0.0);
     print("f64 nonfinite: %s %s\n",
         parse.format_f64(one / zero), parse.format_f64(zero / zero));
     return 0;

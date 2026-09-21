@@ -4,12 +4,7 @@ enum Option<T> {
     None,
 }
 
-enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
-fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
+fn value_or(value: Option<i32>, fallback: i32): i32 {
     match (value) {
         Option.Some(inner) => {
             return inner;
@@ -40,13 +35,13 @@ fn make_some(value: i32): Option<i32> {
 fn main(): i32 {
     let present: Option<i32> = Option.Some(42);
     let absent: Option<i32> = Option.None;
-    print("unwrap: %d %d\n", unwrap_or(present, -1), unwrap_or(absent, -1));
+    print("unwrap: %d %d\n", value_or(present, -1), value_or(absent, -1));
 
     let ok: Result<i32, string> = Result.Ok(200);
     let err: Result<i32, string> = Result.Err("boom");
     print("status: %d %d\n", status_code(ok), status_code(err));
 
-    print("made: %d\n", unwrap_or(make_some(7), -1));
+    print("made: %d\n", value_or(make_some(7), -1));
 
     // 同一个泛型枚举的不同实例化可以共存。
     let text: Option<string> = Option.Some("tap");

@@ -5,7 +5,6 @@
 //
 // format_f64 是唯一的例外：精确的十进制展开需要大整数算法，这里下沉到 Runtime 的
 // C 库转换，换取正确且可往返的输出。
-import std.result;
 import std.string_builder as sb;
 
 // 浮点到字符串的内部 Runtime ABI。

@@ -6,29 +6,28 @@
 //
 // 注意：测试的工作目录是仓库根目录，这里建的临时文件是相对路径。
 import std.fs as fs;
-import std.result;
 
 fn main(): i32 {
     let path: string = "std_file_text.tmp";
 
     print("exists before=%d\n", fs.exists(path));
     let missing: Result<string, string> = fs.read_text(path);
-    print("missing is_err=%d\n", result.is_err(missing));
+    print("missing is_err=%d\n", is_err(missing));
 
     print("write=%lld\n", fs.write_text(path, "first\n"));
     print("append=%lld\n", fs.append_text(path, "second\n"));
     print("exists after=%d\n", fs.exists(path));
 
     let loaded: Result<string, string> = fs.read_text(path);
-    let text: string = result.unwrap_or(loaded, "");
-    print("ok=%d len=%llu\n", result.is_ok(loaded), text.len());
+    let text: string = unwrap_or(loaded, "");
+    print("ok=%d len=%llu\n", is_ok(loaded), text.len());
     print("content=[%s]\n", text);
 
     // 空文件：ok 仍为 true，但长度为 0，和上面的 missing 区分得开。
     print("truncate=%lld\n", fs.write_text(path, ""));
     let empty: Result<string, string> = fs.read_text(path);
-    let empty_text: string = result.unwrap_or(empty, "");
-    print("empty ok=%d len=%llu\n", result.is_ok(empty), empty_text.len());
+    let empty_text: string = unwrap_or(empty, "");
+    print("empty ok=%d len=%llu\n", is_ok(empty), empty_text.len());
 
     print("remove=%d\n", fs.remove(path));
     print("exists end=%d\n", fs.exists(path));

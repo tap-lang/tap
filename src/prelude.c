@@ -130,15 +130,26 @@ static FunctionNode *find_cross_duplicate(ASTNode *prelude, ASTNode *user) {
     return NULL;
 }
 
-static void prepend_functions(ProgramNode *program, ProgramNode *prelude) {
-    ASTNode *functions = prelude->functions;
-    if (!functions) return;
+// 把 source 整条链表接到 *target 前面，并让 source 不再持有它。
+static void prepend_list(ASTNode **target, ASTNode **source) {
+    ASTNode *head = *source;
+    if (!head) return;
 
-    ASTNode *tail = functions;
+    ASTNode *tail = head;
     while (tail->next) tail = tail->next;
-    tail->next = program->functions;
-    program->functions = functions;
-    prelude->functions = NULL;
+    tail->next = *target;
+    *target = head;
+    *source = NULL;
+}
+
+// 把 Prelude 的顶层类型、常量和函数接到程序声明链表的最前面。
+// 枚举和结构体也必须接过去：Result 就声明在 Prelude 里，漏掉的话用户会拿到
+// `undefined generic struct type`。
+static void prepend_declarations(ProgramNode *program, ProgramNode *prelude) {
+    prepend_list(&program->enums, &prelude->enums);
+    prepend_list(&program->structs, &prelude->structs);
+    prepend_list(&program->constants, &prelude->constants);
+    prepend_list(&program->functions, &prelude->functions);
 }
 
 int load_prelude(ProgramNode *program, const char *compiler_path) {
@@ -177,7 +188,7 @@ int load_prelude(ProgramNode *program, const char *compiler_path) {
         return 1;
     }
 
-    prepend_functions(program, prelude);
+    prepend_declarations(program, prelude);
     free_ast((ASTNode *)prelude);
     free_parser(parser);
     free_lexer(lexer);

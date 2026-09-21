@@ -1,17 +1,21 @@
-// std.result：可恢复错误的统一表示。
-// Result 是泛型载荷枚举，取值靠 match 的表达式形式，或 unwrap_or 给兜底值。
-import std.result;
+// Result：可恢复错误的统一表示。它和几个辅助函数都在 Prelude 里，不需要导入。
+// 取值靠 match 的表达式形式，或用 unwrap_or 给兜底值；辅助函数也可以写成方法调用。
 
 fn main(): i32 {
     let good: Result<i32, string> = Result<i32, string>.Ok(42);
     let bad: Result<i32, string> = Result<i32, string>.Err("boom");
 
-    print("ok=%d err=%d\n", result.is_ok(good), result.is_err(bad));
-    print("is_err=%d\n", result.is_err(bad));
+    print("ok=%d err=%d\n", is_ok(good), is_err(bad));
+    print("is_err=%d\n", is_err(bad));
 
     // 兜底值。
-    print("unwrap_or=%d\n", result.unwrap_or(good, 0));
-    print("unwrap_or_fallback=%d\n", result.unwrap_or(bad, -1));
+    print("unwrap_or=%d\n", unwrap_or(good, 0));
+    print("unwrap_or_fallback=%d\n", unwrap_or(bad, -1));
+
+    // 同一批辅助函数也能写成方法调用：Prelude 函数是无限定名的，
+    // 而接收者类型匹配第一个参数，所以 good.is_ok() 能解析到 is_ok(good)。
+    print("methods: %d %d %d\n", good.is_ok(), bad.is_err(), good.unwrap());
+    print("method_unwrap_or=%d\n", bad.unwrap_or(-1));
 
     // match 表达式直接取成功值。
     let value: i32 = match (good) {
@@ -43,6 +47,8 @@ ok=1 err=1
 is_err=1
 unwrap_or=42
 unwrap_or_fallback=-1
+methods: 1 1 42
+method_unwrap_or=-1
 match=42
 reason=boom
 code=7

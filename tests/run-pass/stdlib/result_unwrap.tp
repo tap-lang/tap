@@ -1,7 +1,6 @@
 // std.result 的 unwrap / expect：成功时直接取值，失败就 panic。
 // 结构体类型也可以 unwrap——T 是泛型参数，不限于标量。
 import std.parse;
-import std.result;
 
 struct Point {
     x: i32,
@@ -10,19 +9,19 @@ struct Point {
 
 fn main(): i32 {
     let number: Result<i64, string> = parse.parse_i64("-456");
-    print("i64=%lld\n", result.unwrap(number));
+    print("i64=%lld\n", unwrap(number));
 
     let ratio: Result<f64, string> = parse.parse_f64("1.5e-3");
-    print("f64=%f\n", result.unwrap(ratio));
+    print("f64=%f\n", unwrap(ratio));
 
     // 结构体作为 T
     let shape: Result<Point, string> =
         Result<Point, string>.Ok(Point { x: 3, y: 4 });
-    let point: Point = result.unwrap(shape);
+    let point: Point = unwrap(shape);
     print("point=%d,%d\n", point.x, point.y);
 
     // expect 成功时行为和 unwrap 一样，message 用不上。
-    print("expect=%lld\n", result.expect(number, "input must be a number"));
+    print("expect=%lld\n", expect(number, "input must be a number"));
     return 0;
 }
 

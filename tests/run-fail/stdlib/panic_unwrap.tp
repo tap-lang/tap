@@ -1,10 +1,9 @@
 import std.parse;
-import std.result;
 
 fn main(): i32 {
     // unwrap 撞上 Err：panic，错误信息用 Err 携带的那个。
     let bad: Result<i64, string> = parse.parse_i64("12a");
-    print("value=%lld\n", result.unwrap(bad));
+    print("value=%lld\n", unwrap(bad));
     return 0;
 }
 

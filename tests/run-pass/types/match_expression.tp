@@ -1,10 +1,5 @@
 // match 的表达式形式：分支写成 `模式 => 值`，整个 match 求出一个值。
 // 和结构体字面量一样需要目标类型，所以变量声明必须写类型标注。
-enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
 enum Shape {
     Dot(Point),
     Empty,

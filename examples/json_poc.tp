@@ -13,7 +13,6 @@
 
 import std.json as json;
 import std.parse as parse;
-import std.result as res;
 import std.vec as vec;
 import std.string_builder as sb;
 
@@ -122,14 +121,14 @@ fn parse_string(src: string, pos: uint): Json {
     let decoded: Result<string, string> = json.unescape(raw);
 
     // 这个示例是尽力而为的解析器：转义非法时用空串，真正的解析器应该检查
-    // res.is_err(decoded) 并报错。
+    // is_err(decoded) 并报错。
     let next: uint = n;
     if (end < n) {
         next = end + 1;
     }
     let result: Json = blank(next);
     result.kind = 3;
-    result.text = res.unwrap_or(decoded, "");
+    result.text = unwrap_or(decoded, "");
     return result;
 }
 
@@ -337,7 +336,7 @@ fn main(): i32 {
     built_keys = built_keys.push("eighth");
     built_values = built_values.push(number_of(1.0 / 8.0));
     built_keys = built_keys.push("ratio");
-    built_values = built_values.push(number_of(res.unwrap_or(ratio, 0.0)));
+    built_values = built_values.push(number_of(unwrap_or(ratio, 0.0)));
 
     let document: Json = blank(0);
     document.kind = 5;

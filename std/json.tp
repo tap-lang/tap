@@ -8,7 +8,6 @@
 //
 // 本模块只处理字符串内容，不含两侧引号——引号由 append_quoted / escape_quoted 补上。
 // 非 ASCII 字节原样透传（JSON 允许直接出现 UTF-8 字节）。
-import std.result;
 import std.string_builder as sb;
 
 // 读取 4 位十六进制的结果。

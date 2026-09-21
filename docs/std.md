@@ -24,6 +24,11 @@ tap 标准库由两部分组成：
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | 当 `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
 | `panic(message: string): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
+| `Result<T, E>` | 可恢复错误的类型：`Ok(T)` 或 `Err(E)` |
+| `is_ok(value): bool` / `is_err(value): bool` | 判断 `Result` 成功或失败 |
+| `unwrap_or(value, fallback): T` | 取成功值；失败时用 `fallback` |
+| `unwrap(value): T` | 取成功值；失败时 `panic`（用 `Err` 的信息） |
+| `expect(value, message): T` | 取成功值；失败时用 `message` `panic` |
 
 说明：`read_key()` 返回 Runtime 读到的真实键值，不会把方向键映射为 WASD。POSIX 方向键会在一次调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 方向键通常返回 `72/80/77/75`。
 
@@ -79,11 +84,6 @@ fn main(): i32 {
 | `std.vec_string` | `get(vec: StringVec, index: i32): string` | 读取指定元素；越界时输出错误并返回空字符串 |
 | `std.vec_string` | `set(vec: StringVec, index: i32, value: string): StringVec` | 替换指定元素；越界时输出错误并保持原值 |
 | `std.vec_string` | `free(vec: StringVec): i32` | 释放动态数组内部缓冲区，成功返回 `0` |
-| `std.result` | `Result<T, E>` | 可恢复错误：`Ok(T)` 携带成功值，`Err(E)` 携带错误信息 |
-| `std.result` | `is_ok(value): bool` / `is_err(value): bool` | 判断成功或失败 |
-| `std.result` | `unwrap_or(value, fallback): T` | 取成功值；失败时用 `fallback` |
-| `std.result` | `unwrap(value): T` | 取成功值；失败时 `panic`（错误信息用 `Err` 的） |
-| `std.result` | `expect(value, message): T` | 取成功值；失败时用 `message` `panic` |
 | `std.parse` | `parse_i64(text: string): Result<i64, string>` | 解析十进制整数，失败返回 `Err` |
 | `std.parse` | `parse_f64(text: string): Result<f64, string>` | 解析十进制浮点，失败返回 `Err` |
 | `std.parse` | `format_i64(value: i64): string` | 把整数格式化为十进制字符串 |
@@ -236,19 +236,18 @@ fn main(): i32 {
 
 ```text
 import std.parse;
-import std.result;
 
 fn main(): i32 {
     let parsed: Result<i64, string> = parse.parse_i64("-456");
     print("value=%lld text=%s\n",
-        result.unwrap_or(parsed, 0), parse.format_i64(result.unwrap_or(parsed, 0)));
+        unwrap_or(parsed, 0), parse.format_i64(unwrap_or(parsed, 0)));
 
     let ratio: Result<f64, string> = parse.parse_f64("1.5e-3");
-    print("ratio=%f\n", result.unwrap_or(ratio, 0.0));
+    print("ratio=%f\n", unwrap_or(ratio, 0.0));
 
     // format_f64 取最短的、能往返的表示，不补齐到固定小数位。
     let tenth: Result<f64, string> = parse.parse_f64("0.1");
-    print("text=%s\n", parse.format_f64(result.unwrap_or(tenth, 0.0)));
+    print("text=%s\n", parse.format_f64(unwrap_or(tenth, 0.0)));
     return 0;
 }
 ```
@@ -262,7 +261,7 @@ fn main(): i32 {
 
 ```text
 let parsed: Result<i64, string> = parse.parse_i64(text);
-print("%lld\n", result.unwrap_or(parsed, 0));
+print("%lld\n", unwrap_or(parsed, 0));
 ```
 
 `format_f64` 取最短的、能往返的表示：`0.1` 输出 `0.1`，圆周率输出 `3.141592653589793`，
@@ -279,7 +278,6 @@ print("%lld\n", result.unwrap_or(parsed, 0));
 
 ```text
 import std.json;
-import std.result;
 import std.string_builder as sb;
 
 fn main(): i32 {
@@ -296,7 +294,7 @@ fn main(): i32 {
     // 输入：反转义，非法转义序列通过 ok 报告
     let decoded: Result<string, string> = json.unescape("a\\u0041\\uD83D\\uDE00b");
     // 字段访问要先绑定到变量，不能在字段链上直接调方法。
-    let text: string = result.unwrap_or(decoded, "");
+    let text: string = unwrap_or(decoded, "");
     print("len=%llu\n", text.len());
     return 0;
 }
@@ -315,7 +313,6 @@ fn main(): i32 {
 
 ```text
 import std.fs as fs;
-import std.result;
 
 fn main(): i32 {
     let out: File = fs.open("notes.txt", "wb");
@@ -351,15 +348,15 @@ fn main(): i32 {
 
 ```text
 let loaded: Result<string, string> = fs.read_text("notes.txt");
-let notes: string = result.unwrap_or(loaded, "");
+let notes: string = unwrap_or(loaded, "");
 ```
 
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
 
 ## 错误处理约定
 
-标准库统一用 `std.result` 的 `Result<T, E>` 表示**可恢复错误**。`E` 实践中多用 `string`，
-用来说明失败原因。
+标准库统一用 `Result<T, E>` 表示**可恢复错误**。`E` 实践中多用 `string`，用来说明失败原因。
+`Result` 和下面几个辅助函数都在 Prelude 里，**不需要导入**。
 
 | 场景 | 做法 |
 |---|---|
@@ -369,7 +366,7 @@ let notes: string = result.unwrap_or(loaded, "");
 区分这类的标准是**能不能在调用处合理恢复**：文件不存在是运行环境的正常情况，调用方能换路径
 或用默认值；而 `get(i)` 越界几乎总是逻辑错误，返回 `Result` 只会让每次随机访问都变啰嗦。
 
-取值用 `match` 的表达式形式，或者用 `result.unwrap_or` 给兜底值：
+取值用 `match` 的表达式形式，或者用 `unwrap_or` 给兜底值：
 
 ```text
 let parsed: Result<i64, string> = parse.parse_i64(text);
@@ -377,7 +374,7 @@ let value: i64 = match (parsed) {
     Result.Ok(number) => number,
     Result.Err(message) => 0,
 };
-print("%lld\n", result.unwrap_or(parsed, 0));
+print("%lld\n", unwrap_or(parsed, 0));
 ```
 
 **失败就终止**用 `panic`（Prelude 提供，无需导入）：打印 `panic: <message>` 到标准错误，
@@ -388,9 +385,20 @@ print("%lld\n", result.unwrap_or(parsed, 0));
 
 ```text
 let number: Result<i64, string> = parse.parse_i64(text);
-print("%lld\n", result.unwrap(number));                       // 失败时 panic，用 Err 的信息
-print("%lld\n", result.expect(number, "config must be int")); // 失败时 panic，用指定的信息
+print("%lld\n", unwrap(number));                       // 失败时 panic，用 Err 的信息
+print("%lld\n", expect(number, "config must be int")); // 失败时 panic，用指定的信息
 ```
+
+辅助函数也可以写成**方法调用**：它们在 Prelude 里是无限定名的，而接收者类型匹配第一个
+参数，所以 `parsed.is_ok()` 会解析到 `is_ok(parsed)`。
+
+```text
+print("%d\n", parsed.is_ok());
+print("%lld\n", parsed.unwrap_or(0));
+print("%lld\n", parsed.unwrap());
+```
+
+注意 `unwrap` / `expect` 只对 `Result<T, string>` 生效；其他错误类型请自己 `match`。
 
 另外 `assert(condition, message)` 是**内建语句**（不是 Prelude 函数）：失败时打印
 `Assertion failed at 文件:行:列: message` 并终止，比 `panic` 多了位置信息。

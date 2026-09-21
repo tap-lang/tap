@@ -6,12 +6,7 @@ enum Option<T> {
     None,
 }
 
-enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
-fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
+fn value_or(value: Option<i32>, fallback: i32): i32 {
     match (value) {
         Option.Some(inner) => { return inner; }
         Option.None => { return fallback; }
@@ -22,7 +17,7 @@ fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
 fn main(): i32 {
     let present: Option<i32> = Option<i32>.Some(42);
     let absent: Option<i32> = Option<i32>.None;
-    print("option: %d %d\n", unwrap_or(present, -1), unwrap_or(absent, -1));
+    print("option: %d %d\n", value_or(present, -1), value_or(absent, -1));
 
     let ok: Result<i32, string> = Result<i32, string>.Ok(200);
     let err: Result<i32, string> = Result<i32, string>.Err("boom");
@@ -37,7 +32,7 @@ fn main(): i32 {
 
     // 两种写法可以混用，生成的类型完全相同。
     let mixed: Option<i32> = Option.Some(7);
-    print("mixed: %d\n", unwrap_or(mixed, -1));
+    print("mixed: %d\n", value_or(mixed, -1));
     return 0;
 }
 
