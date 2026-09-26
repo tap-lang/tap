@@ -1,0 +1,37 @@
+// std.math 的 abs 也是泛型：整数和浮点都能用，无符号类型也能实例化
+//（`value < 0` 恒为假，原样返回）。
+import std.math;
+
+fn main(): i32 {
+    print("i32: %d %d\n", math.abs(-7), math.abs(7));
+    print("zero: %d\n", math.abs(0));
+
+    let wide: i64 = -9;
+    print("i64: %lld\n", math.abs(wide));
+
+    let small: u16 = 5;
+    print("u16: %d\n", math.abs(small));
+
+    let double: f64 = -1.5;
+    print("f64: %f\n", math.abs(double));
+
+    let single: f32 = -2.5;
+    print("f32: %f\n", math.abs(single));
+
+    // 也可以显式指定类型实参。
+    print("explicit: %lld\n", math.abs<i64>(-3));
+    return 0;
+}
+
+/** -- test
+- .stdout
+i32: 7 7
+zero: 0
+i64: 9
+u16: 5
+f64: 1.500000
+f32: 2.500000
+explicit: 3
+- .exit
+0
+-- */

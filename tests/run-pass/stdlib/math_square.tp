@@ -1,0 +1,41 @@
+// std.math 的 square 是泛型函数：T 由实参推断，也可以显式写出来。
+// 整数和浮点都能用，每次实例化都是独立的一份。
+import std.math;
+
+fn main(): i32 {
+    print("i32=%d\n", math.square(7));
+    print("neg=%d\n", math.square(-3));
+
+    let wide: i64 = 9;
+    print("i64=%lld\n", math.square(wide));
+
+    let small: u16 = 5;
+    print("u16=%d\n", math.square(small));
+
+    let huge: i128 = 12;
+    print("i128=%d\n", math.square(huge));
+
+    let single: f32 = 2.5;
+    print("f32=%f\n", math.square(single));
+
+    let double: f64 = 1.5;
+    print("f64=%f\n", math.square(double));
+
+    // 也可以显式指定类型实参。
+    print("explicit=%f\n", math.square<f64>(2.0));
+    return 0;
+}
+
+/** -- test
+- .stdout
+i32=49
+neg=9
+i64=81
+u16=25
+i128=144
+f32=6.250000
+f64=2.250000
+explicit=4.000000
+- .exit
+0
+-- */

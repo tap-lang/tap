@@ -1,0 +1,46 @@
+// std.math 的幂运算：
+//   pow<T>(base, exponent)  指数必须是非负整数，纯 tap 快速幂，整数和浮点底数都行
+//   pow_f64(base, exponent) 指数可以是小数或负数，走 C 库的 pow
+// 测试只用精确可表示的值，避免各平台 libm 的末位差异。
+import std.math;
+import std.parse;
+
+fn main(): i32 {
+    // 整数快速幂
+    print("i32: %d %d %d\n", math.pow(2, 10), math.pow(5, 3), math.pow(3, 0));
+    print("zero: %d %d\n", math.pow(0, 0), math.pow(0, 5));
+    print("negative base: %d %d\n", math.pow(-2, 3), math.pow(-2, 4));
+
+    let wide: i64 = 2;
+    print("i64: %lld\n", math.pow(wide, 40));
+
+    // 浮点底数配整数指数
+    let base: f64 = 2.0;
+    print("f64 base: %f\n", math.pow(base, 10));
+
+    // 小数和负数指数
+    print("sqrt: %f\n", math.pow_f64(4.0, 0.5));
+    print("inverse: %f\n", math.pow_f64(2.0, -1.0));
+    print("square back: %f\n", math.pow_f64(math.pow_f64(4.0, 0.5), 2.0));
+
+    // 定义域外按 C 的规则得到 nan / inf；format_f64 统一输出 nan 不带符号。
+    print("out of domain: %s %s\n",
+        parse.format_f64(math.pow_f64(-1.0, 0.5)),
+        parse.format_f64(math.pow_f64(0.0, -1.0)));
+    return 0;
+}
+
+/** -- test
+- .stdout
+i32: 1024 125 1
+zero: 1 0
+negative base: -8 16
+i64: 1099511627776
+f64 base: 1024.000000
+sqrt: 2.000000
+inverse: 0.500000
+square back: 4.000000
+out of domain: nan inf
+- .exit
+0
+-- */
