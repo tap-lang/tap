@@ -1,0 +1,18 @@
+// 这个用例文件本身用 .tap 后缀，同时验证两件事：
+//   1. 测试脚本会扫描 .tp 和 .tap 两种用例文件；
+//   2. 模块解析也接受两种后缀——suffix 是 .tap，plain 是 .tp。
+// 同一目录下两者同名时以 .tp 为准。
+import modules.suffix;
+import modules.plain;
+
+fn main(): i32 {
+    print("%d %d\n", suffix.marker(), plain.doubled());
+    return 0;
+}
+
+/** -- test
+- .stdout
+42 21
+- .exit
+0
+-- */

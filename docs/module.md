@@ -186,4 +186,5 @@ error: undefined function 'double'
 - 名称空间目前只能用于限定函数调用，不能作为值传递。
 - 入口文件不能把自身再次作为模块导入。
 - `TAP_MODULE_PATH` 和 `TAP_STD_PATH` 均只接受单个目录。
-- 模块文件扩展名固定为 `.tp`。
+- 模块文件后缀接受 `.tp` 和 `.tap`，解析顺序是先 `.tp` 再 `.tap`；同一目录下两者同名时
+  以 `.tp` 为准。

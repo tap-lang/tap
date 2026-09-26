@@ -654,6 +654,21 @@ static void materialize_type(GenericContext *context, VarTypeNode *type) {
     if (!type) return;
     if (type->is_pointer || type->is_array) {
         materialize_type(context, type->element_type);
+        // create_pointer_type 会把元素的名字复制到指针节点上，但不复制类型实参。
+        // 元素单态化之后必须把结果同步回来，否则指针节点上留的是已经删掉的模板名，
+        // codegen 的 validate_var_type 会报 undefined enum type（`*Vec<string>` 就是这样）。
+        VarTypeNode *element = type->element_type;
+        if (element) {
+            if (element->struct_name) {
+                free(type->struct_name);
+                type->struct_name = strdup(element->struct_name);
+                free(type->enum_name);
+                type->enum_name = NULL;
+            } else if (element->enum_name) {
+                free(type->enum_name);
+                type->enum_name = strdup(element->enum_name);
+            }
+        }
         return;
     }
     for (ASTNode *argument = type->type_arguments; argument;

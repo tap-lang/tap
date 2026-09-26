@@ -56,10 +56,10 @@ fn main(): i32 {
 | --- | --- | --- |
 | `std.env` | `argc(): i32` | 返回当前程序的命令行参数数量，包含程序路径自身 |
 | `std.env` | `arg(index: i32): string` | 返回指定位置的命令行参数；越界时返回空字符串 |
-| `std.env` | `args(): [string; 64]` | 返回最多 64 个命令行参数，不足的位置为空字符串 |
+| `std.env` | `args(): Vec<string>` | 返回全部命令行参数；用完要 `vec.free` |
 | `std.env` | `var(name: string): string` | 返回指定环境变量的值；不存在时返回空字符串 |
 | `std.env` | `varc(): i32` | 返回当前进程环境变量数量 |
-| `std.env` | `vars(): [string; 256]` | 返回最多 256 个环境变量条目，格式为 `NAME=VALUE`，不足的位置为空字符串 |
+| `std.env` | `vars(): Vec<string>` | 返回全部环境变量条目（`NAME=VALUE`）；用完要 `vec.free` |
 | `std.math` | `PI: f64` | 圆周率常量，值为 `3.141592653589793` |
 | `std.math` | `square<T>(value: T): T` | 返回平方值；`T` 由实参推断，也可显式写 `square<f64>(...)` |
 | `std.math` | `abs<T>(value: T): T` | 返回绝对值；无符号类型原样返回 |
@@ -79,13 +79,6 @@ fn main(): i32 {
 | `std.string_builder` | `StringBuilder` | 基于 `ByteVec` 的可增量字符串构建器 |
 | `std.string_builder` | `append/append_byte/clear` | 追加字符串或字节并复用容量 |
 | `std.string_builder` | `to_string(): string` | 获取与后续 Builder 修改无关的字符串快照 |
-| `std.vec_string` | `StringVec` | 可变长度字符串数组结构体 |
-| `std.vec_string` | `new(): StringVec` | 创建空字符串动态数组，初始容量为 8 |
-| `std.vec_string` | `len(vec: StringVec): i32` | 返回当前元素数量 |
-| `std.vec_string` | `push(vec: StringVec, value: string): StringVec` | 追加字符串，容量不足时自动扩容 |
-| `std.vec_string` | `get(vec: StringVec, index: i32): string` | 读取指定元素；越界时输出错误并返回空字符串 |
-| `std.vec_string` | `set(vec: StringVec, index: i32, value: string): StringVec` | 替换指定元素；越界时输出错误并保持原值 |
-| `std.vec_string` | `free(vec: StringVec): i32` | 释放动态数组内部缓冲区，成功返回 `0` |
 | `std.parse` | `parse_i64(text: string): Result<i64, string>` | 解析十进制整数，失败返回 `Err` |
 | `std.parse` | `parse_f64(text: string): Result<f64, string>` | 解析十进制浮点，失败返回 `Err` |
 | `std.parse` | `format_i64(value: i64): string` | 把整数格式化为十进制字符串 |
@@ -113,13 +106,20 @@ fn main(): i32 {
 
 ```text
 import std.env as env;
+import std.vec as vec;
 
 fn main(): i32 {
-    let values: [string; 64] = env.args();
+    let values: Vec<string> = env.args();
     print("%d\n", env.argc());
-    print("%s\n", values[1]);
+    print("%s\n", values.get(1));
     print("%s\n", env.var("PATH"));
-    print("%s\n", env.vars()[0]);
+
+    let entries: Vec<string> = env.vars();
+    print("%s\n", entries.get(0));
+
+    // 容器在堆上，用完要自己释放。
+    vec.free(values);
+    vec.free(entries);
     return 0;
 }
 ```
@@ -175,17 +175,17 @@ fn main(): i32 {
 只释放 Vec 自己的元素缓冲区，不会递归释放元素持有的资源。`push()`、`set()`、`clear()`
 和 `reserve()` 作为方法语句调用时会自动把返回的新结构体写回接收者。
 
-`std.vec_string` 示例：
+字符串动态数组直接用 `Vec<string>`：
 
 ```text
-import std.vec_string as vec;
+import std.vec as vec;
 
 fn main(): i32 {
-    let values: StringVec = vec.new();
+    let values: Vec<string> = vec.new();
     values.push("hello");
     values.push("tap");
 
-    print("%d\n", values.len());
+    print("%llu\n", values.len());
     print("%s %s\n", values.get(0), values.get(1));
 
     values.free();
@@ -193,9 +193,9 @@ fn main(): i32 {
 }
 ```
 
-`StringVec` 是值类型。直接写 `values.push("hello");` 或 `values.set(0, "HELLO");`
-时，编译器会把返回的 `StringVec` 自动写回 `values`。`free` 只释放内部缓冲区，
-不会清空原结构体字段；释放后不要继续访问同一个 `StringVec`。
+`Vec` 是值类型。直接写 `values.push("hello");` 或 `values.set(0, "HELLO");`
+时，编译器会把返回的结构体自动写回 `values`。`free` 只释放内部缓冲区，
+不会清空原结构体字段；释放后不要继续访问同一个容器。
 
 `std.byte_vec` 示例：
 
@@ -476,8 +476,9 @@ Runtime 的 C ABI 声明位于
 - `std.parse` 只解析十进制，不识别十六进制、下划线分隔符或 `inf` / `nan`。
 - `format_f64` 通过 Runtime 调用 C 库的十进制转换（`__tap_format_f64`），是 `std.parse`
   里唯一不纯 tap 的函数：精确的十进制展开需要大整数算法。
-- 内建数组是固定长度类型；`std.env.args()` 当前返回 `[string; 64]`，
-  `std.env.vars()` 当前返回 `[string; 256]`，不是动态数组。动态字符串数组请使用
-  `std.vec_string`。
+- 内建数组是固定长度类型，没有动态数组字面量；需要可变长度容器请用 `std.vec`（泛型）
+  或 `std.byte_vec`。字符串数组用 `Vec<string>`，`std.env.args()` / `vars()` 就返回它。
+- 结构体没有析构函数，`Vec` / `ByteVec` 用完要自己调 `free`。
+  不释放只是进程退出前一直占着，不会出错。
 - 模块会导出顶层常量、结构体、枚举和函数，但没有可见性控制；导入的类型名当前进入全局类型命名空间。
 - Prelude 是自动注入的全局函数集合，不支持按需选择导入。

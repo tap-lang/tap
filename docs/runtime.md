@@ -17,10 +17,10 @@ extern fn __tap_sleep_ms(milliseconds: i32): i32;
 | `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
 | `argc(): i32` | 返回命令行参数数量，包含程序路径自身 |
 | `arg(index: i32): string` | 返回指定命令行参数；越界时返回空字符串 |
-| `args(): [string; 64]` | 返回最多 64 个命令行参数组成的固定长度字符串数组 |
+| `args(): Vec<string>` | 返回全部命令行参数；`Vec` 来自 `std.vec` |
 | `var(name: string): string` | 返回指定环境变量的值；不存在时返回空字符串 |
 | `varc(): i32` | 返回当前进程环境变量数量 |
-| `vars(): [string; 256]` | 返回最多 256 个环境变量条目，格式为 `NAME=VALUE` |
+| `vars(): Vec<string>` | 返回全部环境变量条目，格式为 `NAME=VALUE` |
 
 说明：POSIX 终端方向键会在一次 read_key 调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 扩展方向键返回第二个 scan code，通常是 `72/80/77/75`。
 
@@ -120,4 +120,4 @@ Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或
 
 这些函数由 `std.memory` 封装，底层 ABI 声明不需要出现在普通程序或其他容器模块中。
 需要直接管理堆内存时使用 `memory.malloc/realloc/free`；业务代码仍应优先使用
-`std.vec_string` 这类容器，避免直接管理裸指针和容量。
+`std.vec` 这类容器，避免直接管理裸指针和容量。

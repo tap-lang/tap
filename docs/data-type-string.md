@@ -199,20 +199,19 @@ let values: [string; 3] = ["empty"; 3];
 - `const` 字符串数组不能替换其中的元素。
 - 可以声明多维固定长度字符串数组，并逐层索引到字符串元素。
 - 当前不能对整个数组或子数组赋值。
-- 当前不能把内建数组作为函数参数或返回值；需要动态长度字符串数组时，可以使用
-  `std.vec_string.StringVec`。
+- 当前不能把内建数组作为函数参数或返回值；需要动态长度字符串数组时，用 `Vec<string>`。
 
 更多通用数组规则见[数据类型文档](data-types.md#固定长度数组)。
 
 ## 动态字符串数组
 
-标准库 `std.vec_string` 提供了专用动态字符串数组 `StringVec`：
+动态长度字符串数组直接用泛型容器 `std.vec` 的 `Vec<string>`：
 
 ```text
-import std.vec_string as vec;
+import std.vec as vec;
 
 fn main(): i32 {
-    let values: StringVec = vec.new();
+    let values: Vec<string> = vec.new();
     values.push("Alice");
     values.push("Bob");
     print("%s\n", values.get(1));
@@ -221,8 +220,8 @@ fn main(): i32 {
 }
 ```
 
-`StringVec` 内部使用 `*string` 和 Runtime 内存函数实现。`push` 和 `set` 作为语句调用时
-会自动把返回的结构体写回接收者；使用完后调用 `values.free()` 释放内部缓冲区。
+`Vec<T>` 内部用 `*T` 和 Runtime 内存函数实现，元素大小取 `sizeof(T)`。`push` 和 `set`
+作为语句调用时会自动把返回的结构体写回接收者；使用完后调用 `values.free()` 释放内部缓冲区。
 
 ## 实现模型
 

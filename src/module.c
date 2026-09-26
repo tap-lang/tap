@@ -115,9 +115,11 @@ static char *compiler_directory(const char *compiler_path) {
     return directory;
 }
 
-static char *module_relative_path(const char *module_name) {
+// 把点分模块名转成相对路径，并接上给定的源文件后缀。
+static char *module_relative_path(const char *module_name, const char *extension) {
     size_t length = strlen(module_name);
-    char *path = malloc(length + 4);
+    size_t extension_length = strlen(extension);
+    char *path = malloc(length + extension_length + 1);
     if (!path) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         return NULL;
@@ -126,7 +128,7 @@ static char *module_relative_path(const char *module_name) {
     for (size_t index = 0; index < length; index++) {
         path[index] = module_name[index] == '.' ? '/' : module_name[index];
     }
-    memcpy(path + length, ".tp", 4);
+    memcpy(path + length, extension, extension_length + 1);
     return path;
 }
 
@@ -146,15 +148,17 @@ static int is_std_module(const char *module_name) {
     return strncmp(module_name, "std.", 4) == 0;
 }
 
-static char *resolve_module_path(
-    const ImportNode *import_node, const char *compiler_path) {
-    char *relative = module_relative_path(import_node->module_name);
+static char *resolve_module_path_with_extension(
+    const ImportNode *import_node, const char *compiler_path,
+    const char *extension) {
+    char *relative = module_relative_path(import_node->module_name, extension);
     if (!relative) return NULL;
 
     if (is_std_module(import_node->module_name)) {
         const char *std_path = getenv("TAP_STD_PATH");
         if (std_path && std_path[0] != '\0') {
-            char *std_relative = module_relative_path(import_node->module_name + 4);
+            char *std_relative =
+                module_relative_path(import_node->module_name + 4, extension);
             char *candidate = std_relative ? join_path(std_path, std_relative) : NULL;
             free(std_relative);
             char *resolved = existing_canonical_path(candidate);
@@ -216,6 +220,17 @@ static char *resolve_module_path(
 
     free(relative);
     return NULL;
+}
+
+// 源文件后缀同时支持 .tp 和 .tap。先找 .tp：同一目录下两者同名时以 .tp 为准，
+// 这样给已有模块补一个 .tap 副本不会悄悄改变解析结果。
+static char *resolve_module_path(
+    const ImportNode *import_node, const char *compiler_path) {
+    char *resolved = resolve_module_path_with_extension(
+        import_node, compiler_path, ".tp");
+    if (resolved) return resolved;
+    return resolve_module_path_with_extension(
+        import_node, compiler_path, ".tap");
 }
 
 static FunctionNode *find_function(ASTNode *functions, const char *name) {

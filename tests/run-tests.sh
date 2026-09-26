@@ -305,7 +305,9 @@ run_group() {
     group_directory=$2
     list_file="$TEMP_ROOT/$group_mode.list"
 
-    find "$TEST_ROOT/$group_directory" -type f -name '*.tp' | LC_ALL=C sort > "$list_file"
+    # 源文件后缀 .tp 和 .tap 都支持，用例文件两种都能写。
+    find "$TEST_ROOT/$group_directory" -type f \( -name '*.tp' -o -name '*.tap' \) \
+        | LC_ALL=C sort > "$list_file"
     while IFS= read -r test_file; do
         relative_file=${test_file#"$PROJECT_ROOT/"}
         if [ -n "$FILTER" ]; then

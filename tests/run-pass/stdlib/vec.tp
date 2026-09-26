@@ -5,6 +5,11 @@ struct Pair {
     right: i32,
 }
 
+// 结构体是值类型；需要就地修改或避免拷贝时可以传指针。
+fn accept_values(values: *Vec<string>): i32 {
+    return 0;
+}
+
 fn main(): i32 {
     let numbers: Vec<i32> = vec.with_capacity(1);
     numbers.push(10);
@@ -23,6 +28,21 @@ fn main(): i32 {
     words.push("lang");
     print("%s %s\n", words.get(0), words.get(1));
 
+    // 增长超过初始容量 8，会触发多次扩容。
+    let many: Vec<string> = vec.new();
+    many.push("zero");
+    many.push("one");
+    many.push("two");
+    many.push("three");
+    many.push("four");
+    many.push("five");
+    many.push("six");
+    many.push("seven");
+    many.push("eight");
+    print("%llu %s %s\n", many.len(), many.get(0), many.get(8));
+
+    accept_values(&many);
+
     let pairs: Vec<Pair> = vec.new<Pair>();
     pairs.push(Pair { left: 4, right: 2 });
     let pair: Pair = pairs.get(0);
@@ -30,6 +50,7 @@ fn main(): i32 {
 
     numbers.free();
     words.free();
+    many.free();
     return pairs.free();
 }
 
@@ -38,6 +59,7 @@ fn main(): i32 {
 3 4 10 22
 1 40
 tap lang
+9 zero eight
 6
 - .exit
 0

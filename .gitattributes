@@ -1,5 +1,6 @@
 *.sh text eol=lf
 tests/**/*.tp text eol=lf
+tests/**/*.tap text eol=lf
 tests/**/*.exit text eol=lf
 tests/**/*.stdout text eol=lf
 tests/**/*.stderr text eol=lf
