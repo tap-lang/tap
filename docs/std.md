@@ -61,8 +61,10 @@ fn main(): i32 {
 | `std.env` | `varc(): i32` | 返回当前进程环境变量数量 |
 | `std.env` | `vars(): [string; 256]` | 返回最多 256 个环境变量条目，格式为 `NAME=VALUE`，不足的位置为空字符串 |
 | `std.math` | `PI: f64` | 圆周率常量，值为 `3.141592653589793` |
-| `std.math` | `square(value: i32): i32` | 返回平方值 |
-| `std.math` | `abs(value: i32): i32` | 返回绝对值 |
+| `std.math` | `square<T>(value: T): T` | 返回平方值；`T` 由实参推断，也可显式写 `square<f64>(...)` |
+| `std.math` | `abs<T>(value: T): T` | 返回绝对值；无符号类型原样返回 |
+| `std.math` | `pow<T>(base: T, exponent: u32): T` | 整数次幂，快速幂；指数必须是非负整数 |
+| `std.math` | `pow_f64(base: f64, exponent: f64): f64` | 浮点幂，指数可为小数或负数 |
 | `std.memory` | `malloc<T>(size: uint): *T` | 分配指定字节数的堆内存 |
 | `std.memory` | `realloc<T>(pointer: *T, size: uint): *T` | 调整已有堆内存大小 |
 | `std.memory` | `free<T>(pointer: *T): i32` | 释放堆内存，成功返回 `0` |

@@ -68,6 +68,9 @@ TAP_RUNTIME_API int32_t __tap_file_remove(const char *path);
 // 打印 `panic: <message>` 并以状态 1 终止；不会返回。
 TAP_RUNTIME_API int32_t __tap_panic(const char *message);
 
+// 浮点幂，指数可为小数或负数；底层是 C 库的 pow（需要 libm）。
+TAP_RUNTIME_API double __tap_pow_f64(double base, double exponent);
+
 // 分配堆内存；size 为 0 时 Runtime 会按 1 字节处理。
 TAP_RUNTIME_API void *__tap_malloc(size_t size);
 // 调整堆内存大小；size 为 0 时 Runtime 会按 1 字节处理。

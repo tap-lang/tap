@@ -167,19 +167,21 @@ fn main(): i32 {
 
 ## 标准库
 
-编译阶段会自动加载 [`std/prelude.tp`](std/prelude.tp)，源文件无需显式导入即可使用以下 `i32` 函数：
+编译阶段会自动加载 [`std/prelude.tp`](std/prelude.tp)，源文件无需显式导入即可使用：
 
 ```text
 min(a: i32, b: i32): i32
 max(a: i32, b: i32): i32
-abs(value: i32): i32
 read_key(): i32
 sleep_ms(milliseconds: i32): i32
 clear_screen(): i32
 random(maximum: i32): i32
-square(value: i32): i32  # import std.math; 后通过 math.square(...) 调用
-panic(message: string): i32  # 打印 panic: <message> 并以状态 1 终止
+panic(message: string): i32
+Result<T, E> 及 is_ok / is_err / unwrap_or / unwrap / expect
 ```
+
+[`std.math`](std/math.tp) 需要显式导入，提供 `PI`、`square<T>`、`abs<T>`、`pow<T>` 和
+`pow_f64`；前三个的类型参数由实参推断。
 
 Prelude 中的函数名不能在用户源码中重复定义。编译器依次从环境变量
 `TAP_STD_PATH`、当前目录的 `std`、可执行文件相邻的源码或安装目录查找

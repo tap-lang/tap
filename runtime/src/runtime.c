@@ -1,5 +1,6 @@
 #include "tap_runtime.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -452,6 +453,12 @@ int32_t __tap_file_eof(void *handle) {
 int32_t __tap_file_remove(const char *path) {
     if (!path) return -1;
     return remove(path) == 0 ? 0 : -1;
+}
+
+// 浮点幂：base 的 exponent 次方。指数可以是小数或负数，靠 C 库的 pow 实现
+//（需要 libm，链接时要带 -lm）。定义域外的输入按 C 的规则得到 nan 或 inf。
+double __tap_pow_f64(double base, double exponent) {
+    return pow(base, exponent);
 }
 
 // 打印错误信息并以状态 1 终止程序，用于调用方无法合理恢复的情况。

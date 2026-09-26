@@ -1,13 +1,43 @@
 // 圆周率的 f64 近似值。
 const PI: f64 = 3.141592653589793;
 
-// 返回 value 的平方。
-fn square(value: i32): i32 {
+// 返回 value 的平方。T 可以是任何支持乘法的结果类型相同的标量。
+fn square<T>(value: T): T {
     return value * value;
 }
 
-// 返回 value 的绝对值。
-fn abs(value: i32): i32 {
+// 返回 base 的 exponent 次方，用快速幂实现（O(log exponent) 次乘法）。
+//
+// 指数必须是非负整数，底数可以是整数或浮点。整数底数溢出时按二补数回绕，和 C 一致；
+// 需要小数指数（开方）或负数指数请用 pow_f64。
+fn pow<T>(base: T, exponent: u32): T {
+    let result: T = 1;
+    let factor: T = base;
+    let remaining: u32 = exponent;
+    while (remaining > 0) {
+        if (remaining % 2 == 1) {
+            result = result * factor;
+        }
+        factor = factor * factor;
+        remaining = remaining / 2;
+    }
+    return result;
+}
+
+// 浮点幂所需的内部 Runtime ABI。
+extern fn __tap_pow_f64(base: f64, exponent: f64): f64;
+
+// 浮点幂：指数可以是小数或负数，靠 C 库的 pow 实现。
+// 定义域外的输入按 C 的规则得到 nan 或 inf（例如 pow_f64(-1.0, 0.5) 是 nan）。
+fn pow_f64(base: f64, exponent: f64): f64 {
+    return __tap_pow_f64(base, exponent);
+}
+
+// 返回 value 的绝对值。T 可以是任何支持一元负号和 `<` 的标量。
+// 无符号类型也能实例化：`value < 0` 恒为假，直接原样返回。
+//
+// 和 C 的 abs 一样，最小负数（例如 i32 的 -2147483648）取绝对值会溢出，结果仍是它自己。
+fn abs<T>(value: T): T {
     if (value < 0) {
         return -value;
     } else {

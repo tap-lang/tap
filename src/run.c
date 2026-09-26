@@ -470,14 +470,17 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     result = run_process(argv);
 #else
     // 由 C 编译器驱动选择当前架构的 CRT、动态链接器和 compiler runtime。
+    // `-lm` 必须放在目标文件和静态库之后：glibc 2.34 起 libm 并入了 libc，但更早的发行版
+    // 和 Cygwin 仍需显式链接，否则 Runtime 里的 pow 会报未定义符号。
+    // macOS 走上面的 ld 分支，libm 在 libSystem 里，不需要这个标志。
     const char *linker = "cc";
     char *const dynamic_argv[] = {
         (char *)linker, "-no-pie", (char *)object_file, runtime_static_path,
-        "-o", (char *)exe_file, NULL
+        "-o", (char *)exe_file, "-lm", NULL
     };
     char *const static_argv[] = {
         (char *)linker, "-static", "-no-pie", (char *)object_file,
-        runtime_static_path, "-o", (char *)exe_file, NULL
+        runtime_static_path, "-o", (char *)exe_file, "-lm", NULL
     };
     result = run_process(static_link ? static_argv : dynamic_argv);
 #endif

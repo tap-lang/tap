@@ -69,6 +69,16 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 这是 `std.parse` 里唯一不纯 tap 的函数；其余解析和整数格式化都由 tap 自己实现。
 返回值与其他 Runtime 字符串一样在进程退出时统一释放。
 
+## 数学 ABI
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_pow_f64(base, exponent): f64` | 浮点幂，底层是 C 库的 `pow` |
+
+指数是小数或负数时没法用快速幂算，必须走 libm。**这是 Runtime 里唯一需要 `-lm` 的符号**：
+macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的链接命令显式带了 `-lm`
+（放在目标文件之后），因为 glibc 2.34 之前 libm 是独立的。
+
 ## 终止 ABI
 
 | C ABI | 行为 |
