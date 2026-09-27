@@ -65,7 +65,8 @@ typedef struct ASTNode {
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
 | `NODE_CONTINUE_STATEMENT` | `ASTNode` | 跳到当前循环的更新块 |
 | `NODE_MATCH_STATEMENT` | `MatchStatementNode` | 被匹配表达式和分支链表 |
-| `NODE_MATCH_ARM` | `MatchArmNode` | 模式（`enum_name` / `variant_name`，通配分支两者为 `NULL`）、载荷绑定变量链表和分支体 |
+| `NODE_MATCH_ARM` | `MatchArmNode` | 模式（`enum_name` / `variant_name`，通配分支两者为 `NULL`）、载荷绑定变量链表、分支体（`body`）或分支值（`value`） |
+| `NODE_TRY` | `TryNode` | `?` 传播表达式的内层表达式，以及用于诊断的文件和行列 |
 | `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举和泛型类型实参，或通过 `element_type` 递归表示固定长度数组和指针 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或

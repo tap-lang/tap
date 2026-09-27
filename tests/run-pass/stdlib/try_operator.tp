@@ -1,0 +1,121 @@
+// `?` 传播运算符：内层求值为 Result，成功取载荷，失败从当前函数提前返回 Err。
+//
+// 对比一下没有 `?` 时要写的东西——每个调用点都要「声明结果变量 + 占位变量 + match 两个分支
+// + 判失败 + 提前返回」，三步链要 29 行。有了 `?` 是 6 行。
+fn step1(value: i32): Result<i32, string> {
+    if (value < 0) {
+        return Result<i32, string>.Err("step1: negative");
+    }
+    return Result<i32, string>.Ok(value + 1);
+}
+
+fn step2(value: i32): Result<i32, string> {
+    if (value > 100) {
+        return Result<i32, string>.Err("step2: too big");
+    }
+    return Result<i32, string>.Ok(value * 2);
+}
+
+fn step3(value: i32): Result<i32, string> {
+    if (value == 0) {
+        return Result<i32, string>.Err("step3: zero");
+    }
+    return Result<i32, string>.Ok(value - 3);
+}
+
+fn pipeline(value: i32): Result<i32, string> {
+    let a: i32 = step1(value)?;
+    let b: i32 = step2(a)?;
+    let c: i32 = step3(b)?;
+    return Result<i32, string>.Ok(c);
+}
+
+fn doubled(value: i32): i32 {
+    return value + value;
+}
+
+// 直接用在 return 里。
+fn in_return(value: i32): Result<i32, string> {
+    return Result<i32, string>.Ok(step1(value)?);
+}
+
+// 作为函数实参。
+fn as_argument(value: i32): Result<i32, string> {
+    return Result<i32, string>.Ok(doubled(step1(value)?));
+}
+
+// 泛型函数里也能用。
+fn generic_try<T>(value: Result<T, string>): Result<T, string> {
+    let inner: T = value?;
+    return Result<T, string>.Ok(inner);
+}
+
+// match 分支里也能用。
+fn in_match(value: i32): Result<i32, string> {
+    let source: Result<i32, string> = step1(value);
+    let out: i32 = match (source) {
+        Result.Ok(inner) => step2(inner)?,
+        Result.Err(reason) => 0,
+    };
+    return Result<i32, string>.Ok(out);
+}
+
+fn reason(value: Result<i32, string>): string {
+    return match (value) {
+        Result.Ok(inner) => "ok",
+        Result.Err(message) => message,
+    };
+}
+
+fn main(): i32 {
+    let chain: Result<i32, string> = pipeline(3);
+    print("chain=%d reason=%s\n", unwrap_or(chain, -1), reason(chain));
+
+    let from_return: Result<i32, string> = in_return(5);
+    print("return=%d reason=%s\n", unwrap_or(from_return, -1), reason(from_return));
+
+    let from_argument: Result<i32, string> = as_argument(5);
+    print("argument=%d reason=%s\n",
+        unwrap_or(from_argument, -1), reason(from_argument));
+
+    let source: Result<i32, string> = Result<i32, string>.Ok(9);
+    let from_generic: Result<i32, string> = generic_try(source);
+    print("generic=%d reason=%s\n",
+        unwrap_or(from_generic, -1), reason(from_generic));
+
+    let from_match: Result<i32, string> = in_match(5);
+    print("match=%d reason=%s\n", unwrap_or(from_match, -1), reason(from_match));
+
+    // 失败时错误信息原样带出，不做任何包装。
+    let failed: Result<i32, string> = pipeline(-1);
+    print("failed=%d reason=%s\n", unwrap_or(failed, -1), reason(failed));
+
+    // step2 检查的是它的入参，所以 50 会顺利走完（51 -> 102 -> 99）。
+    let late: Result<i32, string> = pipeline(50);
+    print("late=%d reason=%s\n", unwrap_or(late, -1), reason(late));
+
+    // 入参超过 100 才会触发 step2 的失败。
+    let too_big: Result<i32, string> = pipeline(101);
+    print("too_big=%d reason=%s\n", unwrap_or(too_big, -1), reason(too_big));
+
+    let generic_source: Result<i32, string> = Result<i32, string>.Err("boom");
+    let generic_failed: Result<i32, string> = generic_try(generic_source);
+    print("generic_failed=%d reason=%s\n",
+        unwrap_or(generic_failed, -1), reason(generic_failed));
+    return 0;
+}
+
+/** -- test
+- .stdout
+chain=5 reason=ok
+return=6 reason=ok
+argument=12 reason=ok
+generic=9 reason=ok
+match=12 reason=ok
+failed=-1 reason=step1: negative
+late=99 reason=ok
+too_big=-1 reason=step2: too big
+generic_failed=-1 reason=boom
+- .exit
+0
+-- */

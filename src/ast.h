@@ -38,6 +38,7 @@ enum NodeType {
     NODE_CONTINUE_STATEMENT,        // continue 语句节点
     NODE_MATCH_STATEMENT,           // match 解构语句节点
     NODE_MATCH_ARM,                 // match 分支节点
+    NODE_TRY,                       // ? 传播表达式节点
     NODE_VAR_TYPE                   // 数据类型节点
 };
 
@@ -305,6 +306,16 @@ typedef struct {
     ASTNode *arms;         // MatchArmNode 链表
 } MatchStatementNode;
 
+// `?` 传播表达式节点。
+// 内层求值为 Result：成功时整个表达式取载荷值，失败时从当前函数提前返回 Err。
+typedef struct {
+    ASTNode base;
+    ASTNode *inner;        // 被传播的 Result 表达式
+    char *filename;        // 所在文件，用于诊断
+    int line;
+    int column;
+} TryNode;
+
 // 创建节点的函数声明
 ProgramNode *create_program();
 ImportNode *create_import(
@@ -354,6 +365,7 @@ void add_enum_type_param(EnumNode *enum_node, IdentifierNode *type_param);
 void add_enum_variant(EnumNode *enum_node, EnumVariantNode *variant);
 void add_enum_variant_payload(EnumVariantNode *variant, VarTypeNode *type);
 MatchStatementNode *create_match_statement(ASTNode *expression);
+TryNode *create_try(ASTNode *inner);
 MatchArmNode *create_match_arm(char *enum_name, char *variant_name);
 void add_match_arm(MatchStatementNode *statement, MatchArmNode *arm);
 void add_match_binding(MatchArmNode *arm, IdentifierNode *binding);

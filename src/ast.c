@@ -1129,6 +1129,21 @@ MatchStatementNode *create_match_statement(ASTNode *expression) {
     return statement;
 }
 
+TryNode *create_try(ASTNode *inner) {
+    TryNode *node = (TryNode *)malloc(sizeof(TryNode));
+    if (!node) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    node->base.type = NODE_TRY;
+    node->base.next = NULL;
+    node->inner = inner;
+    node->filename = NULL;
+    node->line = 0;
+    node->column = 0;
+    return node;
+}
+
 // 创建 match 分支；enum_name 与 variant_name 同时为 NULL 表示通配分支。
 MatchArmNode *create_match_arm(char *enum_name, char *variant_name) {
     MatchArmNode *arm = (MatchArmNode *)malloc(sizeof(MatchArmNode));
@@ -1368,6 +1383,12 @@ void free_ast(ASTNode *node) {
             MatchStatementNode *statement = (MatchStatementNode *)node;
             free_ast(statement->expression);
             free_ast(statement->arms);
+            break;
+        }
+        case NODE_TRY: {
+            TryNode *try_node = (TryNode *)node;
+            free_ast(try_node->inner);
+            free(try_node->filename);
             break;
         }
         case NODE_MATCH_ARM: {

@@ -367,6 +367,15 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
                 clone_expression(index->array, template, bindings),
                 clone_expression(index->index, template, bindings));
         }
+        case NODE_TRY: {
+            TryNode *try_node = (TryNode *)source;
+            TryNode *copy = create_try(
+                clone_expression(try_node->inner, template, bindings));
+            copy->filename = try_node->filename ? strdup(try_node->filename) : NULL;
+            copy->line = try_node->line;
+            copy->column = try_node->column;
+            return (ASTNode *)copy;
+        }
         case NODE_MATCH_STATEMENT: {
             MatchStatementNode *match_node = (MatchStatementNode *)source;
             MatchStatementNode *copy = create_match_statement(
@@ -805,6 +814,9 @@ static void materialize_expression(GenericContext *context, ASTNode *expression)
             materialize_expression(context, node->index);
             break;
         }
+        case NODE_TRY:
+            materialize_expression(context, ((TryNode *)expression)->inner);
+            break;
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             for (ASTNode *type = call->type_arguments; type; type = type->next) {
@@ -1283,6 +1295,14 @@ static VarTypeNode *process_expression(GenericContext *context,
                 context, (FunctionCallNode *)expression, expected);
         case NODE_INDEX_EXPRESSION:
             return index_type(context, (IndexExpressionNode *)expression);
+        case NODE_TRY: {
+            // 内层按它自己的签名推断，不要把 `?` 的目标类型传下去：内层是 Result<T, string>，
+            // 而目标类型是 T，硬统一会失败。
+            VarTypeNode *inner = process_expression(
+                context, ((TryNode *)expression)->inner, NULL);
+            free_ast((ASTNode *)inner);
+            return expected ? clone_type(expected) : NULL;
+        }
         case NODE_REFERENCE: {
             VarTypeNode *target = process_expression(
                 context, ((ReferenceNode *)expression)->target, NULL);

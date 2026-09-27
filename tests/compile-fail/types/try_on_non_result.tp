@@ -1,0 +1,20 @@
+fn plain(value: i32): i32 {
+    return value;
+}
+
+fn helper(): Result<i32, string> {
+    // 内层不是 Result，? 无从传播。
+    let value: i32 = plain(1)?;
+    return Result<i32, string>.Ok(value);
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: `?` requires a Result value
+- .exit
+1
+-- */

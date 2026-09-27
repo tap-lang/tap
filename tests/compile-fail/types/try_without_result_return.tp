@@ -1,0 +1,17 @@
+fn step(value: i32): Result<i32, string> {
+    return Result<i32, string>.Ok(value);
+}
+
+fn main(): i32 {
+    // 所在函数返回 i32，Err 带不出去。
+    let value: i32 = step(1)?;
+    print("%d\n", value);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: `?` requires the enclosing function to return a payload enum
+- .exit
+1
+-- */

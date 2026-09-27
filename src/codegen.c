@@ -481,6 +481,8 @@ static LLVMValueRef generate_match_expression(
     CodeGenContext *context, MatchStatementNode *match_node,
     const VarTypeNode *target_type);
 static int match_is_expression(MatchStatementNode *match_node);
+static LLVMValueRef generate_try_expression(
+    CodeGenContext *context, TryNode *try_node, const VarTypeNode *target_type);
 static const VarTypeNode *indexed_value_type(
     CodeGenContext *context, ASTNode *expression);
 static const char *index_base_name(ASTNode *expression);
@@ -730,6 +732,10 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
     // 提前查会查不到。类型检查交给 generate_match_expression，那时绑定已经可见。
     if (expression && expression->type == NODE_MATCH_STATEMENT &&
         match_is_expression((MatchStatementNode *)expression)) {
+        return 1;
+    }
+    // `?` 同理：载荷类型要到生成阶段才解析得出来，这里不预先判定。
+    if (expression && expression->type == NODE_TRY) {
         return 1;
     }
     if (target_type->is_pointer) {
@@ -1210,6 +1216,14 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
         free_ast((ASTNode *)target_type);
         return value;
     }
+    // 标量目标也要拦：变量声明的标量分支走这里，不是 generate_expression_for_type。
+    if (expression && expression->type == NODE_TRY) {
+        VarTypeNode *target_type = create_var_type(target);
+        LLVMValueRef value = generate_try_expression(
+            context, (TryNode *)expression, target_type);
+        free_ast((ASTNode *)target_type);
+        return value;
+    }
     if (expression && expression->type == NODE_LITERAL && is_integer_type(target)) {
         LiteralNode *literal = (LiteralNode *)expression;
         if (is_integer_type(literal->literal_type)) {
@@ -1296,6 +1310,16 @@ static LLVMValueRef generate_expression_for_type(
         }
         return generate_match_expression(
             context, (MatchStatementNode *)expression, target_type);
+    }
+    // `expr?` 同样要有目标类型，才知道成功那条路按什么类型取载荷。
+    if (expression && expression->type == NODE_TRY) {
+        if (!target_type) {
+            fprintf(stderr,
+                "error: `?` needs a target type (add a type annotation)\n");
+            exit(1); // 中文：? 需要目标类型（补上类型标注）
+        }
+        return generate_try_expression(
+            context, (TryNode *)expression, target_type);
     }
     if (!target_type) return generate_expression(context, expression);
     if (target_type->is_array) {
@@ -2990,6 +3014,116 @@ static LLVMValueRef generate_match_expression(
     return LLVMBuildLoad2(context->builder, result_type, result_slot, "match_result_value");
 }
 
+// 把 value 从 source_type 转到 target_type；两边都是标量时插一条转换指令。
+static LLVMValueRef try_payload_value(
+    CodeGenContext *context, LLVMValueRef value, const VarTypeNode *source_type,
+    const VarTypeNode *target_type) {
+    if (!target_type || var_type_equal(source_type, target_type)) return value;
+    if (source_type && target_type && !target_type->struct_name &&
+        !target_type->is_pointer && !target_type->is_array) {
+        return cast_value(context, value, source_type->type, target_type->type);
+    }
+    fprintf(stderr,
+        "error: `?` cannot convert the payload to the enclosing return type\n");
+    exit(1); // 中文：? 无法把载荷转成所在函数的返回类型
+    return value;
+}
+
+// `expr?`：内层求值为 Result，成功时整个表达式取载荷，失败时从当前函数提前返回 Err。
+// 目标类型由调用处提供（和 match 表达式、结构体字面量一样）。
+static LLVMValueRef generate_try_expression(
+    CodeGenContext *context, TryNode *try_node, const VarTypeNode *target_type) {
+    const VarTypeNode *inner_type = expression_var_type(context, try_node->inner);
+    EnumNode *inner_enum = inner_type && inner_type->struct_name
+        ? struct_tagged_enum(context, inner_type->struct_name) : NULL;
+    if (!inner_enum || !inner_enum->has_payload) {
+        print_diagnostic(stderr, "error", try_node->filename, try_node->line,
+            try_node->column, "`?` requires a Result value");
+        exit(1); // 中文：? 需要 Result 类型的值
+    }
+
+    // 所在函数的返回类型必须也是载荷枚举，否则 Err 带不出去。
+    const VarTypeNode *return_type = context->current_return_var_type;
+    EnumNode *return_enum = return_type && return_type->struct_name
+        ? struct_tagged_enum(context, return_type->struct_name) : NULL;
+    if (!return_enum || !return_enum->has_payload) {
+        print_diagnostic(stderr, "error", try_node->filename, try_node->line,
+            try_node->column,
+            "`?` requires the enclosing function to return a payload enum");
+        exit(1); // 中文：? 要求所在函数返回载荷枚举
+    }
+
+    EnumVariantNode *ok_variant = find_enum_variant(inner_enum, "Ok");
+    EnumVariantNode *err_variant = find_enum_variant(inner_enum, "Err");
+    EnumVariantNode *return_err = find_enum_variant(return_enum, "Err");
+    if (!ok_variant || !err_variant || !return_err) {
+        print_diagnostic(stderr, "error", try_node->filename, try_node->line,
+            try_node->column, "`?` requires Ok and Err variants");
+        exit(1); // 中文：? 要求 Ok 和 Err 两个成员
+    }
+
+    StructNode *inner_struct_node = find_struct(context, inner_type->struct_name);
+    LLVMTypeRef inner_struct = get_llvm_struct_type_by_name(
+        context, inner_type->struct_name);
+    LLVMTypeRef i32_type = LLVMInt32TypeInContext(context->context);
+
+    LLVMValueRef inner_value =
+        generate_expression_for_type(context, try_node->inner, inner_type);
+    LLVMValueRef slot = create_entry_alloca(context, inner_struct, "try_value");
+    LLVMBuildStore(context->builder, inner_value, slot);
+
+    LLVMValueRef tag = LLVMBuildLoad2(context->builder, i32_type,
+        LLVMBuildStructGEP2(context->builder, inner_struct, slot, 0, "try_tag_ptr"),
+        "try_tag");
+
+    LLVMValueRef function =
+        LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    LLVMBasicBlockRef err_block = LLVMAppendBasicBlockInContext(
+        context->context, function, "try_err");
+    LLVMBasicBlockRef ok_block = LLVMAppendBasicBlockInContext(
+        context->context, function, "try_ok");
+    LLVMBuildCondBr(context->builder,
+        LLVMBuildICmp(context->builder, LLVMIntEQ, tag,
+            LLVMConstInt(i32_type, ok_variant->tag, 0), "try_is_ok"),
+        ok_block, err_block);
+
+    // 失败：把内层 Err 的载荷搬到当前函数的返回类型上，然后 ret。
+    LLVMPositionBuilderAtEnd(context->builder, err_block);
+    {
+        StructFieldNode *source_field =
+            struct_field_at(inner_struct_node, err_variant->field_index);
+        LLVMTypeRef source_type = get_llvm_var_type(context, source_field->field_type);
+        LLVMValueRef payload = LLVMBuildLoad2(context->builder, source_type,
+            LLVMBuildStructGEP2(context->builder, inner_struct, slot,
+                err_variant->field_index, "try_err_ptr"),
+            "try_err_value");
+
+        StructNode *return_struct_node = find_struct(context, return_type->struct_name);
+        StructFieldNode *target_field =
+            struct_field_at(return_struct_node, return_err->field_index);
+        LLVMTypeRef return_struct = get_llvm_struct_type_by_name(
+            context, return_type->struct_name);
+        LLVMValueRef result = LLVMGetUndef(return_struct);
+        result = LLVMBuildInsertValue(context->builder, result,
+            LLVMConstInt(i32_type, return_err->tag, 0), 0, "try_return_tag");
+        result = LLVMBuildInsertValue(context->builder, result,
+            try_payload_value(context, payload, source_field->field_type,
+                target_field->field_type),
+            return_err->field_index, "try_return");
+        LLVMBuildRet(context->builder, result);
+    }
+
+    // 成功：取载荷，按目标类型转一下就是整个表达式的值。
+    LLVMPositionBuilderAtEnd(context->builder, ok_block);
+    StructFieldNode *ok_field = struct_field_at(inner_struct_node, ok_variant->field_index);
+    LLVMTypeRef ok_type = get_llvm_var_type(context, ok_field->field_type);
+    LLVMValueRef ok_value = LLVMBuildLoad2(context->builder, ok_type,
+        LLVMBuildStructGEP2(context->builder, inner_struct, slot,
+            ok_variant->field_index, "try_ok_ptr"),
+        "try_ok_value");
+    return try_payload_value(context, ok_value, ok_field->field_type, target_type);
+}
+
 // 逐条生成语句列表，遇到已终结的基本块时停止。
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement) {
     for (; statement; statement = statement->next) {
@@ -3015,6 +3149,12 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     fprintf(stderr,
                         "error: match expression needs an explicit type annotation\n");
                     exit(1); // 中文：match 表达式需要显式的类型标注
+                }
+                if (!declaration->type && declaration->expression &&
+                    declaration->expression->type == NODE_TRY) {
+                    fprintf(stderr,
+                        "error: `?` needs an explicit type annotation\n");
+                    exit(1); // 中文：? 需要显式的类型标注
                 }
                 validate_var_type(context, declaration->type);
                 if (declaration->type && declaration->type->is_array) {

@@ -78,6 +78,7 @@ enum TokenType {
     TOKEN_DOT,         // .
     TOKEN_LBRACKET,    // [
     TOKEN_RBRACKET,    // ]
+    TOKEN_QUESTION,    // ?
 
     // 特殊标记
     TOKEN_EOF          // 文件结束

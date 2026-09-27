@@ -1146,6 +1146,20 @@ static ASTNode *parse_factor(Parser *parser) {
 
     ASTNode *expression = parse_primary(parser);
     for (;;) {
+        // 后缀 `?`：Result 传播，失败时从当前函数提前返回 Err。
+        // 绑定最紧，`a?[0]` 读作 `(a?)[0]`。
+        if (parser->current_token->type == TOKEN_QUESTION) {
+            int line = parser->current_token->line;
+            int column = parser->current_token->column;
+            consume(parser, TOKEN_QUESTION);
+            TryNode *try_node = create_try(expression);
+            try_node->filename = strdup(parser->lexer->filename);
+            try_node->line = line;
+            try_node->column = column;
+            expression = (ASTNode *)try_node;
+            continue;
+        }
+
         if (parser->current_token->type == TOKEN_LBRACKET) {
             consume(parser, TOKEN_LBRACKET);
             ASTNode *index = parse_expression(parser);

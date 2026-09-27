@@ -536,6 +536,8 @@ Token *get_next_token(Lexer *lexer) {
             return create_token(lexer, TOKEN_COLON, lexer->current - 1, lexer->current);
         case '.':
             return create_token(lexer, TOKEN_DOT, lexer->current - 1, lexer->current);
+        case '?':
+            return create_token(lexer, TOKEN_QUESTION, lexer->current - 1, lexer->current);
     }
     
     // 未识别的字符
