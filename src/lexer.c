@@ -506,6 +506,10 @@ Token *get_next_token(Lexer *lexer) {
                 return create_token(lexer, TOKEN_NOT_EQUAL, lexer->current - 2, lexer->current);
             }
             return create_token(lexer, TOKEN_NOT, lexer->current - 1, lexer->current);
+        // 注意：`<` 和 `>` 一律按单字符产出，**不合并**成 `<<` / `>>`。
+        // 泛型实参的配对扫描（Parser 的 generic_arguments_followed_by）靠逐个数字符
+        // `<` / `>` 来配平嵌套，合并成双字符 token 会让 `Vec<Vec<i32>>` 直接解析失败。
+        // 移位的识别交给 Parser 做前瞻。
         case '<':
             if (peek(lexer) == '=') {
                 advance(lexer);
@@ -531,7 +535,11 @@ Token *get_next_token(Lexer *lexer) {
                 advance(lexer);
                 return create_token(lexer, TOKEN_OR, lexer->current - 2, lexer->current);
             }
-            break;
+            return create_token(lexer, TOKEN_BITWISE_OR, lexer->current - 1, lexer->current);
+        case '^':
+            return create_token(lexer, TOKEN_BITWISE_XOR, lexer->current - 1, lexer->current);
+        case '~':
+            return create_token(lexer, TOKEN_BITWISE_NOT, lexer->current - 1, lexer->current);
         case ':':
             return create_token(lexer, TOKEN_COLON, lexer->current - 1, lexer->current);
         case '.':

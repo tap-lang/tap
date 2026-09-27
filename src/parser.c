@@ -60,6 +60,10 @@ static void consume(Parser *parser, enum TokenType expected_type) {
 static ASTNode *parse_expression(Parser *parser); // 解析表达式（逻辑或、逻辑与、比较、加减、乘除取模）
 static ASTNode *parse_logical_or(Parser *parser); // 解析逻辑或 ||
 static ASTNode *parse_logical_and(Parser *parser); // 解析逻辑与 &&
+static ASTNode *parse_bitwise_or(Parser *parser); // 解析按位或 |
+static ASTNode *parse_bitwise_xor(Parser *parser); // 解析按位异或 ^
+static ASTNode *parse_bitwise_and(Parser *parser); // 解析按位与 &
+static ASTNode *parse_shift(Parser *parser); // 解析移位 << >>
 static ASTNode *parse_addition(Parser *parser);
 static ASTNode *parse_term(Parser *parser); // 解析项（乘法、除法和取模）
 static ASTNode *parse_factor(Parser *parser); // 解析因子（一元运算和基本表达式）
@@ -72,6 +76,23 @@ static ASTNode *parse_while_statement(Parser *parser);
 static ASTNode *parse_loop_control_statement(Parser *parser);
 static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name);
 static ASTNode *parse_block(Parser *parser); // 解析代码块（由花括号包围的语句序列）
+
+// 预读下一个 token 的类型但不消费。词法层刻意不把 `<<` / `>>` 合并成双字符 token
+//（合并会破坏泛型的 `<` / `>` 配对扫描），移位的识别只能靠这里做前瞻。
+static enum TokenType peek_next_token_type(Parser *parser) {
+    char *saved_current = parser->lexer->current;
+    int saved_line = parser->lexer->line;
+    int saved_column = parser->lexer->column;
+
+    Token *token = get_next_token(parser->lexer);
+    enum TokenType type = token ? token->type : TOKEN_EOF;
+    if (token) free_token(token);
+
+    parser->lexer->current = saved_current;
+    parser->lexer->line = saved_line;
+    parser->lexer->column = saved_column;
+    return type;
+}
 
 // 前瞻跳过 `<...>`，判断紧随其后的 token 是不是 expected。
 // 泛型实参和小于号在语法上有歧义，靠这个把几种用法区分开。
@@ -1144,6 +1165,15 @@ static ASTNode *parse_factor(Parser *parser) {
             OP_EQUAL, factor, (ASTNode *)create_bool_literal(0));
     }
 
+    // 按位取反降级为 `x ^ -1`：全 1 与 x 异或就是逐位取反。
+    // LLVMConstInt 对全 1 值只取低位，所以各宽度下都能得到正确的 -1。
+    if (parser->current_token->type == TOKEN_BITWISE_NOT) {
+        consume(parser, TOKEN_BITWISE_NOT);
+        ASTNode *factor = parse_factor(parser);
+        return (ASTNode *)create_binary_op(
+            OP_BITWISE_XOR, factor, (ASTNode *)create_int_literal((uint64_t)-1));
+    }
+
     ASTNode *expression = parse_primary(parser);
     for (;;) {
         // 后缀 `?`：Result 传播，失败时从当前函数提前返回 Err。
@@ -1242,7 +1272,7 @@ static ASTNode *parse_term(Parser *parser) {
 
 // 解析比较表达式（==, !=, <, >, <=, >=）
 static ASTNode *parse_comparison(Parser *parser) {
-    ASTNode *left = parse_addition(parser);
+    ASTNode *left = parse_shift(parser);
     
     while (parser->current_token->type == TOKEN_EQUAL || 
            parser->current_token->type == TOKEN_NOT_EQUAL || 
@@ -1278,7 +1308,7 @@ static ASTNode *parse_comparison(Parser *parser) {
         }
         
         consume(parser, token->type);
-        left = (ASTNode *)create_binary_op(op_type, left, parse_addition(parser));
+        left = (ASTNode *)create_binary_op(op_type, left, parse_shift(parser));
     }
     
     return left;
@@ -1302,13 +1332,73 @@ static ASTNode *parse_addition(Parser *parser) {
     return left;
 }
 
+// 解析移位（<< >>）。词法层不合并双字符，靠前瞻判断是不是成对的 `<` / `>`；
+// 单个 `<` / `>` 属于比较运算，留给 parse_comparison 处理。
+static ASTNode *parse_shift(Parser *parser) {
+    ASTNode *left = parse_addition(parser);
+
+    while (parser->current_token->type == TOKEN_LESS_THAN ||
+           parser->current_token->type == TOKEN_GREATER_THAN) {
+        enum TokenType operator_type = parser->current_token->type;
+        if (peek_next_token_type(parser) != operator_type) break;
+
+        consume(parser, operator_type);
+        consume(parser, operator_type);
+        left = (ASTNode *)create_binary_op(
+            operator_type == TOKEN_LESS_THAN ? OP_SHIFT_LEFT : OP_SHIFT_RIGHT,
+            left, parse_addition(parser));
+    }
+
+    return left;
+}
+
+// 解析按位与（&）。一元位置的 `&` 是取地址，在 parse_factor 里就被消耗了；
+// 能走到这里的 `&` 一定是二元运算符。
+static ASTNode *parse_bitwise_and(Parser *parser) {
+    ASTNode *left = parse_comparison(parser);
+
+    while (parser->current_token->type == TOKEN_REFERENCE) {
+        consume(parser, TOKEN_REFERENCE);
+        left = (ASTNode *)create_binary_op(
+            OP_BITWISE_AND, left, parse_comparison(parser));
+    }
+
+    return left;
+}
+
+// 解析按位异或（^）。优先级低于按位与，高于按位或。
+static ASTNode *parse_bitwise_xor(Parser *parser) {
+    ASTNode *left = parse_bitwise_and(parser);
+
+    while (parser->current_token->type == TOKEN_BITWISE_XOR) {
+        consume(parser, TOKEN_BITWISE_XOR);
+        left = (ASTNode *)create_binary_op(
+            OP_BITWISE_XOR, left, parse_bitwise_and(parser));
+    }
+
+    return left;
+}
+
+// 解析按位或（|）。优先级低于按位异或，高于逻辑与。
+static ASTNode *parse_bitwise_or(Parser *parser) {
+    ASTNode *left = parse_bitwise_xor(parser);
+
+    while (parser->current_token->type == TOKEN_BITWISE_OR) {
+        consume(parser, TOKEN_BITWISE_OR);
+        left = (ASTNode *)create_binary_op(
+            OP_BITWISE_OR, left, parse_bitwise_xor(parser));
+    }
+
+    return left;
+}
+
 // 解析逻辑与（&&）。优先级低于比较，高于逻辑或。
 static ASTNode *parse_logical_and(Parser *parser) {
-    ASTNode *left = parse_comparison(parser);
+    ASTNode *left = parse_bitwise_or(parser);
 
     while (parser->current_token->type == TOKEN_AND) {
         consume(parser, TOKEN_AND);
-        left = (ASTNode *)create_binary_op(OP_AND, left, parse_comparison(parser));
+        left = (ASTNode *)create_binary_op(OP_AND, left, parse_bitwise_or(parser));
     }
 
     return left;

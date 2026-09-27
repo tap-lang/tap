@@ -1568,6 +1568,12 @@ static LLVMValueRef generate_reference(
     exit(1);
 }
 
+// 位运算只对整数有意义，浮点操作数要在分派处就拦下来，别落到通用报错。
+static int is_bitwise_operator(enum BinaryOpType op) {
+    return op == OP_BITWISE_AND || op == OP_BITWISE_OR || op == OP_BITWISE_XOR ||
+           op == OP_SHIFT_LEFT || op == OP_SHIFT_RIGHT;
+}
+
 // 生成整数二元运算或比较表达式。
 static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNode *binary,
                                             enum LiteralType operand_type) {
@@ -1586,6 +1592,19 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
             return is_unsigned_type(operand_type)
                 ? LLVMBuildURem(context->builder, left, right, "urem_result")
                 : LLVMBuildSRem(context->builder, left, right, "srem_result");
+        case OP_BITWISE_AND:
+            return LLVMBuildAnd(context->builder, left, right, "and_result");
+        case OP_BITWISE_OR:
+            return LLVMBuildOr(context->builder, left, right, "or_result");
+        case OP_BITWISE_XOR:
+            return LLVMBuildXor(context->builder, left, right, "xor_result");
+        case OP_SHIFT_LEFT:
+            return LLVMBuildShl(context->builder, left, right, "shl_result");
+        case OP_SHIFT_RIGHT:
+            // 右移分算术和逻辑：有符号补符号位，无符号补零。
+            return is_unsigned_type(operand_type)
+                ? LLVMBuildLShr(context->builder, left, right, "lshr_result")
+                : LLVMBuildAShr(context->builder, left, right, "ashr_result");
         case OP_EQUAL:
             return LLVMBuildICmp(context->builder, LLVMIntEQ, left, right, "eq_result");
         case OP_NOT_EQUAL:
@@ -2229,6 +2248,11 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 return generate_string_comparison(context, binary);
             }
             if (is_float_type(left_type) || is_float_type(right_type)) {
+                if (is_bitwise_operator(binary->op_type)) {
+                    fprintf(stderr,
+                        "error: bitwise operators require integer operands\n"); // 中文：位运算需要整数操作数
+                    exit(1);
+                }
                 return generate_float_binary(
                     context, binary, common_float_type(left_type, right_type));
             }

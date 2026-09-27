@@ -65,7 +65,12 @@ enum TokenType {
     TOKEN_GREATER_THAN_OR_EQUAL,    // >=
     TOKEN_AND,                      // &&
     TOKEN_OR,                       // ||
+    // `&` 在语法上有歧义：一元位置是取地址，二元位置是按位与。词法层无法区分，
+    // 统一产出 TOKEN_REFERENCE，由 Parser 按所处位置决定语义。
     TOKEN_REFERENCE,                // &
+    TOKEN_BITWISE_OR,               // |
+    TOKEN_BITWISE_XOR,              // ^
+    TOKEN_BITWISE_NOT,              // ~
 
     // 分隔符
     TOKEN_LPAREN,      // (

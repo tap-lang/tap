@@ -1,0 +1,74 @@
+// 位运算：& | ^ << >> 与一元 ~。优先级对齐 C —— & 高于 ^ 高于 |，
+// 移位低于加减、高于比较。
+import std.vec as vec;
+
+fn main(): i32 {
+    let x: i32 = 240;
+    print("and=%d\n", x & 15);
+    print("or=%d\n", x | 15);
+    print("xor=%d\n", x ^ 255);
+    print("shr=%d\n", x >> 4);
+    print("shl=%d\n", x << 1);
+    print("not=%d\n", ~x);
+
+    // 优先级：& 高于 ^ 高于 |
+    print("prec_and_over_or=%d\n", 1 | 2 & 3);
+    print("prec_xor_middle=%d\n", 1 ^ 3 & 1);
+    // 移位低于加减：1 << (2 + 1)
+    print("prec_shift_after_add=%d\n", 1 << 2 + 1);
+    // 移位高于比较：(1 << 2) == 4
+    print("prec_shift_before_cmp=%d\n", 1 << 2 == 4);
+
+    // 右移：有符号补符号位（算术），无符号补零（逻辑）
+    let signed: i32 = -16;
+    print("arith_shr=%d\n", signed >> 2);
+    let unsigned: u32 = 4294967280;
+    print("logical_shr=%llu\n", unsigned >> 4);
+
+    // 窄类型先做整数提升再取反，结果落在 int 宽度上（与 C 一致）
+    let byte: u8 = 240;
+    print("byte_not=%d\n", ~byte);
+    // 显式赋回 u8 才会截断到原宽度
+    let truncated: u8 = ~byte;
+    print("byte_not_truncated=%d\n", truncated);
+
+    // 一元 & 是取地址，二元 & 是按位与，两者在同一作用域内共存
+    let a: i32 = 12;
+    let b: i32 = 10;
+    let address: *i32 = &a;
+    print("mixed=%d\n", a & b);
+    print("address_taken=%d\n", 1);
+
+    // 嵌套泛型结尾的 `>>` 必须继续被当作两个独立的 `>`：词法层不能把它合并成
+    // 右移运算符，否则下面这两行的类型实参解析会失败。
+    let inner: Vec<i32> = vec.new();
+    inner = vec.push<i32>(inner, 7);
+    let outer: Vec<Vec<i32>> = vec.new();
+    outer = vec.push<Vec<i32>>(outer, inner);
+    print("nested_vec=%d\n", vec.get<i32>(vec.get<Vec<i32>>(outer, 0), 0));
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+and=0
+or=255
+xor=15
+shr=15
+shl=480
+not=-241
+prec_and_over_or=3
+prec_xor_middle=0
+prec_shift_after_add=8
+prec_shift_before_cmp=1
+arith_shr=-4
+logical_shr=268435455
+byte_not=-241
+byte_not_truncated=15
+mixed=8
+address_taken=1
+nested_vec=7
+- .exit
+0
+-- */

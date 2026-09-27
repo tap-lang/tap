@@ -1,0 +1,13 @@
+// 位运算只对整数有意义，浮点操作数要在 Codegen 分派处就拦下来。
+fn main(): i32 {
+    let f: f64 = 1.5;
+    print("%d\n", f & 1);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: bitwise operators require integer operands
+- .exit
+1
+-- */

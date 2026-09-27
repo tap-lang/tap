@@ -62,6 +62,7 @@ static const char *binary_op_str(enum BinaryOpType op) {
     case OP_SUBTRACT: return "-";
     case OP_MULTIPLY: return "*";
     case OP_DIVIDE: return "/";
+    case OP_MODULO: return "%";
     case OP_EQUAL: return "==";
     case OP_NOT_EQUAL: return "!=";
     case OP_LESS_THAN: return "<";
@@ -70,6 +71,11 @@ static const char *binary_op_str(enum BinaryOpType op) {
     case OP_GREATER_THAN_OR_EQUAL: return ">=";
     case OP_AND: return "&&";
     case OP_OR: return "||";
+    case OP_BITWISE_AND: return "&";
+    case OP_BITWISE_OR: return "|";
+    case OP_BITWISE_XOR: return "^";
+    case OP_SHIFT_LEFT: return "<<";
+    case OP_SHIFT_RIGHT: return ">>";
     default: return "?";
     }
 }

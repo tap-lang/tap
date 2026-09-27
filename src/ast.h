@@ -77,7 +77,14 @@ enum BinaryOpType {
     OP_LESS_THAN_OR_EQUAL,          // 小于等于号 <=
     OP_GREATER_THAN_OR_EQUAL,       // 大于等于号 >=
     OP_AND,                         // 与运算符 &&
-    OP_OR                           // 或运算符 ||
+    OP_OR,                          // 或运算符 ||
+    // 位运算必须追加在末尾：Codegen 用 `>= OP_EQUAL && <= OP_GREATER_THAN_OR_EQUAL`
+    // 判断比较、用 `>= OP_ADD && <= OP_MODULO` 判断算术，插在中间会破坏这两个范围判断。
+    OP_BITWISE_AND,                 // 按位与 &
+    OP_BITWISE_OR,                  // 按位或 |
+    OP_BITWISE_XOR,                 // 按位异或 ^
+    OP_SHIFT_LEFT,                  // 左移 <<
+    OP_SHIFT_RIGHT                  // 右移 >>
 };
 
 // 基础AST节点结构
