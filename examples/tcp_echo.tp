@@ -1,0 +1,36 @@
+// 用 std.net 写的 TCP echo 服务器：监听 127.0.0.1:18080，每来一个连接就把它发来的
+// 字节原样回显，然后关掉这个连接，继续等下一个。
+//
+// 运行：
+//     tap run examples/tcp_echo.tp
+// 另开一个终端连上去：
+//     nc 127.0.0.1 18080
+// 输入内容回车，服务器会原样回显。Ctrl-C 结束进程。
+//
+// 两点值得注意：
+//   - std.net 全靠 extern 绑 libc，没有往 runtime.c 加一行 C 代码。
+//   - accept / receive 都是阻塞的，会一直等下去，这是 std.net 目前的语义。
+import std.net as net;
+
+fn main(): i32 {
+    let server: Socket = unwrap(net.listen_on("127.0.0.1", 18080, 8));
+    print("listening on 127.0.0.1:%d, Ctrl-C to stop\n", net.local_port(server));
+
+    while (true) {
+        let client: Socket = unwrap(net.accept_from(server));
+
+        let buffer: [u8; 1024] = [0; 1024];
+        let count: i64 = net.receive(client, &buffer[0], 1024);
+        if (count > 0) {
+            // 原样发回去：内容里可能有 NUL，不能当字符串处理，所以用 send_bytes。
+            net.send_bytes(client, &buffer[0], count);
+            print("echoed %lld bytes\n", count);
+        } else {
+            print("peer closed\n");
+        }
+
+        client = net.close_socket(client);
+    }
+
+    return 0;
+}

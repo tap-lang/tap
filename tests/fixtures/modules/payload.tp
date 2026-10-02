@@ -1,0 +1,45 @@
+// match 分支体（和表达式形式的分支值）里调用本模块函数，用来覆盖模块重写对
+// NODE_MATCH_STATEMENT 的处理——漏掉这一支的话分支里会报 undefined function。
+enum Choice {
+    Some(i32),
+    None(i32),
+}
+
+fn bump(value: i32): i32 {
+    return value + 1;
+}
+
+// 语句形式的 match，分支体里调用 bump。
+fn pick(choice: Choice): i32 {
+    let result: i32 = 0;
+    match (choice) {
+        Choice.Some(value) => {
+            result = bump(value);
+        }
+        Choice.None(value) => {
+            result = value;
+        }
+    }
+    return result;
+}
+
+// 表达式形式的 match，分支值里调用 bump。
+fn pick_value(choice: Choice): i32 {
+    return match (choice) {
+        Choice.Some(value) => bump(value),
+        Choice.None(value) => value,
+    };
+}
+
+// `?` 传播的内层表达式是模块内函数的调用，调用点同样要被重写。
+fn checked(value: i32): Result<i32, string> {
+    if (value < 0) {
+        return Result<i32, string>.Err("negative");
+    }
+    return Result<i32, string>.Ok(bump(value));
+}
+
+fn doubled(value: i32): Result<i32, string> {
+    let inner: i32 = checked(value)?;
+    return Result<i32, string>.Ok(inner * 2);
+}

@@ -1,0 +1,19 @@
+// 模块里的 match 分支（语句形式和表达式形式）调用本模块函数，以及 `?` 传播模块内
+// 函数的返回值，调用点都必须被模块重写正确解析成内部符号名。
+import modules.payload as p;
+
+fn main(): i32 {
+    print("%d %d %d %d\n",
+        p.pick(Choice.Some(10)), p.pick(Choice.None(3)),
+        p.pick_value(Choice.Some(10)), p.pick_value(Choice.None(3)));
+    print("%d %d\n", unwrap_or(p.doubled(4), -1), unwrap_or(p.doubled(-1), -1));
+    return 0;
+}
+
+/** -- test
+- .stdout
+11 3 11 3
+10 -1
+- .exit
+0
+-- */

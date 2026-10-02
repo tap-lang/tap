@@ -101,6 +101,19 @@ fn main(): i32 {
 | `std.fs` | `write_text(path, data): i64` | 覆盖写入，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `append_text(path, data): i64` | 追加到末尾，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `exists(path): bool` | 能否以只读方式打开；不存在或无权限返回 `false` |
+| `std.net` | `Socket` | TCP 套接字句柄；`fd` 小于 `0` 表示已关闭或创建失败 |
+| `std.net` | `parse_ipv4(host): Result<[u8; 4], string>` | 解析 `a.b.c.d` 字面量；不做 DNS，格式非法返回 `Err` |
+| `std.net` | `build_address(host, port): Result<[u8; 16], string>` | 构造 16 字节 `sockaddr_in`，端口按大端拆字节 |
+| `std.net` | `listen_on(host, port, backlog): Result<Socket, string>` | 创建、绑定并监听；`port` 传 `0` 由内核分配 |
+| `std.net` | `connect_to(host, port): Result<Socket, string>` | 阻塞连接服务器，失败返回 `Err` |
+| `std.net` | `accept_from(server): Result<Socket, string>` | 取一个已完成握手的连接，阻塞等待 |
+| `std.net` | `local_port(socket): u16` | 返回实际绑定的端口；句柄无效或查询失败返回 `0` |
+| `std.net` | `receive(socket, buffer, capacity): i64` | 收数据写入缓冲区；`0` 表示对端关闭，`-1` 出错 |
+| `std.net` | `send_text(socket, data): i64` | 发送字符串，返回实际发出的字节数 |
+| `std.net` | `send_bytes(socket, buffer, length): i64` | 发送缓冲区里的裸字节；和 `receive` 配对 |
+| `std.net` | `close_socket(socket): Socket` | 关闭并返回失效句柄，用法是 `socket = close_socket(socket)` |
+| `std.net` | `is_open(socket): bool` | 句柄是否有效；创建失败或关闭后返回 `false` |
+| `std.net` | `AF_INET` / `SOCK_STREAM` / `ADDRESS_LENGTH` | 地址族、套接字类型常量和 `sockaddr_in` 长度 |
 
 `std.env` 示例：
 
@@ -355,6 +368,54 @@ let notes: string = unwrap_or(loaded, "");
 
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
 
+`std.net` 示例（回环上自连自收）：
+
+```text
+import std.net as net;
+
+fn main(): i32 {
+    // 端口 0 交给内核挑一个空闲的，再用 local_port 取回来。
+    let server: Socket = unwrap(net.listen_on("127.0.0.1", 0, 8));
+    let port: u16 = net.local_port(server);
+
+    let client: Socket = unwrap(net.connect_to("127.0.0.1", port));
+    let peer: Socket = unwrap(net.accept_from(server));
+
+    net.send_text(client, "ping");
+    let buffer: [u8; 64] = [0; 64];
+    let count: i64 = net.receive(peer, &buffer[0], 64);
+    print("got %lld bytes\n", count);
+
+    // 关闭的效果只能靠返回值传出去，必须写回。
+    client = net.close_socket(client);
+    peer = net.close_socket(peer);
+    server = net.close_socket(server);
+    return 0;
+}
+```
+
+`std.net` 是标准库里唯一**完全不依赖 Runtime** 的模块：全部通过 `extern fn` 直接绑定 libc
+的 BSD socket 接口，`runtime.c` 一行都不用加。代价是 `extern` 的名字必须和 C 符号一致，
+所以公开 API 避开了 `listen` / `accept` / `connect` / `recv` / `send` / `close` 这些名字，
+改用 `listen_on` / `accept_from` / `connect_to` / `receive` / `send_text` / `close_socket`。
+
+四件必须知道的事：
+
+- **`Socket` 是值类型**，和 `File` 一样 `close_socket()` 只能改到副本。区别在于这里没有
+  Runtime 侧的句柄登记表，关闭的效果只能靠返回值传出来，**必须写回**：
+  `socket = net.close_socket(socket);`。忘了赋值，旧副本的 `fd` 仍是正数，`is_open` 会
+  误判成还开着，而那个 `fd` 可能已经被系统分配给了别的连接，继续用就是操作别人的连接。
+- **全程阻塞，没有超时**。`accept_from` / `connect_to` / `receive` 都会一直等下去，
+  需要超时得自己配非阻塞模式，本模块还没做。
+- **只认 IPv4 字面量，没有 DNS**。`"localhost"` 之类的域名会直接返回 `Err`。
+- **只支持 POSIX**（macOS / Linux / Cygwin）。Windows 的 winsock 要先 `WSAStartup`，
+  而且 `SOCKET` 是 64 位句柄，当前不支持。
+
+`receive` 收到的是裸字节，直接写进调用方给的缓冲区，不经过 Runtime 的「字节转字符串」，
+所以内容里含 NUL 也不会终止程序；配 `send_bytes` 就能把收到的内容原样回显或转发。要发
+字符串用 `send_text`。两者都不保证把数据一次发完，返回值小于请求长度时调用方要自己接着发
+剩下的部分（tap 还没有指针算术，切不出「后半段缓冲区」，所以没有提供自动重发的 `send_all`）。
+
 ## 错误处理约定
 
 标准库统一用 `Result<T, E>` 表示**可恢复错误**。`E` 实践中多用 `string`，用来说明失败原因。
@@ -479,6 +540,9 @@ Runtime 的 C ABI 声明位于
 2. 如果函数应默认可用，放入 `std/prelude.tp`。
 3. 如果函数需要操作系统、终端、时间、随机数、文件、内存等底层能力，先在
    Runtime 中增加 `__tap_` 前缀 C ABI，再在 Prelude 或模块中提供公共包装。
+4. 如果该能力在 libc 里已经有稳定符号（socket、数学函数之类），也可以像 `std.net` 那样
+   用 `extern fn` 直接绑定，不碰 Runtime。注意 `extern` 的名字就是链接时的 C 符号名，
+   不能加 `__tap_` 前缀，公开 API 要另起名字避开冲突。
 
 新增或修改标准库函数后，需要同步：
 
@@ -499,5 +563,7 @@ Runtime 的 C ABI 声明位于
   或 `std.byte_vec`。字符串数组用 `Vec<string>`，`std.env.args()` / `vars()` 就返回它。
 - 结构体没有析构函数，`Vec` / `ByteVec` 用完要自己调 `free`。
   不释放只是进程退出前一直占着，不会出错。
+- `std.net` 只有 TCP over IPv4，只支持 POSIX，且全程阻塞、没有超时；域名解析、UDP、
+  非阻塞模式和 `send_all` 都还没有。
 - 模块会导出顶层常量、结构体、枚举和函数，但没有可见性控制；导入的类型名当前进入全局类型命名空间。
 - Prelude 是自动注入的全局函数集合，不支持按需选择导入。

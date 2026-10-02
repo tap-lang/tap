@@ -1,0 +1,118 @@
+// std.net 的端到端测试：地址解析与校验、sockaddr_in 字节布局、真实回环连接上的收发，
+// 以及关闭之后的句柄语义。
+//
+// 服务器绑端口 0，由内核分配，再用 local_port 取回来——这样测试并行跑也不会抢端口。
+import std.net as net;
+
+fn main(): i32 {
+    // 1. IPv4 字面量解析与各种非法输入。
+    let parsed: Result<[u8; 4], string> = net.parse_ipv4("192.168.0.255");
+    let quad: [u8; 4] = unwrap(parsed);
+    print("ip=%d.%d.%d.%d\n", quad[0], quad[1], quad[2], quad[3]);
+
+    print("bad_short=%d\n", is_err(net.parse_ipv4("1.2.3")));
+    print("bad_long=%d\n", is_err(net.parse_ipv4("1.2.3.4.5")));
+    print("bad_range=%d\n", is_err(net.parse_ipv4("1.2.3.256")));
+    print("bad_empty=%d\n", is_err(net.parse_ipv4("")));
+    print("bad_dot=%d\n", is_err(net.parse_ipv4("1..2.3")));
+    print("bad_alpha=%d\n", is_err(net.parse_ipv4("a.b.c.d")));
+
+    // 2. sockaddr_in 的字节布局：family 在 0，端口按大端放在 2、3，地址在 4..8。
+    let built: Result<[u8; 16], string> = net.build_address("127.0.0.1", 18080);
+    let address: [u8; 16] = unwrap(built);
+    print("layout=%d %d %d %d.%d.%d.%d\n",
+        address[0], address[2], address[3],
+        address[4], address[5], address[6], address[7]);
+
+    // 3. 真实回环连接：listen -> connect -> accept -> send -> receive。
+    let server: Socket = unwrap(net.listen_on("127.0.0.1", 0, 8));
+    print("server_open=%d\n", net.is_open(server));
+
+    let port: u16 = net.local_port(server);
+    print("port_bound=%d\n", port > 0);
+
+    // 同一个端口不能绑两次，第二个 listen_on 应当报错。
+    print("port_taken=%d\n", is_err(net.listen_on("127.0.0.1", port, 8)));
+
+    let client: Socket = unwrap(net.connect_to("127.0.0.1", port));
+    print("client_open=%d\n", net.is_open(client));
+
+    let peer: Socket = unwrap(net.accept_from(server));
+    print("peer_open=%d\n", net.is_open(peer));
+
+    print("sent=%lld\n", net.send_text(client, "ping"));
+
+    let buffer: [u8; 64] = [0; 64];
+    let received: i64 = net.receive(peer, &buffer[0], 64);
+    print("received=%lld\n", received);
+    print("body=%c%c%c%c\n", buffer[0], buffer[1], buffer[2], buffer[3]);
+
+    // 反向再走一遍，确认两个方向都能收。
+    print("reply_sent=%lld\n", net.send_text(peer, "pong"));
+    let back: [u8; 64] = [0; 64];
+    print("reply_received=%lld\n", net.receive(client, &back[0], 64));
+    print("reply_body=%c%c%c%c\n", back[0], back[1], back[2], back[3]);
+
+    // 3b. 裸字节收发：含 NUL 的二进制内容也要能原样过去，不经字符串转换。
+    let binary: [u8; 5] = [0; 5];
+    binary[0] = 97;     // 'a'
+    binary[1] = 0;      // NUL
+    binary[2] = 98;     // 'b'
+    binary[3] = 255;
+    binary[4] = 99;     // 'c'
+    print("bin_sent=%lld\n", net.send_bytes(client, &binary[0], 5));
+    let echo: [u8; 64] = [0; 64];
+    let echo_count: i64 = net.receive(peer, &echo[0], 64);
+    print("bin_received=%lld\n", echo_count);
+    print("bin_bytes=%d %d %d %d %d\n", echo[0], echo[1], echo[2], echo[3], echo[4]);
+
+    // 4. 关闭：必须把返回值赋回去，旧副本才会失效。
+    client = net.close_socket(client);
+    peer = net.close_socket(peer);
+    server = net.close_socket(server);
+    print("closed=%d %d %d\n", net.is_open(client), net.is_open(peer), net.is_open(server));
+    print("closed_receive=%lld\n", net.receive(peer, &buffer[0], 64));
+    print("closed_send=%lld\n", net.send_text(client, "x"));
+    print("closed_again=%d\n", net.is_open(net.close_socket(server)));
+    print("closed_port=%d\n", net.local_port(server));
+
+    // 5. 连不上的端口和非法地址都应当返回 Err，而不是崩溃。
+    print("refused=%d\n", is_err(net.connect_to("127.0.0.1", 1)));
+    print("bad_host=%d\n", is_err(net.connect_to("300.1.1.1", 1)));
+    return 0;
+}
+
+/** -- test
+- .stdout
+ip=192.168.0.255
+bad_short=1
+bad_long=1
+bad_range=1
+bad_empty=1
+bad_dot=1
+bad_alpha=1
+layout=2 70 160 127.0.0.1
+server_open=1
+port_bound=1
+port_taken=1
+client_open=1
+peer_open=1
+sent=4
+received=4
+body=ping
+reply_sent=4
+reply_received=4
+reply_body=pong
+bin_sent=5
+bin_received=5
+bin_bytes=97 0 98 255 99
+closed=0 0 0
+closed_receive=-1
+closed_send=-1
+closed_again=0
+closed_port=0
+refused=1
+bad_host=1
+- .exit
+0
+-- */

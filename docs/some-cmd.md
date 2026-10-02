@@ -2,7 +2,6 @@
 
 ## 查看程序返回值
 ```sh
-./build/tap tests/run-pass/basics/hello.tp -o ./build/hello
 ./build/hello
 echo $?
 ```
@@ -14,4 +13,9 @@ otool -L ./build/hello
 
 # Linux
 ldd ./build/hello
+```
+
+## clang 生成 LLVM IR
+```sh
+clang -S -emit-llvm tmp/1.c -o tmp/1.c.ll
 ```

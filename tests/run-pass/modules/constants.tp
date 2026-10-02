@@ -1,0 +1,16 @@
+// 模块常量从外面用 constants.SCALE 访问；模块内部则直接写裸名 SCALE。
+// 顺带固定住「裸名改写只匹配常量」——constants 里的局部变量 step 和同名函数 step
+// 不能被误改成 __tap_module_N.step。
+import modules.constants as c;
+
+fn main(): i32 {
+    print("%d %d %d\n", c.SCALE, c.scaled(4), c.offset(4));
+    return 0;
+}
+
+/** -- test
+- .stdout
+3 12 8
+- .exit
+0
+-- */

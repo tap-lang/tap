@@ -19,6 +19,7 @@
 typedef struct ModuleExport {
     char *name;
     char *symbol;
+    int is_constant;
     struct ModuleExport *next;
 } ModuleExport;
 
@@ -281,6 +282,17 @@ static ModuleExport *find_export(LoadedModule *module, const char *name) {
     return NULL;
 }
 
+// 只在本模块导出的**常量**里找。表达式里的裸名只有常量才可能合法出现：函数名
+// 只能出现在调用位置（由 rewrite_call 处理），类型名走 NODE_VAR_TYPE。把函数名也
+// 算进来会误伤同名局部变量，例如 `with_capacity(capacity: uint)` 里的参数 capacity。
+static ModuleExport *find_constant_export(LoadedModule *module, const char *name) {
+    for (ModuleExport *export = module ? module->exports : NULL;
+         export; export = export->next) {
+        if (export->is_constant && strcmp(export->name, name) == 0) return export;
+    }
+    return NULL;
+}
+
 static LoadedModule *create_loaded_module(ModuleContext *context, const char *path) {
     LoadedModule *module = calloc(1, sizeof(LoadedModule));
     if (!module) {
@@ -347,6 +359,7 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
         }
         export->name = copy_string(constant->name);
         export->symbol = create_symbol(module->prefix, constant->name);
+        export->is_constant = 1;
         if (!export->name || !export->symbol) {
             free(export->name);
             free(export->symbol);
@@ -641,6 +654,26 @@ static int rewrite_statement_list(
                 }
                 break;
             }
+            case NODE_MATCH_STATEMENT: {
+                // match 分支体也是语句链表，漏掉这一支的话分支里调用本模块函数
+                // 会报 `undefined function`。绑定变量是声明，不参与改写。
+                MatchStatementNode *match_node = (MatchStatementNode *)statement;
+                result = rewrite_expression(
+                    program, match_node->expression, current_module, bindings);
+                for (ASTNode *arm_node = match_node->arms;
+                     arm_node && result == 0; arm_node = arm_node->next) {
+                    MatchArmNode *arm = (MatchArmNode *)arm_node;
+                    if (arm->body) {
+                        result = rewrite_statement_list(
+                            program, arm->body, current_module, bindings);
+                    }
+                    if (result == 0 && arm->value) {
+                        result = rewrite_expression(
+                            program, arm->value, current_module, bindings);
+                    }
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -743,6 +776,30 @@ static int rewrite_expression(
             }
             return rewrite_call(call, current_module, bindings);
         }
+        case NODE_MATCH_STATEMENT: {
+            // `return match (...) { ... };` 这种表达式形式的 match。语句形式走
+            // rewrite_statement_list 的同名分支。
+            MatchStatementNode *match_node = (MatchStatementNode *)expression;
+            int result = rewrite_expression(
+                program, match_node->expression, current_module, bindings);
+            for (ASTNode *arm_node = match_node->arms;
+                 arm_node && result == 0; arm_node = arm_node->next) {
+                MatchArmNode *arm = (MatchArmNode *)arm_node;
+                if (arm->body) {
+                    result = rewrite_statement_list(
+                        program, arm->body, current_module, bindings);
+                }
+                if (result == 0 && arm->value) {
+                    result = rewrite_expression(
+                        program, arm->value, current_module, bindings);
+                }
+            }
+            return result;
+        }
+        case NODE_TRY:
+            // `module.fn()?`：被传播的内层表达式同样要解析成模块内部符号名。
+            return rewrite_expression(
+                program, ((TryNode *)expression)->inner, current_module, bindings);
         case NODE_INDEX_EXPRESSION: {
             IndexExpressionNode *index = (IndexExpressionNode *)expression;
             int result = rewrite_expression(program, index->array, current_module, bindings);
@@ -752,10 +809,24 @@ static int rewrite_expression(
         }
         case NODE_IDENTIFIER: {
             IdentifierNode *identifier = (IdentifierNode *)expression;
-            if (!strchr(identifier->name, '.')) return 0;
+            char *dot = strchr(identifier->name, '.');
+
+            // 不带点的裸名：可能是本模块导出的常量。导出时声明已经被改写成
+            // `__tap_module_N.NAME`，这里不跟着改写引用就会找不到符号。只看常量，
+            // 函数名和类型名不会以裸名出现在表达式里（见 find_constant_export）；
+            // current_module 为 NULL（主程序）时直接返回，主程序不受影响。
+            if (!dot) {
+                ModuleExport *export = find_constant_export(current_module, identifier->name);
+                if (!export) return 0;
+                char *resolved = copy_string(export->symbol);
+                if (!resolved) return 1;
+                free(identifier->name);
+                identifier->name = resolved;
+                return 0;
+            }
+
             if (is_local_enum_member(program, identifier->name)) return 0;
 
-            char *dot = strchr(identifier->name, '.');
             size_t alias_length = (size_t)(dot - identifier->name);
             char *alias = malloc(alias_length + 1);
             if (!alias) {
