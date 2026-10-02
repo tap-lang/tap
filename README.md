@@ -171,8 +171,6 @@ fn main(): i32 {
 编译阶段会自动加载 [`std/prelude.tp`](std/prelude.tp)，源文件无需显式导入即可使用：
 
 ```text
-min(a: i32, b: i32): i32
-max(a: i32, b: i32): i32
 read_key(): i32
 sleep_ms(milliseconds: i32): i32
 clear_screen(): i32

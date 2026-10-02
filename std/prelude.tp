@@ -93,21 +93,3 @@ fn expect<T>(value: Result<T, string>, message: string): T {
         }
     }
 }
-
-// 返回两个 i32 中较小的值。
-fn min(a: i32, b: i32): i32 {
-    if (a < b) {
-        return a;
-    } else {
-        return b;
-    }
-}
-
-// 返回两个 i32 中较大的值。
-fn max(a: i32, b: i32): i32 {
-    if (a > b) {
-        return a;
-    } else {
-        return b;
-    }
-}

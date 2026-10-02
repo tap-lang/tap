@@ -5,6 +5,11 @@ fn conflict(): i32 {
     return 2;
 }
 
+// 和导入的名称空间 min 同名：裸调用 min(...) 走本地函数，min.min() 走模块函数。
+fn min(a: i32, b: i32): i32 {
+    return a;
+}
+
 fn main(): i32 {
     print("%d %d %d %d\n", conflict.conflict(), conflict(), min.min(), min(1, 2));
     return 0;

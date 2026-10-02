@@ -1,14 +1,14 @@
-fn min(a: i32, b: i32): i32 {
-    return a;
+fn random(maximum: i32): i32 {
+    return 0;
 }
 
 fn main(): i32 {
-    return min(1, 2);
+    return random(10);
 }
 
 /** -- test
 - .stderr
-error: duplicate function definition 'min'
+error: duplicate function definition 'random'
 --> tests/compile-fail/stdlib/prelude_duplicate.tp:1:4
 - .exit
 1
