@@ -157,6 +157,15 @@ print("%s\n", value);
 print("%s", value);
 ```
 
+需要精确控制格式（宽度、精度、进制）时改用 Prelude 的 `printf`，格式串完全由调用方给定：
+
+```text
+printf("name=%-8s hex=%06x\n", value, 255);
+```
+
+两者都是 `%s` 接 `string`，差异只在格式串由谁决定，见
+[标准库文档](std.md#printf-与-print-的分工)。
+
 `assert` 的可选消息也支持字符串，但当前必须是字符串字面量：
 
 ```text

@@ -1,0 +1,14 @@
+// `...` 必须收尾：它后面不能再跟具名参数，否则实参个数和具名参数对不上。
+extern fn report(first: i32, ..., extra: i32): i32;
+
+fn main(): i32 {
+    return report(1, 2, 3);
+}
+
+/** -- test
+- .stderr
+error: variadic marker `...` must be the last parameter
+--> tests/compile-fail/parser/variadic_not_last.tp:2:33
+- .exit
+1
+-- */

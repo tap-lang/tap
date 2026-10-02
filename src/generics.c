@@ -910,6 +910,7 @@ static FunctionNode *instantiate_function(FunctionNode *template,
     copy->line = template->line;
     copy->column = template->column;
     copy->is_extern = template->is_extern;
+    copy->is_variadic = template->is_variadic;
 
     ASTNode *param = template->params;
     ASTNode *param_type = template->param_types;

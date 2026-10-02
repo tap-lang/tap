@@ -1110,6 +1110,7 @@ static LLVMValueRef generate_float_binary(CodeGenContext *context, BinaryOpNode 
 static LLVMValueRef generate_array_value(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *expected_type);
 static unsigned function_param_count(FunctionNode *function);
+static LLVMValueRef promote_variadic_argument(CodeGenContext *context, ASTNode *expression);
 static void validate_var_type(CodeGenContext *context, VarTypeNode *type);
 
 // 取出整数字面量的数值。bool 字面量写入的是 union 的 bool_value（4 字节），
@@ -2080,9 +2081,13 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     unsigned count = 0;
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
     unsigned expected_count = function_param_count(function);
-    if (count != expected_count) {
+    // 变参函数只约束具名参数的下限；多出来的实参落到 `...` 里，由调用方负责格式串匹配。
+    int is_variadic_call = function->is_variadic;
+    if (is_variadic_call ? count < expected_count : count != expected_count) {
         print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "function '%s' expects %u arguments, but got %u",
+                         is_variadic_call
+                             ? "function '%s' expects at least %u arguments, but got %u"
+                             : "function '%s' expects %u arguments, but got %u",
                          call->name, expected_count, count);
         exit(1);
     }
@@ -2090,6 +2095,12 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     LLVMValueRef *arguments = count ? malloc(sizeof(LLVMValueRef) * count) : NULL;
     ASTNode *argument = call->arguments;
     for (unsigned i = 0; i < count; i++, argument = argument->next) {
+        // 超出具名参数范围的实参属于变参部分：没有声明类型可校验，一律按
+        // C 的默认实参提升规则生成（float → double，窄整数 → i32）。
+        if (is_variadic_call && i >= expected_count) {
+            arguments[i] = promote_variadic_argument(context, argument);
+            continue;
+        }
         const VarTypeNode *param_type = function_param_var_type(function, i);
         int erased_pointer_argument =
             is_runtime_memory_pointer_argument(call, i) &&
@@ -2267,18 +2278,33 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
     exit(1);
 }
 
-// 把 printf 实参提升到 C 可变参数 ABI 要求的宽度：窄整数提升到 i32，浮点提升到 double。
-static LLVMValueRef promote_printf_argument(CodeGenContext *context, ASTNode *expression) {
-    enum LiteralType type = expression_type(context, expression);
+// 把可变参数实参提升到 C 的默认实参提升规则要求的宽度：
+// 位宽小于 32 的整数提升成 i32，float 提升成 double，其余原样传递。
+//
+// 是否「需要提升」看生成出来的 LLVM 值类型，而不是 expression_type —— 后者对指针变量
+// 返回的是元素类型（`*u8` 会报成 u8），照它提升会把 64 位指针截成 32 位。
+// 但窄整数该用符号扩展还是零扩展只能从源语言类型看出来（i8 要 sext 才是 -3，u8 要 zext），
+// 所以这一步再回头看 expression_type。
+static LLVMValueRef promote_variadic_argument(CodeGenContext *context, ASTNode *expression) {
     LLVMValueRef value = generate_expression(context, expression);
-    if (is_float_type(type)) {
-        return cast_value(context, value, type, LITERAL_F64);
+    if (!value) return value;
+
+    LLVMTypeRef llvm_type = LLVMTypeOf(value);
+    LLVMTypeKind kind = LLVMGetTypeKind(llvm_type);
+    if (kind == LLVMFloatTypeKind) {
+        return LLVMBuildFPExt(context->builder, value,
+            LLVMDoubleTypeInContext(context->context), "vararg_fpext");
     }
-    if (!is_integer_type(type)) return value;
-    if (integer_type_bits(type) < 32) {
-        return cast_integer(context, value, type, LITERAL_I32);
+    if (kind != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(llvm_type) >= 32) {
+        // 指针、double、i32 及以上整数本身已符合变参 ABI。
+        return value;
     }
-    return value;
+
+    LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
+    // bool 的 i1 在 is_unsigned_type 里算无符号，于是走零扩展，和 C 的 _Bool → int 一致。
+    return is_unsigned_type(expression_type(context, expression))
+        ? LLVMBuildZExt(context->builder, value, int32_type, "vararg_zext")
+        : LLVMBuildSExt(context->builder, value, int32_type, "vararg_sext");
 }
 
 // 生成 print 语句，对接到底层 printf 调用。
@@ -2296,7 +2322,7 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
             ((LiteralNode *)first)->value.string_value, "format_string");
         ASTNode *argument = first->next;
         for (unsigned i = 1; i < count; i++, argument = argument->next) {
-            arguments[i] = promote_printf_argument(context, argument);
+            arguments[i] = promote_variadic_argument(context, argument);
         }
         LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
                        arguments, count, "printf_result");
@@ -2316,7 +2342,7 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
 
     LLVMValueRef arguments[2] = {
         LLVMBuildGlobalStringPtr(context->builder, format, "format_string"),
-        promote_printf_argument(context, first)
+        promote_variadic_argument(context, first)
     };
     LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
                    arguments, 2, "printf_result");
@@ -3352,7 +3378,9 @@ static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *f
                                function->return_type->is_pointer)
         ? get_llvm_var_type(context, function->return_type)
         : get_llvm_type(context, function_return_type(function));
-    LLVMTypeRef type = LLVMFunctionType(return_type, params, count, 0);
+    // 第 4 个参数是 is_var_arg：只有 extern 声明可以带 `...`（Parser 已强制），
+    // 变参函数的 LLVM 类型末尾固定跟 `...`，调用时多出的实参按默认提升传。
+    LLVMTypeRef type = LLVMFunctionType(return_type, params, count, function->is_variadic);
     free(params);
     return type;
 }
@@ -3712,8 +3740,13 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     LLVMTypeRef char_ptr_type = LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
     context->printf_type = LLVMFunctionType(int32_type, &char_ptr_type, 1, 1);
     context->printf_func = LLVMAddFunction(context->module, "printf", context->printf_type);
-    context->exit_type = LLVMFunctionType(LLVMVoidTypeInContext(context->context), &int32_type, 1, 0);
-    context->exit_func = LLVMAddFunction(context->module, "exit", context->exit_type);
+    // 越界和 assert 失败都要「打印后以状态 1 终止」。这里刻意声明 Runtime 的
+    // __tap_exit，而不是 libc 的 exit：libc 的 exit 会占住 LLVM 模块里的 `exit`
+    // 符号，而 Prelude 正好有个同名函数 `exit`。两者类型不同（void(i32) 对
+    // i32(i32)），LLVM 会把后者改名成 `exit.1`，函数体还会被生成到先注册的那个
+    // void 函数里，直接触发 IR 校验失败。
+    context->exit_type = LLVMFunctionType(int32_type, &int32_type, 1, 0);
+    context->exit_func = LLVMAddFunction(context->module, "__tap_exit", context->exit_type);
 
     generate_global_constants(context, program);
 
@@ -3721,8 +3754,15 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
         const char *name = llvm_function_name(function);
-        LLVMValueRef llvm_function = LLVMAddFunction(
-            context->module, name, create_function_type(context, function));
+        LLVMTypeRef function_type = create_function_type(context, function);
+        // 同一个 LLVM 符号可能已经被内建声明占用：codegen 为 print 语句预先声明了变参
+        // printf，而 Prelude 里正好有个 `extern fn printf(...)`，两者签名完全一致。
+        // 类型相同时复用那份声明，否则 LLVM 会把后注册的改名成 `printf.1`，
+        // 模块里就多出一份指向同一符号的声明。
+        LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, name);
+        if (!llvm_function || LLVMGlobalGetValueType(llvm_function) != function_type) {
+            llvm_function = LLVMAddFunction(context->module, name, function_type);
+        }
         // 可执行产物只暴露 main；GlobalDCE 可能移除所有不可达 helper。
         if (!function->is_extern) {
             LLVMSetLinkage(llvm_function, LLVMInternalLinkage);

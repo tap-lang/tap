@@ -4,6 +4,7 @@ extern fn __tap_sleep_ms(milliseconds: i32): i32;
 extern fn __tap_clear_screen(): i32;
 extern fn __tap_random(maximum: i32): i32;
 extern fn __tap_panic(message: string): i32;
+extern fn __tap_exit(code: i32): i32;
 
 // 非阻塞读取一个按键；当前无按键或输入不是终端时返回 -1。
 fn read_key(): i32 {
@@ -31,6 +32,28 @@ fn random(maximum: i32): i32 {
 fn panic(message: string): i32 {
     return __tap_panic(message);
 }
+
+// 以状态码 code 终止程序，返回给操作系统的退出码就是 code。
+//
+// 和 panic 的分工：panic 往标准错误打印 `panic: <message>` 并固定用状态 1；exit 什么都
+// 不打印、退出码由调用方决定，用于「正常但需要提前结束」的场合，比如命令行参数不对时
+// 返回 2。它不经过 Prelude 的 Result 体系，所以是可恢复错误之外的最后手段。
+//
+// 底层走 libc 的 exit，已经写进标准输出缓冲区、还没落盘的内容会被刷新出来。
+// 函数不会返回；返回 i32 只是为了让 tap 侧能当普通调用使用。
+fn exit(code: i32): i32 {
+    return __tap_exit(code);
+}
+
+// 格式化输出，直接对接 libc 的 printf。
+//
+// 这是 Prelude 里唯一带 `...` 的声明：`...` 只允许出现在 extern 函数上，表示后面多出的
+// 实参按 C 的默认实参提升规则传递（float 提升成 double，位宽小于 32 的整数提升成 i32）。
+// 格式串和实参的对应关系由调用方自己保证，编译器不做检查。
+//
+// 需要「按类型自动挑格式」时用内建的 print 语句；printf 留给需要精确控制格式的场合，
+// 例如 `%05d`、`%.3f`、`%x`、`%s`。返回实际写出的字符数，出错时为负数。
+extern fn printf(format: string, ...): i32;
 
 // 可恢复错误的标准表示：`Ok(T)` 携带成功值，`Err(E)` 携带错误信息，实践中 `E` 多为
 // `string`。用它取代「返回哨兵值」和「打印后继续」这两种含糊的做法。

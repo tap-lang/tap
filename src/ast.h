@@ -184,6 +184,7 @@ typedef struct {
     int line;              // 函数名所在行
     int column;            // 函数名所在列
     int is_extern;         // 外部函数只生成 LLVM 声明
+    int is_variadic;       // 参数列表末尾带 `...`（变参 ABI，仅 extern 允许）
     ASTNode *type_params;  // 泛型类型参数列表（IdentifierNode）
     ASTNode *params;       // 参数列表
     ASTNode *param_types;  // 参数类型列表

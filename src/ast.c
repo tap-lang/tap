@@ -433,6 +433,7 @@ void print_ast(const ProgramNode *program) {
         }
         FunctionNode *f = (FunctionNode *)fn;
         printf("  %sFunction: %s", f->is_extern ? "Extern " : "", f->name);
+        if (f->is_variadic) printf(" [variadic]");
         if (f->type_params) {
             printf("<");
             for (ASTNode *type = f->type_params; type; type = type->next) {
@@ -520,6 +521,7 @@ FunctionNode *create_function(char *name) {
     function->line = 0;
     function->column = 0;
     function->is_extern = 0;
+    function->is_variadic = 0;
     function->type_params = NULL;
     function->params = NULL;
     function->param_types = NULL;

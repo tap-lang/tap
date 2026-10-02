@@ -84,10 +84,15 @@ macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的�
 | C ABI | 行为 |
 |---|---|
 | `__tap_panic(message): i32` | 打印 `panic: <message>` 到标准错误并 `exit(1)`；不会返回 |
+| `__tap_exit(code): i32` | 以状态码 `code` 终止程序，不打印任何东西；不会返回 |
 
-Prelude 的 `panic()` 就是它的一层包装，`std.result` 的 `unwrap` / `expect` 也建在它之上。
-前缀用 `panic: ` 和编译期诊断的 `error: ` 区分开；输出到标准错误，和标准库的
-越界诊断（走标准输出）不同。
+Prelude 的 `panic()` / `exit()` 就是它们的一层包装，`std.result` 的 `unwrap` / `expect`
+也建在 `panic` 之上。前缀用 `panic: ` 和编译期诊断的 `error: ` 区分开；输出到标准错误，
+和标准库的越界诊断（走标准输出）不同。
+
+`__tap_exit` 除了给 Prelude 用，Codegen 的越界和 `assert` 失败路径也直接调它——**刻意不用
+libc 的 `exit`**，因为那会占住 LLVM 模块里的 `exit` 符号，和 Prelude 的同名函数 `exit`
+撞车（类型不同，LLVM 会把后者改名成 `exit.1`，函数体还会生成到错误的位置）。
 
 ## 文件 ABI
 

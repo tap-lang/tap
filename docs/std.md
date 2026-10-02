@@ -22,6 +22,8 @@ tap 标准库由两部分组成：
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | 当 `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
 | `panic(message: string): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
+| `exit(code: i32): i32` | 以状态码 `code` 终止程序；不打印任何东西，不会返回 |
+| `printf(format: string, ...): i32` | 直接对接 libc 的 `printf`；格式串由调用方负责，返回写出的字符数 |
 | `Result<T, E>` | 可恢复错误的类型：`Ok(T)` 或 `Err(E)` |
 | `is_ok(value): bool` / `is_err(value): bool` | 判断 `Result` 成功或失败 |
 | `unwrap_or(value, fallback): T` | 取成功值；失败时用 `fallback` |
@@ -29,6 +31,52 @@ tap 标准库由两部分组成：
 | `expect(value, message): T` | 取成功值；失败时用 `message` `panic` |
 
 说明：`read_key()` 返回 Runtime 读到的真实键值，不会把方向键映射为 WASD。POSIX 方向键会在一次调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 方向键通常返回 `72/80/77/75`。
+
+`panic` 和 `exit` 都是终止程序的手段，分工在于**要不要说话**：
+
+| | 输出 | 退出码 | 用途 |
+| --- | --- | --- | --- |
+| `panic(message)` | 标准错误打印 `panic: <message>` | 固定 `1` | 调用方无法合理恢复的情况 |
+| `exit(code)` | 什么都不打印 | 由调用方决定 | 正常但需要提前结束，例如命令行参数不对时返回 `2` |
+
+两者都不会返回，都走 libc 的 `exit`，所以已经写进标准输出缓冲区、还没落盘的内容会被刷新出来。
+
+### printf 与 print 的分工
+
+`printf` 是 Prelude 里唯一带 `...` 的函数，直接对接 libc 的同名符号：
+
+```text
+extern fn printf(format: string, ...): i32;
+```
+
+| | 格式串 | 适用场合 |
+| --- | --- | --- |
+| `print` 语句 | 第一个参数是字符串字面量时当格式串用；不是字面量时由编译器按类型自动挑 `%d` / `%f` / `%lld` | 日常输出、快速调试 |
+| `printf` | 完全由调用方给定，编译器不检查也不改写 | 需要精确控制格式：`%05d`、`%.3f`、`%x`、`%c`、`%%` |
+
+`...` 只在 `extern` 声明上合法，并且必须是参数列表的最后一项、前面至少有一个具名参数。
+多出来的实参按 **C 的默认实参提升规则**传递：
+
+| 实参类型 | 传递时 |
+| --- | --- |
+| 位宽小于 32 的有符号整数（`i8` / `i16`） | 符号扩展成 `i32` |
+| 位宽小于 32 的无符号整数（`u8` / `u16`）和 `bool` | 零扩展成 `i32`（`bool` 的 `i1` 变成 `0` / `1`） |
+| `f32` | 提升成 `f64`，所以 `%f` 能直接吃 `f32` 变量 |
+| `i32` 及以上整数、`f64`、`string`、指针 | 原样传递 |
+
+`i64` 不提升，格式串要自己对齐（`%lld`）；`string` 在 LLVM 里就是 `i8*`，直接用 `%s`。
+
+```text
+fn main(): i32 {
+    let name: string = "tap";
+    let small: i8 = -3;
+    printf("name=%s small=%d hex=%x\n", name, small, 255);
+    return 0;
+}
+```
+
+覆盖用例见 [`printf.tp`](../tests/run-pass/stdlib/printf.tp)；自己声明变参 `extern`
+的写法见 [`variadic_extern.tp`](../tests/run-pass/types/variadic_extern.tp)。
 
 `-lex` 和 `-parse` 只处理传入的源文件，不加载 Prelude。
 

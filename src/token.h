@@ -81,6 +81,7 @@ enum TokenType {
     TOKEN_COMMA,       // ,
     TOKEN_COLON,       // :
     TOKEN_DOT,         // .
+    TOKEN_ELLIPSIS,    // ... 变参声明
     TOKEN_LBRACKET,    // [
     TOKEN_RBRACKET,    // ]
     TOKEN_QUESTION,    // ?

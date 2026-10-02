@@ -745,6 +745,12 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     // 解析参数列表
     consume(parser, TOKEN_LPAREN);
 
+    // `...` 不能单独出现：C 的变参 ABI 要求省略号之前至少有一个具名参数，
+    // 否则调用方无从推断变参起始位置。
+    if (parser->current_token->type == TOKEN_ELLIPSIS) {
+        parser_error(parser, "variadic marker `...` requires at least one named parameter"); // 中文：变参标记前至少要有一个具名参数
+    }
+
     // 解析参数
     if (parser->current_token->type == TOKEN_IDENTIFIER) {
         // 解析第一个参数
@@ -766,7 +772,21 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
         // 解析更多参数
         while (parser->current_token->type == TOKEN_COMMA) {
             consume(parser, TOKEN_COMMA);
-            
+
+            // `...` 变参标记：必须位于参数列表末尾，且只对 extern 声明生效
+            // （tap 自身没有实现可变参数函数的调用约定）。
+            if (parser->current_token->type == TOKEN_ELLIPSIS) {
+                if (!is_extern) {
+                    parser_error(parser, "variadic parameters are only allowed on extern functions"); // 中文：变参只能用于 extern 函数
+                }
+                function->is_variadic = 1;
+                consume(parser, TOKEN_ELLIPSIS);
+                if (parser->current_token->type != TOKEN_RPAREN) {
+                    parser_error(parser, "variadic marker `...` must be the last parameter"); // 中文：变参标记必须是最后一个参数
+                }
+                break;
+            }
+
             if (parser->current_token->type != TOKEN_IDENTIFIER) {
                 parser_error(parser, "expected parameter name"); // 中文：期望参数名
             }

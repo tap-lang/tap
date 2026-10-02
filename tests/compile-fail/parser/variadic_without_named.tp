@@ -1,0 +1,14 @@
+// 变参 ABI 要求省略号前至少有一个具名参数，否则调用方无从判断变参从哪里开始。
+extern fn report(...): i32;
+
+fn main(): i32 {
+    return report(1, 2);
+}
+
+/** -- test
+- .stderr
+error: variadic marker `...` requires at least one named parameter
+--> tests/compile-fail/parser/variadic_without_named.tp:2:18
+- .exit
+1
+-- */

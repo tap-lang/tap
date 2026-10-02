@@ -1,0 +1,51 @@
+// Prelude 的 printf 是语言里唯一的变参函数：`...` 只在 extern 声明上合法，
+// 多出来的实参按 C 的默认实参提升规则传递（窄整数提升到 i32，f32 提升到 f64）。
+// 这里逐条钉住各类型经提升后的实际输出，顺带覆盖格式串本身的能力。
+fn main(): i32 {
+    // 返回实际写出的字符数，可以直接参与运算。
+    let written: i32 = printf("abc\n");
+    printf("written=%d\n", written);
+
+    // %s 接 string；LLVM 里 string 就是 i8*，字面量和变量都能直接传。
+    let name: string = "tap";
+    printf("name=%s\n", name);
+
+    // 窄整数提升到 i32：有符号补符号位，无符号补零。
+    let small: i8 = -3;
+    let byte: u8 = 200;
+    printf("narrow=%d %u\n", small, byte);
+
+    // bool 在 LLVM 里是 i1，按 C 的 _Bool → int 零扩展成 0 / 1。
+    printf("bool=%d %d\n", true, false);
+
+    // f32 提升成 double，所以 %f 直接吃 f32 变量也没问题。
+    let single: f32 = 1.5;
+    let double: f64 = -2.25;
+    printf("float=%.3f %.2f\n", single, double);
+
+    // i64 及以上不提升，格式串要自己对齐（%lld 对应 i64）。
+    let wide: i64 = 9007199254740993;
+    printf("wide=%lld\n", wide);
+
+    // 十六进制、补零宽度、字符和字面量百分号都是 libc printf 的原样能力。
+    printf("misc=%x %05d %c %%\n", 255, 7, 65);
+
+    // 变参实参可以是任意表达式，不限于变量。
+    printf("expr=%d\n", 6 * 7);
+    return 0;
+}
+
+/** -- test
+- .stdout
+abc
+written=4
+name=tap
+narrow=-3 200
+bool=1 0
+float=1.500 -2.25
+wide=9007199254740993
+misc=ff 00007 A %
+expr=42
+- .exit
+0
+-- */

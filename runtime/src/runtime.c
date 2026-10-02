@@ -469,3 +469,12 @@ int32_t __tap_panic(const char *message) {
     exit(1);
     return 0;
 }
+
+// 以调用方给的状态码终止程序。和 __tap_panic 的区别是这里不打印任何东西，
+// 退出码也由调用方决定。走 libc 的 exit，所以标准库缓冲区会被正常刷新——
+// 用 _exit 的话已经写进缓冲区但还没落盘的输出会丢。
+// 函数不会返回；返回值只是为了让 tap 侧能把它当普通调用使用。
+int32_t __tap_exit(int32_t code) {
+    exit((int)code);
+    return 0;
+}

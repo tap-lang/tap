@@ -543,6 +543,14 @@ Token *get_next_token(Lexer *lexer) {
         case ':':
             return create_token(lexer, TOKEN_COLON, lexer->current - 1, lexer->current);
         case '.':
+            // `...` 变参声明。注意 `..`（两个点）本身在 tap 里没有含义，
+            // 所以只有连读三个点才产出 TOKEN_ELLIPSIS，否则退化成 TOKEN_DOT
+            // （成员访问 `socket.fd` 和浮点字面量 `1.5` 都走单点路径）。
+            if (peek(lexer) == '.' && peek_next(lexer) == '.') {
+                advance(lexer);
+                advance(lexer);
+                return create_token(lexer, TOKEN_ELLIPSIS, lexer->current - 3, lexer->current);
+            }
             return create_token(lexer, TOKEN_DOT, lexer->current - 1, lexer->current);
         case '?':
             return create_token(lexer, TOKEN_QUESTION, lexer->current - 1, lexer->current);

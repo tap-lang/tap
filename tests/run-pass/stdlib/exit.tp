@@ -1,0 +1,14 @@
+// exit 的退出码会原样传给操作系统，而且缓冲区里已经写好的内容要先刷出来。
+fn main(): i32 {
+    print("before exit\n");
+    exit(7);
+    print("unreachable\n");
+    return 0;
+}
+
+/** -- test
+- .stdout
+before exit
+- .exit
+7
+-- */

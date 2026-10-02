@@ -67,6 +67,8 @@ TAP_RUNTIME_API int32_t __tap_file_remove(const char *path);
 
 // 打印 `panic: <message>` 并以状态 1 终止；不会返回。
 TAP_RUNTIME_API int32_t __tap_panic(const char *message);
+// 以指定状态码终止程序；不会返回。走 libc 的 exit，标准库缓冲区会被刷新。
+TAP_RUNTIME_API int32_t __tap_exit(int32_t code);
 
 // 浮点幂，指数可为小数或负数；底层是 C 库的 pow（需要 libm）。
 TAP_RUNTIME_API double __tap_pow_f64(double base, double exponent);
