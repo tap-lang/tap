@@ -1,0 +1,17 @@
+// 变参的普通函数必须写成一句纯转发：LLVM 没有「把当前函数的变参原样传给被调用者」的
+// 指令，编译器只能靠编译期合并来支持，所以函数体形态是硬性要求。
+fn sum(first: i32, ...): i32 {
+    return first + 1;
+}
+
+fn main(): i32 {
+    return sum(1, 2);
+}
+
+/** -- test
+- .stderr
+error: variadic function 'sum' must forward its arguments in a single call, for example `return printf(format, ...);`
+--> tests/compile-fail/functions/variadic_not_forwarding.tp:3:4
+- .exit
+1
+-- */

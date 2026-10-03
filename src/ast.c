@@ -266,15 +266,6 @@ static void dump_stmt(ASTNode *n, int depth) {
         printf("Return\n");
         dump_expr(((ReturnNode *)n)->expression, depth + 2);
         break;
-    case NODE_PRINT:
-        print_indent(depth);
-        printf("Print(\n");
-        for (ASTNode *a = ((PrintNode *)n)->arguments; a; a = a->next) {
-            dump_expr(a, depth + 2);
-        }
-        print_indent(depth);
-        printf(")\n");
-        break;
     case NODE_IF_STATEMENT: {
         IfStatementNode *in = (IfStatementNode *)n;
         print_indent(depth);
@@ -732,36 +723,6 @@ ReturnNode *create_return(ASTNode *expression) {
     return return_node;
 }
 
-// 创建打印语句节点
-PrintNode *create_print() {
-    PrintNode *print_node = (PrintNode *)malloc(sizeof(PrintNode));
-    if (!print_node) {
-        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-        exit(1);
-    }
-    print_node->base.type = NODE_PRINT;
-    print_node->base.next = NULL;
-    print_node->arguments = NULL;
-    return print_node;
-}
-
-// 添加打印参数
-void add_print_argument(PrintNode *print_node, ASTNode *argument) {
-    if (!argument) return;
-    
-    // 将参数添加到参数列表的末尾
-    if (!print_node->arguments) {
-        print_node->arguments = argument;
-    } else {
-        ASTNode *current = print_node->arguments;
-        while (current->next) {
-            current = current->next;
-        }
-        current->next = argument;
-    }
-    argument->next = NULL;
-}
-
 // 创建二元操作节点
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right) {
     BinaryOpNode *binary_op = (BinaryOpNode *)malloc(sizeof(BinaryOpNode));
@@ -988,6 +949,7 @@ FunctionCallNode *create_function_call(const char *name) {
     function_call->type_arguments = NULL;
     function_call->enum_type_arguments = NULL;
     function_call->arguments = NULL;
+    function_call->forwards_variadic = 0;
     return function_call;
 }
 
@@ -1453,12 +1415,6 @@ void free_ast(ASTNode *node) {
         case NODE_RETURN: {
             ReturnNode *return_node = (ReturnNode *)node;
             free_ast(return_node->expression);
-            break;
-        }
-        case NODE_PRINT: {
-            PrintNode *print_node = (PrintNode *)node;
-            // 释放参数链表 - 直接递归释放整个参数链表
-            free_ast(print_node->arguments);
             break;
         }
         case NODE_BINARY_OP: {

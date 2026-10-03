@@ -24,6 +24,7 @@ tap 标准库由两部分组成：
 | `panic(message: string): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
 | `exit(code: i32): i32` | 以状态码 `code` 终止程序；不打印任何东西，不会返回 |
 | `printf(format: string, ...): i32` | 直接对接 libc 的 `printf`；格式串由调用方负责，返回写出的字符数 |
+| `print(format: string, ...): i32` | `printf` 的薄封装；单实参时按类型自动挑格式串，返回写出的字符数 |
 | `Result<T, E>` | 可恢复错误的类型：`Ok(T)` 或 `Err(E)` |
 | `is_ok(value): bool` / `is_err(value): bool` | 判断 `Result` 成功或失败 |
 | `unwrap_or(value, fallback): T` | 取成功值；失败时用 `fallback` |
@@ -43,19 +44,39 @@ tap 标准库由两部分组成：
 
 ### printf 与 print 的分工
 
-`printf` 是 Prelude 里唯一带 `...` 的函数，直接对接 libc 的同名符号：
+`printf` 是 Prelude 里唯一直接对接 C 的变参函数，绑的就是 libc 的同名符号：
 
 ```text
 extern fn printf(format: string, ...): i32;
 ```
 
-| | 格式串 | 适用场合 |
-| --- | --- | --- |
-| `print` 语句 | 第一个参数是字符串字面量时当格式串用；不是字面量时由编译器按类型自动挑 `%d` / `%f` / `%lld` | 日常输出、快速调试 |
-| `printf` | 完全由调用方给定，编译器不检查也不改写 | 需要精确控制格式：`%05d`、`%.3f`、`%x`、`%c`、`%%` |
+`print` 则是**用 tap 写的** `printf` 薄封装，函数体只有一句纯转发：
 
-`...` 只在 `extern` 声明上合法，并且必须是参数列表的最后一项、前面至少有一个具名参数。
-多出来的实参按 **C 的默认实参提升规则**传递：
+```text
+fn print(format: string, ...): i32 {
+    return printf(format, ...);
+}
+```
+
+`print` 不是编译器内建语句，而是 Prelude 里的普通函数，所以它有返回值（写出的字符数）、
+也能出现在表达式位置（`let n = print("hi\n");` 是合法的）。
+
+两者的差异只有一处：
+
+| | 第一个实参不是字符串字面量时 | 适用场合 |
+| --- | --- | --- |
+| `print` | 编译器按实参类型自动挑格式串，`print(42)` 等价于 `printf("%d", 42)` | 日常输出、快速调试 |
+| `printf` | 照常当成格式串用，类型不匹配就报错 | 需要精确控制格式：`%05d`、`%.3f`、`%x`、`%c`、`%%` |
+
+其余情况（第一个实参是字符串字面量）两者**完全等价**，`print` 只是少打几个字母。
+
+⚠️ 自动挑格式那一档对 `string` 不友好：`print(某个字符串变量)` 会按 `%d` 打出指针值。
+输出字符串一律显式写 `print("%s", value)`。
+
+### `...` 与变参转发
+
+`...` 声明变参，必须是参数列表的最后一项、前面至少有一个具名参数。多出来的实参按
+**C 的默认实参提升规则**传递：
 
 | 实参类型 | 传递时 |
 | --- | --- |
@@ -66,6 +87,23 @@ extern fn printf(format: string, ...): i32;
 
 `i64` 不提升，格式串要自己对齐（`%lld`）；`string` 在 LLVM 里就是 `i8*`，直接用 `%s`。
 
+**`extern` 函数**直接绑 C 的变参 ABI。**普通函数**也能声明变参，但函数体必须是
+**一句纯转发** —— 实参按顺序正好是本函数的具名形参，末尾跟 `...`：
+
+```text
+fn log_line(prefix: string, ...): i32 {
+    return printf(prefix, ...);
+}
+```
+
+原因是 LLVM 没有「把当前函数的变参原样传给被调用者」这种指令，函数体里根本看不见那些
+实参。编译器于是只接受这一种写法，并在编译期把对 `log_line` 的调用整个合并到 `printf`
+上，所以转发是**零开销**的。写成别的形态（比如 `return first + 1;`）会报：
+
+```text
+error: variadic function 'sum' must forward its arguments in a single call, ...
+```
+
 ```text
 fn main(): i32 {
     let name: string = "tap";
@@ -75,10 +113,13 @@ fn main(): i32 {
 }
 ```
 
-覆盖用例见 [`printf.tp`](../tests/run-pass/stdlib/printf.tp)；自己声明变参 `extern`
-的写法见 [`variadic_extern.tp`](../tests/run-pass/types/variadic_extern.tp)。
+覆盖用例见 [`printf.tp`](../tests/run-pass/stdlib/printf.tp)（各类型的提升结果）和
+[`print.tp`](../tests/run-pass/stdlib/print.tp)（`print` 的两种形态）；自己声明变参
+`extern` 的写法见 [`variadic_extern.tp`](../tests/run-pass/types/variadic_extern.tp)，
+自己写变参包装函数的写法见 [`variadic_forward.tp`](../tests/run-pass/types/variadic_forward.tp)。
 
-`-lex` 和 `-parse` 只处理传入的源文件，不加载 Prelude。
+`-lex` 和 `-parse` 只处理传入的源文件，不加载 Prelude —— 也就是说这两个模式下 `print`
+只是个普通标识符，只有完整编译流程才会把它解析成 Prelude 里的函数。
 
 Prelude 中的函数名会进入全局函数集合。用户源码不能重复定义同名函数，
 否则编译器会报重复定义错误。

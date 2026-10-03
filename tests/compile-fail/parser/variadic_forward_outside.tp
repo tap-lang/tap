@@ -1,0 +1,16 @@
+// 实参列表里的 `...` 只能用来转发所在变参函数的变参；普通函数没有变参可转发。
+fn helper(a: i32, b: i32): i32 {
+    return a + b;
+}
+
+fn main(): i32 {
+    return helper(1, ...);
+}
+
+/** -- test
+- .stderr
+error: `...` can only forward the variadic arguments of the enclosing variadic function
+--> tests/compile-fail/parser/variadic_forward_outside.tp:7:22
+- .exit
+1
+-- */

@@ -610,12 +610,6 @@ static int rewrite_statement_list(
                     program, ((ReturnNode *)statement)->expression,
                     current_module, bindings);
                 break;
-            case NODE_PRINT:
-                for (ASTNode *argument = ((PrintNode *)statement)->arguments;
-                     argument && result == 0; argument = argument->next) {
-                    result = rewrite_expression(program, argument, current_module, bindings);
-                }
-                break;
             case NODE_FUNCTION_CALL:
                 result = rewrite_expression(program, statement, current_module, bindings);
                 break;

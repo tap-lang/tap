@@ -1,0 +1,17 @@
+// `...` 前面至少要有一个具名实参：C 的变参 ABI 要求至少一个具名参数，
+// 所以转发时也必须先把具名参数写出来。
+fn log_line(prefix: string, ...): i32 {
+    return printf(...);
+}
+
+fn main(): i32 {
+    return log_line("[log] %d\n", 7);
+}
+
+/** -- test
+- .stderr
+error: `...` must follow at least one named argument
+--> tests/compile-fail/parser/variadic_forward_first.tp:4:19
+- .exit
+1
+-- */

@@ -9,7 +9,6 @@ enum TokenType {
     TOKEN_FN,        // fn 函数定义
     TOKEN_EXTERN,    // extern 外部函数声明
     TOKEN_RETURN,    // return 返回语句
-    TOKEN_PRINT,     // print 打印函数
     TOKEN_LET,       // let 语句
     TOKEN_CONST,     // const 常量声明
     TOKEN_SIZEOF,    // sizeof 编译期类型大小表达式

@@ -428,6 +428,7 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
             }
             copy->arguments = clone_expression_list(
                 call->arguments, template, bindings);
+            copy->forwards_variadic = call->forwards_variadic;
             return (ASTNode *)copy;
         }
         default:
@@ -465,14 +466,6 @@ static ASTNode *clone_statement(ASTNode *source, FunctionNode *template,
         case NODE_RETURN:
             return (ASTNode *)create_return(clone_expression(
                 ((ReturnNode *)source)->expression, template, bindings));
-        case NODE_PRINT: {
-            PrintNode *copy = create_print();
-            for (ASTNode *argument = ((PrintNode *)source)->arguments;
-                 argument; argument = argument->next) {
-                add_print_argument(copy, clone_expression(argument, template, bindings));
-            }
-            return (ASTNode *)copy;
-        }
         case NODE_FUNCTION_CALL:
             return clone_expression(source, template, bindings);
         case NODE_MATCH_STATEMENT:
@@ -746,12 +739,6 @@ static void materialize_statements(GenericContext *context, ASTNode *statement) 
             case NODE_RETURN:
                 materialize_expression(
                     context, ((ReturnNode *)statement)->expression);
-                break;
-            case NODE_PRINT:
-                for (ASTNode *argument = ((PrintNode *)statement)->arguments;
-                     argument; argument = argument->next) {
-                    materialize_expression(context, argument);
-                }
                 break;
             case NODE_FUNCTION_CALL:
                 materialize_expression(context, statement);
@@ -1394,13 +1381,6 @@ static void process_statements(GenericContext *context, ASTNode *statement,
                 free_ast((ASTNode *)ignored);
                 break;
             }
-            case NODE_PRINT:
-                for (ASTNode *argument = ((PrintNode *)statement)->arguments;
-                     argument; argument = argument->next) {
-                    VarTypeNode *ignored = process_expression(context, argument, NULL);
-                    free_ast((ASTNode *)ignored);
-                }
-                break;
             case NODE_FUNCTION_CALL: {
                 VarTypeNode *ignored = process_expression(context, statement, NULL);
                 free_ast((ASTNode *)ignored);

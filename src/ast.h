@@ -16,7 +16,6 @@ enum NodeType {
     NODE_IDENTIFIER,                // 标识符节点
     NODE_LITERAL,                   // 字面量节点
     NODE_RETURN,                    // 返回语句节点
-    NODE_PRINT,                     // 打印语句节点
     NODE_BINARY_OP,                 // 二元操作符节点
     NODE_REFERENCE,                 // 取地址表达式节点
     NODE_SIZEOF,                    // 编译期类型大小表达式节点
@@ -218,12 +217,6 @@ typedef struct {
     ASTNode *expression;   // 返回表达式
 } ReturnNode;
 
-// 打印语句节点
-typedef struct {
-    ASTNode base;
-    ASTNode *arguments;    // 参数列表
-} PrintNode;
-
 // 二元操作节点
 typedef struct {
     ASTNode base;
@@ -292,6 +285,7 @@ typedef struct {
     ASTNode *type_arguments; // 显式泛型实参列表（VarTypeNode），用于泛型函数
     ASTNode *enum_type_arguments; // 显式枚举类型实参，仅 Enum<T>.Member(...) 构造使用
     ASTNode *arguments;    // 参数列表
+    int forwards_variadic; // 实参列表末尾带 `...`，表示把当前函数的变参原样转发给被调用者
 } FunctionCallNode;
 
 // match 分支节点
@@ -349,8 +343,6 @@ LiteralNode *create_string_literal(char *value);
 LiteralNode *create_float_literal(double value);
 LiteralNode *create_bool_literal(int value);
 ReturnNode *create_return(ASTNode *expression);
-PrintNode *create_print();
-void add_print_argument(PrintNode *print_node, ASTNode *argument);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 ReferenceNode *create_reference(ASTNode *target);
 SizeofNode *create_sizeof(VarTypeNode *operand_type);

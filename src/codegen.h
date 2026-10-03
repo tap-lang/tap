@@ -33,6 +33,17 @@ typedef struct LoopContext {
     struct LoopContext *parent;
 } LoopContext;
 
+// 变参转发映射。tap 的普通函数没法在函数体里转发变参（LLVM 没有对应的指令），
+// 所以「变参 + 函数体恰好是一句纯转发」的函数在编译期就被合并到目标函数上：
+// 它不生成 LLVM 函数体，调用点直接按目标的签名生成代码。
+// 典型例子是 Prelude 里的 `fn print(format: string, ...) { return printf(format, ...); }`。
+typedef struct VariadicForward {
+    const char *from;         // 包装函数名，例如 print
+    FunctionNode *target;     // 真正干活的变参函数，例如 printf
+    int auto_format;          // 单实参时按实参类型自动挑格式串（语言给 print 保留的便利行为）
+    struct VariadicForward *next;
+} VariadicForward;
+
 // 代码生成器上下文
 typedef struct {
     LLVMModuleRef module;           // LLVM模块，用于存储生成的代码
@@ -48,6 +59,7 @@ typedef struct {
     enum LiteralType current_return_type;
     const VarTypeNode *current_return_var_type;
     LoopContext *current_loop;
+    VariadicForward *variadic_forwards; // 变参转发映射表
     // LLVMValueRef puts_func;         // puts函数引用
     // LLVMTypeRef puts_type;          // puts函数类型
 } CodeGenContext;

@@ -9,6 +9,9 @@ typedef struct {
     Lexer *lexer;
     Token *current_token;
     int loop_depth;
+    // 当前位于第几层变参函数体内。实参列表里的 `...` 只能用来转发本函数的变参，
+    // 所以不在变参函数体内时出现 `...` 直接报错。
+    int variadic_depth;
 } Parser;
 
 Parser *create_parser(Lexer *lexer);

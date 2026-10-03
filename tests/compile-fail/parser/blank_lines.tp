@@ -9,7 +9,7 @@ fn main() {
 
 /** -- test
 - .stderr
-error: expected token `;`, but got `print`
+error: expected token `;`, but got `identifier`
 --> tests/compile-fail/parser/blank_lines.tp:7:5
 - .exit
 1

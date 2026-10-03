@@ -228,6 +228,89 @@ static FunctionNode *find_function(CodeGenContext *context, const char *name) {
     return NULL;
 }
 
+// tap 的普通函数没法在函数体里转发变参：LLVM 没有「把当前函数的变参原样传给被调用者」
+// 这种指令，函数体里根本看不见那些实参。所以变参的普通函数只允许写成一句纯转发，
+// 由编译期把它整个合并到目标函数上。
+//
+// 判定形态，三条必须同时成立：
+//   1. 函数体恰好一条 `return <call>;`
+//   2. <call> 带 `...` 转发标记，且实参按顺序正好是本函数的具名形参
+//   3. 目标函数存在，而且它也是变参函数
+// 满足时把目标函数写进 *target_out 并返回 1，否则返回 0。
+static int variadic_forward_target(
+    CodeGenContext *context, FunctionNode *function, FunctionNode **target_out) {
+    if (!function->is_variadic || function->is_extern) return 0;
+
+    ASTNode *body = function->body;
+    if (!body || body->next || body->type != NODE_RETURN) return 0;
+
+    ASTNode *value = ((ReturnNode *)body)->expression;
+    if (!value || value->type != NODE_FUNCTION_CALL) return 0;
+
+    FunctionCallNode *call = (FunctionCallNode *)value;
+    if (!call->forwards_variadic || call->type_arguments) return 0;
+
+    // 实参必须按顺序对应本函数的具名形参，否则转发出去的根本不是传进来的那些值。
+    ASTNode *argument = call->arguments;
+    for (ASTNode *param = function->params; param; param = param->next) {
+        if (!argument || argument->type != NODE_IDENTIFIER) return 0;
+        if (strcmp(((IdentifierNode *)argument)->name,
+                   ((IdentifierNode *)param)->name) != 0) {
+            return 0;
+        }
+        argument = argument->next;
+    }
+    if (argument) return 0;
+
+    FunctionNode *target = find_function(context, call->name);
+    if (!target || !target->is_variadic) return 0;
+
+    *target_out = target;
+    return 1;
+}
+
+// 收集所有变参转发函数并建立映射表。变参的普通函数如果不是纯转发形态就直接报错——
+// 那种函数没法生成出正确的代码。
+static void collect_variadic_forwards(CodeGenContext *context) {
+    if (!context->program) return;
+    for (ASTNode *node = context->program->functions; node; node = node->next) {
+        if (node->type != NODE_FUNCTION) continue;
+        FunctionNode *function = (FunctionNode *)node;
+        if (!function->is_variadic || function->is_extern) continue;
+
+        FunctionNode *target = NULL;
+        if (!variadic_forward_target(context, function, &target)) {
+            print_diagnostic(stderr, "error", function->filename,
+                             function->line, function->column,
+                             "variadic function '%s' must forward its arguments in a single call, "
+                             "for example `return printf(format, ...);`",
+                             function->name); // 中文：变参函数体必须是一句纯转发
+            exit(1);
+        }
+
+        VariadicForward *forward = malloc(sizeof(VariadicForward));
+        if (!forward) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+        forward->from = function->name;
+        forward->target = target;
+        // print 是语言保留的便利名字：单实参时按实参类型自动挑格式串。
+        forward->auto_format = strcmp(function->name, "print") == 0;
+        forward->next = context->variadic_forwards;
+        context->variadic_forwards = forward;
+    }
+}
+
+// 查某个函数名是不是会被编译期合并掉的变参转发函数。
+static VariadicForward *find_variadic_forward(CodeGenContext *context, const char *name) {
+    for (VariadicForward *forward = context->variadic_forwards;
+         forward; forward = forward->next) {
+        if (strcmp(forward->from, name) == 0) return forward;
+    }
+    return NULL;
+}
+
 // 在当前程序中按名称查找枚举声明。
 static EnumNode *find_enum(CodeGenContext *context, const char *name) {
     if (!context->program) return NULL;
@@ -1111,6 +1194,7 @@ static LLVMValueRef generate_array_value(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *expected_type);
 static unsigned function_param_count(FunctionNode *function);
 static LLVMValueRef promote_variadic_argument(CodeGenContext *context, ASTNode *expression);
+static LLVMValueRef generate_auto_format_print(CodeGenContext *context, FunctionCallNode *call);
 static void validate_var_type(CodeGenContext *context, VarTypeNode *type);
 
 // 取出整数字面量的数值。bool 字面量写入的是 union 的 bool_value（4 字节），
@@ -2031,6 +2115,21 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     }
     FunctionNode *function = find_function(context, call->name);
 
+    // 变参转发函数（Prelude 里的 print）在编译期就被合并到目标函数（printf）上：
+    // 它自己不生成 LLVM 函数，调用点直接按目标的签名生成代码。
+    VariadicForward *forward = find_variadic_forward(context, call->name);
+    if (forward) {
+        // print 的便利行为：只给一个实参、且它不是字符串字面量时，按实参类型自动挑
+        // 格式串，等价于 printf("%d", 实参)。字符串字面量那一路不需要特判，直接走
+        // 正常的变参转发就行。
+        if (forward->auto_format && call->arguments && !call->arguments->next &&
+            !(call->arguments->type == NODE_LITERAL &&
+              ((LiteralNode *)call->arguments)->literal_type == LITERAL_STRING)) {
+            return generate_auto_format_print(context, call);
+        }
+        function = forward->target;
+    }
+
     if (!function) {
         Symbol *method_receiver = NULL;
         FunctionNode *method =
@@ -2053,7 +2152,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         exit(1);
     }
 
-    const char *callee_name = function ? llvm_call_name(call->name) : call->name;
+    const char *callee_name = function ? llvm_call_name(function->name) : call->name;
     LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, callee_name);
     if (!llvm_function || !function) {
         char *base_name = NULL;
@@ -2307,29 +2406,16 @@ static LLVMValueRef promote_variadic_argument(CodeGenContext *context, ASTNode *
         : LLVMBuildSExt(context->builder, value, int32_type, "vararg_sext");
 }
 
-// 生成 print 语句，对接到底层 printf 调用。
-static void generate_print(CodeGenContext *context, PrintNode *print_node) {
-    if (!print_node->arguments || !context->printf_func) return;
+// print 的便利行为：只给一个实参、而且它不是字符串字面量时，按实参类型挑一个格式串，
+// 等价于 printf(格式串, 实参)。
+//
+// 这里只处理「非字符串字面量」那一路：字符串字面量开头的调用不需要特判，它会被当成
+// 普通的变参转发，由 print 合并到 printf 之后直接生成 printf 调用。
+static LLVMValueRef generate_auto_format_print(
+    CodeGenContext *context, FunctionCallNode *call) {
+    if (!context->printf_func) return NULL;
 
-    ASTNode *first = print_node->arguments;
-    unsigned count = 0;
-    for (ASTNode *argument = first; argument; argument = argument->next) count++;
-
-    if (first->type == NODE_LITERAL &&
-        ((LiteralNode *)first)->literal_type == LITERAL_STRING) {
-        LLVMValueRef *arguments = malloc(sizeof(LLVMValueRef) * count);
-        arguments[0] = LLVMBuildGlobalStringPtr(context->builder,
-            ((LiteralNode *)first)->value.string_value, "format_string");
-        ASTNode *argument = first->next;
-        for (unsigned i = 1; i < count; i++, argument = argument->next) {
-            arguments[i] = promote_variadic_argument(context, argument);
-        }
-        LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
-                       arguments, count, "printf_result");
-        free(arguments);
-        return;
-    }
-
+    ASTNode *first = call->arguments;
     enum LiteralType type = expression_type(context, first);
     const char *format = "%d";
     if (is_float_type(type)) {
@@ -2344,8 +2430,8 @@ static void generate_print(CodeGenContext *context, PrintNode *print_node) {
         LLVMBuildGlobalStringPtr(context->builder, format, "format_string"),
         promote_variadic_argument(context, first)
     };
-    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
-                   arguments, 2, "printf_result");
+    return LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
+                          arguments, 2, "printf_result");
 }
 
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement);
@@ -3181,9 +3267,6 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
         if (block && LLVMGetBasicBlockTerminator(block)) break;
 
         switch (statement->type) {
-            case NODE_PRINT:
-                generate_print(context, (PrintNode *)statement);
-                break;
             case NODE_VAR_DECL: {
                 VarDeclNode *declaration = (VarDeclNode *)statement;
                 if (!declaration->type && declaration->expression &&
@@ -3750,9 +3833,15 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
 
     generate_global_constants(context, program);
 
+    // 先建变参转发映射：print 这类函数要在注册和生成函数体之前就被识别出来，
+    // 它们不生成 LLVM 函数，调用点会直接落到目标函数上。
+    collect_variadic_forwards(context);
+
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
+        // 变参转发函数没有自己的 LLVM 符号，调用点已经改写成目标函数。
+        if (find_variadic_forward(context, function->name)) continue;
         const char *name = llvm_function_name(function);
         LLVMTypeRef function_type = create_function_type(context, function);
         // 同一个 LLVM 符号可能已经被内建声明占用：codegen 为 print 语句预先声明了变参
@@ -3774,8 +3863,10 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
-        // 运行时函数已有原生实现，不需要生成 LLVM 函数体。
+        // 运行时函数已有原生实现，不需要生成 LLVM 函数体；变参转发函数同理，
+        // 它没有自己的 LLVM 符号，调用点已经在 generate_function_call 里改写掉了。
         if (function->is_extern) continue;
+        if (find_variadic_forward(context, function->name)) continue;
         LLVMValueRef llvm_function = LLVMGetNamedFunction(
             context->module, llvm_function_name(function));
 

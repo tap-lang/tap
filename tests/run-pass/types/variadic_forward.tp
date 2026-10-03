@@ -1,0 +1,23 @@
+// `...` 转发不是 print 的专利：任何「变参 + 函数体恰好一句纯转发」的函数都能用。
+// 这类函数在编译期被整个合并到目标上，所以转发不产生额外的函数调用。
+fn log_line(prefix: string, ...): i32 {
+    return printf(prefix, ...);
+}
+
+fn main(): i32 {
+    log_line("[log] %d %s\n", 42, "ok");
+
+    // 包装函数同样保留 printf 的返回值。
+    let written: i32 = log_line("[log] written\n");
+    printf("written=%d\n", written);
+    return 0;
+}
+
+/** -- test
+- .stdout
+[log] 42 ok
+[log] written
+written=14
+- .exit
+0
+-- */

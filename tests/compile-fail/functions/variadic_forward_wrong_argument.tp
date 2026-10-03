@@ -1,0 +1,17 @@
+// 转发出去的实参必须按顺序就是本函数的具名形参，否则传出去的根本不是进来的那些值。
+// 这里第一个实参写成了字面量而不是 prefix，所以不算纯转发。
+fn log_line(prefix: string, ...): i32 {
+    return printf("%d\n", ...);
+}
+
+fn main(): i32 {
+    return log_line("[log] %d\n", 7);
+}
+
+/** -- test
+- .stderr
+error: variadic function 'log_line' must forward its arguments in a single call, for example `return printf(format, ...);`
+--> tests/compile-fail/functions/variadic_forward_wrong_argument.tp:3:4
+- .exit
+1
+-- */

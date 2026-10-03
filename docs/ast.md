@@ -50,7 +50,7 @@ typedef struct ASTNode {
 | `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称；`enum_type_arguments` 保存 `Enum<T>.Member` 的显式枚举类型实参 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
-| `NODE_PRINT` | `PrintNode` | `arguments` 指向打印参数链表 |
+| `NODE_BINARY_OP` | `BinaryOpNode` | `op_type` 加左右操作数；算术、比较、逻辑和位运算共用 |
 | `NODE_BINARY_OP` | `BinaryOpNode` | 操作符、左操作数和右操作数 |
 | `NODE_REFERENCE` | `ReferenceNode` | `target` 指向被取地址的变量、结构体字段或索引表达式 |
 | `NODE_SIZEOF` | `SizeofNode` | `operand_type` 保存 `sizeof(T)` 中的完整类型 |
@@ -59,7 +59,7 @@ typedef struct ASTNode {
 | `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
 | `NODE_INDEX_EXPRESSION` | `IndexExpressionNode` | 数组表达式和下标表达式 |
 | `NODE_INDEX_ASSIGNMENT` | `IndexAssignmentNode` | 索引目标和新的元素值 |
-| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名、显式泛型类型实参和普通实参链表；`enum_type_arguments` 保存 `Enum<T>.Member(...)` 的显式枚举类型实参 |
+| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名、显式泛型类型实参和普通实参链表；`enum_type_arguments` 保存 `Enum<T>.Member(...)` 的显式枚举类型实参，`forwards_variadic` 标记实参列表末尾的 `...` 转发 |
 | `NODE_IF_STATEMENT` | `IfStatementNode` | 条件、真分支和假分支 |
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |
@@ -106,7 +106,6 @@ Module Loader 消费导入列表、解析限定函数调用并合并模块函数
 - `AssignmentNode`：变量赋值，以及 `++`、`--` 展开后的更新。
 - `IndexAssignmentNode`：固定长度数组或指针的元素赋值，固定长度数组支持多维索引链。
 - `ReturnNode`：返回表达式。
-- `PrintNode`：一个或多个打印参数。
 - `IfStatementNode`：`if`、`elseif`（或等价的 `else if`）和 `else`。
 - `ForStatementNode`：经典三段式 `for` 循环。
 - `NODE_BREAK_STATEMENT`：`break;`，结束最内层循环。
@@ -193,7 +192,6 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 | `StructNode.fields` | `StructFieldNode` |
 | `FunctionNode.param_types` | `VarTypeNode` |
 | `FunctionNode.body` | 语句节点 |
-| `PrintNode.arguments` | 表达式节点 |
 | `FunctionCallNode.arguments` | 表达式节点 |
 | `FunctionCallNode.type_arguments` | `VarTypeNode` |
 | `VarTypeNode.type_arguments` | `VarTypeNode` |
@@ -203,7 +201,7 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 
 添加导入、函数、类型参数、参数、语句或实参时，应使用 `add_import()`、`add_function()`、
 `add_type_param()`、`add_param()`、`add_param_type()`、`add_statement()`、`add_type_argument()`、
-`add_argument()` 和 `add_print_argument()`。
+`add_argument()` 和 `add_type_argument()`。
 这些函数目前通过遍历链表追加元素，单次追加的复杂度为 O(n)。
 
 ## 创建与所有权

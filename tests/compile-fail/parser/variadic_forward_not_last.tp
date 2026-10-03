@@ -1,0 +1,16 @@
+// `...` 展开必须是实参列表的最后一项，后面不能再跟实参。
+fn log_line(prefix: string, ...): i32 {
+    return printf(prefix, ..., 1);
+}
+
+fn main(): i32 {
+    return log_line("[log] %d\n", 7);
+}
+
+/** -- test
+- .stderr
+error: `...` must be the last argument
+--> tests/compile-fail/parser/variadic_forward_not_last.tp:3:30
+- .exit
+1
+-- */

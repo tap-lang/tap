@@ -178,6 +178,7 @@ random(maximum: i32): i32
 panic(message: string): i32
 exit(code: i32): i32
 printf(format: string, ...): i32
+print(format: string, ...): i32
 Result<T, E> 及 is_ok / is_err / unwrap_or / unwrap / expect
 ```
 

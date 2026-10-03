@@ -19,6 +19,7 @@ Parser *create_parser(Lexer *lexer) {
     parser->lexer = lexer;
     parser->current_token = get_next_token(lexer);
     parser->loop_depth = 0;
+    parser->variadic_depth = 0;
     return parser;
 }
 
@@ -462,32 +463,6 @@ static ASTNode *parse_match(Parser *parser, int as_value);
 
 // 解析一条语句；不消费包围代码块的右大括号。
 static ASTNode *parse_statement(Parser *parser) {
-    if (parser->current_token->type == TOKEN_PRINT) {
-        // 解析打印语句
-        consume(parser, TOKEN_PRINT);
-        consume(parser, TOKEN_LPAREN);
-
-        // 创建打印节点
-        PrintNode *print_node = create_print();
-
-        // 解析打印参数列表（支持多个表达式，逗号分隔）
-        if (parser->current_token->type != TOKEN_RPAREN) {
-            // 解析第一个参数
-            ASTNode *expression = parse_expression(parser);
-            add_print_argument(print_node, expression);
-
-            // 解析更多参数
-            while (parser->current_token->type == TOKEN_COMMA) {
-                consume(parser, TOKEN_COMMA);
-                expression = parse_expression(parser);
-                add_print_argument(print_node, expression);
-            }
-        }
-
-        consume(parser, TOKEN_RPAREN);
-        consume(parser, TOKEN_SEMICOLON);
-        return (ASTNode *)print_node;
-    }
     if (parser->current_token->type == TOKEN_LET ||
         parser->current_token->type == TOKEN_CONST) {
         return (ASTNode *)parse_var_decl(parser, 1);
@@ -773,12 +748,9 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
         while (parser->current_token->type == TOKEN_COMMA) {
             consume(parser, TOKEN_COMMA);
 
-            // `...` 变参标记：必须位于参数列表末尾，且只对 extern 声明生效
-            // （tap 自身没有实现可变参数函数的调用约定）。
+            // `...` 变参标记：必须位于参数列表末尾。extern 声明直接绑 C 的变参 ABI；
+            // 普通函数的变参只能原样转发给另一个变参函数，函数体形态由 Codegen 校验。
             if (parser->current_token->type == TOKEN_ELLIPSIS) {
-                if (!is_extern) {
-                    parser_error(parser, "variadic parameters are only allowed on extern functions"); // 中文：变参只能用于 extern 函数
-                }
                 function->is_variadic = 1;
                 consume(parser, TOKEN_ELLIPSIS);
                 if (parser->current_token->type != TOKEN_RPAREN) {
@@ -825,7 +797,10 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     
     // 解析函数体：语句分派统一交给 parse_statement，避免和 parse_block 重复。
     consume(parser, TOKEN_LBRACE);
+    // 函数体内允许出现 `...` 转发，靠 variadic_depth 标记作用域。
+    parser->variadic_depth += function->is_variadic;
     function->body = parse_block(parser);
+    parser->variadic_depth -= function->is_variadic;
     consume(parser, TOKEN_RBRACE);
 
     return function;
@@ -851,6 +826,9 @@ static ASTNode *parse_function_call(Parser *parser, char *function_name) {
     consume(parser, TOKEN_LPAREN);
     
     // 解析参数
+    if (parser->current_token->type == TOKEN_ELLIPSIS) {
+        parser_error(parser, "`...` must follow at least one named argument"); // 中文：`...` 前面至少要有一个具名实参
+    }
     if (parser->current_token->type != TOKEN_RPAREN) {
         // 解析第一个参数
         ASTNode *arg_expression = parse_expression(parser);
@@ -859,6 +837,21 @@ static ASTNode *parse_function_call(Parser *parser, char *function_name) {
         // 解析更多参数
         while (parser->current_token->type == TOKEN_COMMA) {
             consume(parser, TOKEN_COMMA);
+
+            // `...` 展开：把本函数的变参原样转发给被调用者。它只在变参函数体内
+            // 有意义（否则无变参可转发），而且必须是实参列表的最后一项。
+            if (parser->current_token->type == TOKEN_ELLIPSIS) {
+                if (parser->variadic_depth == 0) {
+                    parser_error(parser, "`...` can only forward the variadic arguments of the enclosing variadic function"); // 中文：`...` 只能转发所在变参函数的变参
+                }
+                consume(parser, TOKEN_ELLIPSIS);
+                if (parser->current_token->type != TOKEN_RPAREN) {
+                    parser_error(parser, "`...` must be the last argument"); // 中文：`...` 必须是最后一个实参
+                }
+                function_call->forwards_variadic = 1;
+                break;
+            }
+
             arg_expression = parse_expression(parser);
             add_argument(function_call, arg_expression);
         }
