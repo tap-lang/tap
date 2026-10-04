@@ -153,16 +153,21 @@ fn area(shape: Shape): f64 {
 ## 模块导入
 
 使用点分隔模块名导入其他 `.tp` 文件。默认名称空间取模块名最后一段，
-也可以使用 `as` 重命名：
+也可以使用 `as` 重命名；此外还支持通配导入和单成员导入，**调用时不用模块前缀**：
 
 ```text
-import std.math;
-import modules.helpers as helper;
+import std.math;                 // 按 math.square(5) 访问
+import modules.helpers as helper; // 按 helper.xxx(...) 访问
+import std.math.*;               // 通配导入：pub 成员按裸名访问
+import std.math.square;          // 单成员导入：按裸名 square(...) 访问
+import std.math.square as sq;    // 单成员导入并改名：按 sq(...) 访问
 
 fn main(): i32 {
     return math.square(5);
 }
 ```
+
+三种导入的完整规则见[模块导入文档](docs/module.md)。
 
 顶层声明默认是**模块私有**的，加 `pub` 才能被其他模块导入：
 

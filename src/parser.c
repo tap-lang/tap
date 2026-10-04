@@ -179,8 +179,18 @@ static ImportNode *parse_import(Parser *parser) {
     char *module_name = strdup(parser->current_token->lexeme);
     consume(parser, parser->current_token->type);
 
+    // 先按点分路径贪心读完。`mod.*` 里的 `*` 明确是通配标记，读到就停；
+    // `mod.member` 的成员段这里无法和模块路径区分（两者都是标识符），
+    // 留给 Module Loader 按文件系统解析：整条路径优先当模块名，找不到时
+    // 再把最后一段当成员名（见 module.c 的 build_bindings）。
+    int is_wildcard = 0;
     while (parser->current_token->type == TOKEN_DOT) {
         consume(parser, TOKEN_DOT);
+        if (parser->current_token->type == TOKEN_MULTIPLY) {
+            consume(parser, TOKEN_MULTIPLY);
+            is_wildcard = 1;
+            break;
+        }
         if (!is_module_component(parser->current_token)) {
             free(module_name);
             parser_error(parser, "expected module path identifier"); // 中文：期望模块路径标识符
@@ -190,8 +200,10 @@ static ImportNode *parse_import(Parser *parser) {
         consume(parser, parser->current_token->type);
     }
 
+    // 默认裸名取路径最后一段：整模块导入时是模块名，单成员导入时正好是成员名。
+    // 通配导入不绑定裸名，alias 置 NULL。
     const char *last_dot = strrchr(module_name, '.');
-    char *alias = strdup(last_dot ? last_dot + 1 : module_name);
+    char *alias = is_wildcard ? NULL : strdup(last_dot ? last_dot + 1 : module_name);
     if (parser->current_token->type == TOKEN_AS) {
         consume(parser, TOKEN_AS);
         if (!is_module_component(parser->current_token)) {
@@ -206,7 +218,7 @@ static ImportNode *parse_import(Parser *parser) {
 
     consume(parser, TOKEN_SEMICOLON);
     ImportNode *import_node = create_import(
-        module_name, alias, parser->lexer->filename, line, column);
+        module_name, NULL, alias, is_wildcard, parser->lexer->filename, line, column);
     free(alias);
     free(module_name);
     return import_node;

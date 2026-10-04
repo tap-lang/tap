@@ -1,4 +1,4 @@
-import std.random;
+import std.random.random;
 
 fn main(): i32 {
     // The board keeps a one-cell border, so playable coordinates start at one.
@@ -29,8 +29,8 @@ fn main(): i32 {
     let food_y: i32 = 1;
     let food_valid: i32 = 0;
     for (; food_valid == 0;) {
-        food_x = random.random(width - 2) + 1;
-        food_y = random.random(height - 2) + 1;
+        food_x = random(width - 2) + 1;
+        food_y = random(height - 2) + 1;
         food_valid = 1;
         for (let food_check: i32 = 0; food_check < length; food_check++) {
             if (food_x == snake_x[food_check]) {
@@ -222,8 +222,8 @@ fn main(): i32 {
         if (ate_food != 0) {
             food_valid = 0;
             for (; food_valid == 0;) {
-                food_x = random.random(width - 2) + 1;
-                food_y = random.random(height - 2) + 1;
+                food_x = random(width - 2) + 1;
+                food_y = random(height - 2) + 1;
                 food_valid = 1;
                 for (let respawn_check: i32 = 0;
                      respawn_check < length; respawn_check++) {

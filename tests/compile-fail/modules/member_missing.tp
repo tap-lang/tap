@@ -1,0 +1,13 @@
+import modules.math.triple;
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: module 'modules.math' has no member 'triple'
+--> tests/compile-fail/modules/member_missing.tp:1:8
+- .exit
+1
+-- */

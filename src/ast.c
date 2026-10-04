@@ -360,7 +360,14 @@ void print_ast(const ProgramNode *program) {
     for (ASTNode *node = program->imports; node; node = node->next) {
         if (node->type == NODE_IMPORT) {
             ImportNode *import_node = (ImportNode *)node;
-            printf("  Import: %s as %s\n", import_node->module_name, import_node->alias);
+            printf("  Import: %s", import_node->module_name);
+            if (import_node->is_wildcard) {
+                printf(".*");
+            } else if (import_node->member) {
+                printf(".%s", import_node->member);
+            }
+            if (import_node->alias) printf(" as %s", import_node->alias);
+            printf("\n");
         }
     }
     for (ASTNode *node = program->enums; node; node = node->next) {
@@ -482,7 +489,8 @@ ProgramNode *create_program() {
 }
 
 ImportNode *create_import(
-    const char *module_name, const char *alias, const char *filename, int line, int column) {
+    const char *module_name, const char *member, const char *alias, int is_wildcard,
+    const char *filename, int line, int column) {
     ImportNode *import_node = (ImportNode *)malloc(sizeof(ImportNode));
     if (!import_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -491,7 +499,9 @@ ImportNode *create_import(
     import_node->base.type = NODE_IMPORT;
     import_node->base.next = NULL;
     import_node->module_name = strdup(module_name);
-    import_node->alias = strdup(alias);
+    import_node->member = member ? strdup(member) : NULL;
+    import_node->alias = alias ? strdup(alias) : NULL;
+    import_node->is_wildcard = is_wildcard;
     import_node->filename = strdup(filename);
     import_node->line = line;
     import_node->column = column;
@@ -1326,6 +1336,7 @@ void free_ast(ASTNode *node) {
         case NODE_IMPORT: {
             ImportNode *import_node = (ImportNode *)node;
             free(import_node->module_name);
+            free(import_node->member);
             free(import_node->alias);
             free(import_node->filename);
             break;

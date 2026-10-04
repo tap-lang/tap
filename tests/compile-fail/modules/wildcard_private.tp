@@ -1,0 +1,14 @@
+// 通配导入只带 pub 成员：模块私有函数不会进来，裸名调用报未定义。
+import modules.visibility.*;
+
+fn main(): i32 {
+    return priv_fn();
+}
+
+/** -- test
+- .stderr
+error: undefined function 'priv_fn'
+--> tests/compile-fail/modules/wildcard_private.tp:5:12
+- .exit
+1
+-- */

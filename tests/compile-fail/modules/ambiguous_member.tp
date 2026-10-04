@@ -1,0 +1,16 @@
+// 成员名与模块文件重名 → 编译期直接报歧义，不静默偏向任何一侧。
+// modules.ambig 有一个 pub 成员 inner，同时又存在模块 modules.ambig.inner。
+import modules.ambig.inner;
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: ambiguous import 'modules.ambig.inner': both module 'modules.ambig.inner' and member 'inner' of module 'modules.ambig' exist
+--> tests/compile-fail/modules/ambiguous_member.tp:3:8
+note: import the namespace form 'import modules.ambig;' and qualify the call, or rename one of them
+- .exit
+1
+-- */

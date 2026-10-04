@@ -1,0 +1,5 @@
+// 歧义测试 fixture：模块 modules.ambig.inner。它和 modules.ambig 的 pub 成员 inner
+// 同名，导致 `import modules.ambig.inner;` 有歧义。
+pub fn value(): i32 {
+    return 2;
+}

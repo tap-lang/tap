@@ -8,13 +8,18 @@ tap 使用 `import` 导入其他 `.tp` 源文件。每个导入在当前文件�
 模块名由点分隔的路径段组成，导入声明以分号结束：
 
 ```text
-import std.math;
-import modules.helpers as helper;
+import std.math;                 // 名称空间导入，按 math.square(5) 访问
+import modules.helpers as helper; // 名称空间导入并改名
+import std.math.*;               // 通配导入，pub 成员按裸名访问
+import std.math.square;          // 单成员导入，按裸名 square(...) 访问
+import std.math.square as sq;    // 单成员导入并改名，按 sq(...) 访问
 
 fn main(): i32 {
     return math.square(5);
 }
 ```
+
+四种写法的详细语义见[通配导入与单成员导入](#通配导入与单成员导入)。
 
 模块路径段允许使用标识符形式的关键字，例如 `import std.string;`。
 模块名中的 `.` 会转换为目录分隔符，并自动追加 `.tp`：
@@ -125,9 +130,78 @@ fn main(): i32 {
 }
 ```
 
-未限定的导入函数调用会报错；Prelude 函数和当前文件函数仍使用普通函数名调用。
-模块的 `pub` 常量和函数按 `别名.名字` 访问；`pub` 类型保持裸名直接写。没有 `pub` 的符号
-是模块私有的，外部看不到。
+## 通配导入与单成员导入
+
+除了整模块的名称空间导入，还可以把模块成员直接引入当前文件，**调用时不用模块前缀**：
+
+```text
+import std.math.*;             // 通配导入：模块全部 pub 成员
+import std.math.square;        // 单成员导入：只引入 square
+import std.math.square as sq;  // 单成员导入并改名
+
+fn main(): i32 {
+    return square(3) + sq(4);  // 裸名调用，和本地函数一样
+}
+```
+
+- **通配导入 `import mod.*`**：把模块所有 `pub` 成员引入当前文件，按裸名访问。没有 `pub`
+  的成员不会进来（裸名调用会按普通未定义函数报错）。
+- **单成员导入 `import mod.member`**：只引入一个 `pub` 成员，按成员名（裸名）访问。
+- **单成员导入 + 别名 `import mod.member as name`**：以 `name` 绑定该成员。别名只影响
+  本地名字，模块内部仍叫 `member`。
+
+`member` 必须是 `pub` 的：非 `pub` 成员在导入处就报 `'x' is private to module 'y'`，
+不存在则报 `module 'y' has no member 'x'`。
+
+裸名必须唯一：通配/单成员导入引入的裸名不能和本文件（或本模块）自己的顶层函数、常量、
+结构体、枚举重名，两条导入之间也不能引入同一个裸名 —— 重名一律**编译报错**，不静默偏向
+任何一侧：
+
+```text
+error: import from module 'modules.math' brings in 'double', which is already defined or imported in this file
+--> tests/compile-fail/modules/wildcard_local_conflict.tp:3:8
+note: rename one of them, or import the module as a namespace and qualify the call
+```
+
+所以 `import modules.math.*` 的同时定义本地 `fn double` 会报错（而不是「本地定义优先」）；
+两条通配导入都带 `double` 同样报错（而不是按导入顺序取一个）。名称空间导入不引入裸名，
+`import modules.math;` 之后裸调用 `double(...)` 仍然按未定义函数报错。
+
+三种形式可以混用，同一模块也可以既做名称空间导入又做成员导入：
+
+```text
+import std.math;         // 按 math.square(3) 访问
+import std.math.square;  // 按 square(4) 访问
+```
+
+### 成员段与模块路径的区分
+
+`import std.math.square` 里的 `square` 究竟是模块路径的一段还是成员名，语法上无法区分
+（两者都是标识符）。编译器按文件系统解析：
+
+- 整条点分路径能解析成模块 → 当作整模块导入（`import std.math` 就是模块 `std.math`）。
+- 否则去掉最后一段、前缀能解析成模块 → 最后一段当成员名（`import std.math.square` →
+  模块 `std.math` 的成员 `square`）。
+- **两者都能解析成模块 → 报歧义错误**，不静默偏向任何一侧。
+
+```text
+error: ambiguous import 'modules.ambig.inner': both module 'modules.ambig.inner' and member 'inner' of module 'modules.ambig' exist
+--> tests/compile-fail/modules/ambiguous_member.tp:3:8
+note: import the namespace form 'import modules.ambig;' and qualify the call, or rename one of them
+```
+
+也就是说，成员名和某个模块文件重名时（例如模块 `std.math` 有 pub 成员 `square`，同时又存在
+模块文件 `std/math/square.tp`），`import std.math.square;` 会**编译报错**。消歧办法是改用
+名称空间导入（`import std.math;` 后写 `math.square(...)`），或者给其中一个改名 —— 注意这种
+重名下那个同名**模块**没有语法可以导入，只能改名。
+
+## 名称空间使用说明
+
+名称空间导入的 `pub` 常量和函数按 `别名.名字` 访问；`pub` 类型保持裸名直接写。没有
+`pub` 的符号是模块私有的，外部看不到。Prelude 函数和当前文件函数仍使用普通函数名调用；
+名称空间导入不引入裸名，所以未限定的 `math.square(...)` 之外的裸调用会按未定义函数报错
+（要裸名调用请用上一节的通配/单成员导入）。
+
 顶层常量在模块外通过名称空间访问（`net.AF_INET`），在声明它的模块内部可以直接写裸名
 （`AF_INET`）——导出时声明会被改写成内部唯一符号，模块内的引用也跟着改写。裸名改写只
 匹配本模块导出的**常量**，函数名和类型名不在其中，所以 `with_capacity(capacity: uint)`
@@ -214,6 +288,14 @@ error: undefined function 'double'
 --> tests/compile-fail/modules/unqualified_call.tp:4:12
 ```
 
+通配/单成员导入引入的裸名与本文件顶层定义（或其他导入）重名时报错，不静默偏向：
+
+```text
+error: import from module 'modules.math' brings in 'double', which is already defined or imported in this file
+--> tests/compile-fail/modules/wildcard_local_conflict.tp:3:8
+note: rename one of them, or import the module as a namespace and qualify the call
+```
+
 ## 调试与测试
 
 `-parse` 只打印指定文件中的 `ImportNode`，不会展开模块内容：
@@ -225,8 +307,19 @@ error: undefined function 'double'
 普通编译、`run`、`-ir` 和 `-run-lli` 都会实际加载模块。项目中的模块回归用例包括：
 
 - [`imports.tp`](../tests/run-pass/modules/imports.tp)：默认名称空间、`as`、多别名、递归导入和标准库模块
+- [`wildcard_import.tp`](../tests/run-pass/modules/wildcard_import.tp)：通配导入 `import mod.*`
+- [`member_import.tp`](../tests/run-pass/modules/member_import.tp)：单成员导入 `import mod.member`
+- [`member_alias_import.tp`](../tests/run-pass/modules/member_alias_import.tp)：单成员导入 + 别名
+- [`wildcard_local_conflict.tp`](../tests/compile-fail/modules/wildcard_local_conflict.tp)：通配导入与本地定义重名
+- [`member_local_conflict.tp`](../tests/compile-fail/modules/member_local_conflict.tp)：单成员导入与本地定义重名
+- [`wildcard_import_conflict.tp`](../tests/compile-fail/modules/wildcard_import_conflict.tp)：两条通配导入引入同名裸名
 - [`cycle.tp`](../tests/run-pass/modules/cycle.tp)：循环导入
 - [`missing.tp`](../tests/compile-fail/modules/missing.tp)：缺失模块诊断
+- [`member_missing.tp`](../tests/compile-fail/modules/member_missing.tp)：单成员导入的成员不存在诊断
+- [`member_private.tp`](../tests/compile-fail/modules/member_private.tp)：单成员导入私有成员诊断
+- [`wildcard_private.tp`](../tests/compile-fail/modules/wildcard_private.tp)：通配导入不带私有成员
+- [`ambiguous_member.tp`](../tests/compile-fail/modules/ambiguous_member.tp)：成员名与模块文件重名的歧义诊断
+- [`ambiguous_disambiguated.tp`](../tests/run-pass/modules/ambiguous_disambiguated.tp)：重名时改用名称空间导入消歧
 - [`namespace.tp`](../tests/run-pass/modules/namespace.tp)：本地函数与模块函数同名隔离
 - [`alias_conflict.tp`](../tests/compile-fail/modules/alias_conflict.tp)：名称空间别名冲突
 - [`unqualified_call.tp`](../tests/compile-fail/modules/unqualified_call.tp)：未限定导入函数调用诊断
@@ -250,7 +343,13 @@ error: undefined function 'double'
 - 入口文件不是模块，它的顶层符号不受 `pub` 影响。
 - 模块内引用自己导出的常量按裸名改写，所以局部变量和参数不要和导出常量重名（常量用大写命名可避开）。
 - 顶层常量只能用字面量初始化，不能写成引用其他模块符号的表达式。
-- 不支持选择性导入和模块再导出。
+- 支持名称空间、通配（`mod.*`）和单成员（`mod.member [as name]`）三种导入；不支持模块再导出
+  （模块不能把导入的符号转出去）。
+- 成员名与模块文件重名时（`import a.b.c` 里 `a/b/c.tp` 和 `a/b.tp` 同时存在）报歧义错误，
+  不静默偏向；这种重名下同名的那个**模块**没有导入语法，只能改名。
+- 裸名重名检查只覆盖「本文件顶层定义 + 其他通配/单成员导入」。Prelude（`print` / `exit` /
+  `panic` 等）是模块加载完之后才注入的，不在检查范围内：模块若有一个和 Prelude 同名的 `pub`
+  成员并被通配/单成员导入，裸名会**静默指向模块成员**而不是 Prelude。
 - 名称空间目前只能用于限定函数调用，不能作为值传递。
 - 入口文件不能把自身再次作为模块导入。
 

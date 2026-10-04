@@ -1,0 +1,14 @@
+// 单成员导入 `import mod.member`：只把 double 一个函数带进当前作用域，按裸名调用。
+import modules.math.double;
+
+fn main(): i32 {
+    print("%d\n", double(21));
+    return 0;
+}
+
+/** -- test
+- .stdout
+42
+- .exit
+0
+-- */

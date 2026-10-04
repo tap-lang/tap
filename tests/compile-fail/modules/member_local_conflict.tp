@@ -1,0 +1,19 @@
+// 单成员导入引入的裸名和本文件顶层定义重名 → 编译期报错。
+import modules.math.double;
+
+fn double(value: i32): i32 {
+    return value + 1;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: import from module 'modules.math' brings in 'double', which is already defined or imported in this file
+--> tests/compile-fail/modules/member_local_conflict.tp:2:8
+note: rename one of them, or import the module as a namespace and qualify the call
+- .exit
+1
+-- */

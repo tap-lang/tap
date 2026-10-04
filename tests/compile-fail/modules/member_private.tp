@@ -1,0 +1,14 @@
+// 单成员导入只认 pub：没有 pub 的成员会被拦下，报「私有」而不是「不存在」。
+import modules.visibility.priv_fn;
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'priv_fn' is private to module 'modules.visibility'
+--> tests/compile-fail/modules/member_private.tp:2:8
+- .exit
+1
+-- */

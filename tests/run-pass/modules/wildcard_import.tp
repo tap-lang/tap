@@ -1,0 +1,15 @@
+// 通配导入 `import mod.*`：模块全部 pub 成员按裸名直接用，不用模块前缀。
+// 常量和函数都在其列。
+import modules.constants.*;
+
+fn main(): i32 {
+    print("%d %d %d %d\n", SCALE, scaled(4), step(), offset(4));
+    return 0;
+}
+
+/** -- test
+- .stdout
+3 12 4 8
+- .exit
+0
+-- */

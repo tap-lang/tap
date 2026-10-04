@@ -41,7 +41,7 @@ typedef struct ASTNode {
 | `NodeType` | 结构体 | 主要字段与含义 |
 |---|---|---|
 | `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
-| `NODE_IMPORT` | `ImportNode` | 模块名、名称空间别名及导入声明的源文件位置 |
+| `NODE_IMPORT` | `ImportNode` | 模块名、单成员名、绑定裸名、通配标记及导入声明的源文件位置 |
 | `NODE_FUNCTION` | `FunctionNode` | 函数名、泛型类型参数、普通参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明，`is_variadic` 标记参数列表末尾的 `...`，`is_pub` 标记可被其他模块导入 |
 | `NODE_STRUCT` | `StructNode` | 结构体名、泛型类型参数和字段声明链表；`is_tagged_enum` 标记它由载荷枚举降级生成，`is_pub` 标记可被其他模块导入 |
 | `NODE_STRUCT_LITERAL` | `StructLiteralNode` | 结构体名、泛型类型实参和字段初始化链表 |
@@ -82,9 +82,13 @@ ProgramNode
 └── functions -> FunctionNode -> FunctionNode -> ...
 ```
 
-`ImportNode.module_name` 保存点分隔模块名，`alias` 保存当前文件使用的名称空间。
-Module Loader 消费导入列表、解析限定函数调用并合并模块函数，Codegen 不直接处理
-`ImportNode`。加载行为详见[模块导入文档](module.md)。
+`ImportNode.module_name` 保存点分隔模块名，`member` 保存单成员导入的成员名（整模块/通配导入
+为 `NULL`），`alias` 保存绑定的裸名（名称空间导入时是名称空间，通配导入为 `NULL`），
+`is_wildcard` 标记 `import mod.*`。Parser 先按点分路径贪心读入 `module_name`，成员段与模块
+路径的切分由 Module Loader 按文件系统完成（整条路径和去掉最后一段的前缀都是模块时报歧义，
+详见[模块导入文档](module.md)）。
+Module Loader 消费导入列表、解析限定/裸名函数调用并合并模块函数，Codegen 不直接处理
+`ImportNode`。
 
 每个 `FunctionNode` 包含：
 

@@ -1,0 +1,16 @@
+// 两个通配导入引入同名裸名 → 编译期报错（否则会按导入顺序静默取一个）。
+import modules.math.*;
+import modules.math2.*;
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: import from module 'modules.math2' brings in 'double', which is already defined or imported in this file
+--> tests/compile-fail/modules/wildcard_import_conflict.tp:3:8
+note: rename one of them, or import the module as a namespace and qualify the call
+- .exit
+1
+-- */

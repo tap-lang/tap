@@ -1,0 +1,4 @@
+// 和 modules.math 的 pub 成员 double 同名：用来验证两个通配导入引入同名裸名时会报重名。
+pub fn double(value: i32): i32 {
+    return value * 3;
+}

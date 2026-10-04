@@ -1,0 +1,14 @@
+// 单成员导入 + 别名 `import mod.member as name`：源成员 double 以 twice 的名字绑定。
+import modules.math.double as twice;
+
+fn main(): i32 {
+    print("%d\n", twice(21));
+    return 0;
+}
+
+/** -- test
+- .stdout
+42
+- .exit
+0
+-- */

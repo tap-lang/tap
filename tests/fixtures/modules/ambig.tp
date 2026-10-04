@@ -1,0 +1,7 @@
+// 歧义测试 fixture：本模块有一个 pub 成员 inner，同时存在同名模块
+// modules.ambig.inner（见 ambig/inner.tp）。于是 `import modules.ambig.inner;`
+// 既可解读成「模块 modules.ambig.inner」、也可解读成「模块 modules.ambig 的成员 inner」，
+// 编译器应当直接报歧义。
+pub fn inner(): i32 {
+    return 1;
+}

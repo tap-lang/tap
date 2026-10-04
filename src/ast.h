@@ -103,10 +103,19 @@ typedef struct {
 } ProgramNode;
 
 // 模块导入节点
+//
+// 支持四种写法：
+//   import std.math;                 整模块导入，按 `math.sin(...)` 访问（名称空间）
+//   import std.math as m;            整模块导入并改名，按 `m.sin(...)` 访问
+//   import std.math.*;               通配导入，pub 成员直接按裸名 `sin(...)` 访问
+//   import std.math.sin;             单成员导入，按裸名 `sin(...)` 访问
+//   import std.math.sin as sine;     单成员导入并改名，按裸名 `sine(...)` 访问
 typedef struct {
     ASTNode base;
-    char *module_name;     // 点分隔模块名，例如 std.math
-    char *alias;           // 当前文件中使用的名称空间
+    char *module_name;     // 点分隔模块名，例如 std.math（解析后已去掉成员段）
+    char *member;          // 单成员导入的成员名；NULL 表示整模块/通配导入
+    char *alias;           // 绑定的裸名（名称空间导入时是名称空间）；通配导入为 NULL
+    int is_wildcard;       // 1 表示 `import mod.*`：导入全部 pub 成员
     char *filename;        // import 所在文件
     int line;              // 模块名所在行
     int column;            // 模块名所在列
@@ -327,7 +336,8 @@ typedef struct {
 // 创建节点的函数声明
 ProgramNode *create_program();
 ImportNode *create_import(
-    const char *module_name, const char *alias, const char *filename, int line, int column);
+    const char *module_name, const char *member, const char *alias, int is_wildcard,
+    const char *filename, int line, int column);
 FunctionNode *create_function(char *name);
 EnumNode *create_enum(char *name);
 EnumVariantNode *create_enum_variant(char *name);

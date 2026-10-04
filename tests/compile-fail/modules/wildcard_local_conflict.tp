@@ -1,0 +1,20 @@
+// 通配导入引入的裸名和本文件顶层定义重名 → 编译期报错。
+// 这条取代了原来「本地定义优先于通配导入」的静默规则。
+import modules.math.*;
+
+fn double(value: i32): i32 {
+    return value + 1;
+}
+
+fn main(): i32 {
+    return double(10);
+}
+
+/** -- test
+- .stderr
+error: import from module 'modules.math' brings in 'double', which is already defined or imported in this file
+--> tests/compile-fail/modules/wildcard_local_conflict.tp:3:8
+note: rename one of them, or import the module as a namespace and qualify the call
+- .exit
+1
+-- */

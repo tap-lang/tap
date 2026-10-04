@@ -5,8 +5,10 @@ tap 标准库由两部分组成：
 - `std/*.tp`：用 tap 编写的标准库源码。
 - `runtime/`：用 C 实现的 Runtime ABI，提供需要操作系统支持的能力。
 
-编译器会自动加载 `std/prelude.tp`。其他标准库模块通过 `import std.xxx;`
-显式导入。
+编译器会自动加载 `std/prelude.tp`。其他标准库模块通过 `import std.xxx;` 显式导入。
+导入既可以是整模块（`import std.math;`，按 `math.square(...)` 访问），也可以是通配
+（`import std.math.*;`）或单成员（`import std.math.square;` / `import std.math.square as sq;`），
+后两种按裸名调用、不用模块前缀。详见[模块导入文档](module.md)。
 
 ## Prelude
 
@@ -206,10 +208,10 @@ fn main(): i32 {
 `std.random` 示例：
 
 ```text
-import std.random;
-
+import std.random;         // 也可以 import std.random.*; 或 import std.random.random;
+                           // 那样就能按裸名 random(100) 调用，不用模块前缀。
 fn main(): i32 {
-    // random 已不在 Prelude，必须显式导入；调用时用模块别名前缀。
+    // random 已不在 Prelude，必须显式导入。
     let value: i32 = random.random(100);
     print("%d\n", value);
     return 0;
