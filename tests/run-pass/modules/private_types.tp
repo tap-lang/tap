@@ -1,0 +1,14 @@
+// 两个模块各自持有同名私有类型，改名之后互不干扰 —— 这是 pub 带来的隔离能力：
+// 不写 pub 的类型会变成模块私有符号，而不是像以前那样挤在全局类型命名空间里。
+import modules.shadow_a as a;
+import modules.shadow_b as b;
+
+fn main(): i32 {
+    return a.a_value() * 10 + b.b_value();
+}
+
+/** -- test
+- .stdout
+- .exit
+78
+-- */

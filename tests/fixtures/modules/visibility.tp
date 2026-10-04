@@ -1,0 +1,15 @@
+// pub 可见性测试用的模块：pub 的能被外部访问，不写 pub 的是模块私有。
+pub const PUB_CONST: i32 = 10;
+const PRIV_CONST: i32 = 20;
+
+pub struct PubStruct { x: i32 }
+struct PrivStruct { y: i32 }
+
+pub fn pub_fn(): i32 { return 1; }
+fn priv_fn(): i32 { return 2; }
+
+// 私有符号在模块内部照常可用 —— pub 只影响外部能不能看到。
+pub fn uses_private(): i32 {
+    let s: PrivStruct = PrivStruct { y: 3 };
+    return priv_fn() + PRIV_CONST + s.y;
+}

@@ -1,0 +1,7 @@
+// 和 shadow_a 里的 Shared 同名，但因为两边都不是 pub，各自改名成模块私有符号。
+struct Shared { value: i32 }
+
+pub fn b_value(): i32 {
+    let s: Shared = Shared { value: 8 };
+    return s.value;
+}

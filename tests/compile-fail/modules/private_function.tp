@@ -1,0 +1,15 @@
+// 模块里不写 pub 的函数是模块私有的，外部按别名访问会被拦下。
+// 注意报的是「私有」而不是「不存在」—— 这两种情况要能分开。
+import modules.visibility as v;
+
+fn main(): i32 {
+    return v.priv_fn();
+}
+
+/** -- test
+- .stderr
+error: 'priv_fn' is private to module 'modules.visibility'
+--> tests/compile-fail/modules/private_function.tp:6:12
+- .exit
+1
+-- */

@@ -1,0 +1,12 @@
+// pub 是顶层可见性修饰符，只能修饰函数、常量、枚举和结构体。
+pub import modules.visibility as v;
+
+fn main(): i32 { return 0; }
+
+/** -- test
+- .stderr
+error: `pub` cannot be applied to an import
+--> tests/compile-fail/parser/pub_on_import.tp:2:5
+- .exit
+1
+-- */

@@ -1,0 +1,7 @@
+// 两个模块各自持有一个同名**私有**类型，互不干扰。
+struct Shared { value: i32 }
+
+pub fn a_value(): i32 {
+    let s: Shared = Shared { value: 7 };
+    return s.value;
+}

@@ -1,0 +1,17 @@
+// 模块导出按 pub 过滤：pub 的函数和常量走 `别名.名字`，pub 的类型保持裸名，
+// 不写 pub 的符号在模块外看不到（只影响外部，模块内部照常可用）。
+import modules.visibility as v;
+
+fn main(): i32 {
+    // pub 类型没有模块前缀，直接写类型名。
+    let s: PubStruct = PubStruct { x: 0 };
+
+    // pub_fn=1、PUB_CONST=10、uses_private=2+20+3=25。
+    return v.pub_fn() + v.PUB_CONST + v.uses_private() + s.x;
+}
+
+/** -- test
+- .stdout
+- .exit
+36
+-- */

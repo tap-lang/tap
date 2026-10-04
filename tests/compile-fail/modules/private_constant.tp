@@ -1,0 +1,13 @@
+// 常量同理：没有 pub 就是模块私有的。
+import modules.visibility as v;
+
+fn main(): i32 {
+    return v.PRIV_CONST;
+}
+
+/** -- test
+- .stderr
+error: 'PRIV_CONST' is private to module 'modules.visibility'
+- .exit
+1
+-- */
