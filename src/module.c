@@ -460,7 +460,8 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
         }
 
         if (!function->is_extern) {
-            free(function->name);
+            // 保存改名前的原名，诊断里优先用它（避免泄漏 __tap_module_N. 内部符号名）。
+            function->original_name = function->name;
             function->name = copy_string(export->symbol);
             if (!function->name) {
                 free(export->name);

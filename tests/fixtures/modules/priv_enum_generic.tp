@@ -1,0 +1,14 @@
+// 回归用模块：模块私有枚举的构造器引用，在泛型函数单态化时名字会变成
+// `__tap_module_0.Priv.A`（两个点）。generics.c 必须用 strrchr 切最后一个点，
+// 否则 identifier_type 会因两个点而拒绝解析、返回 NULL，导致实例化崩溃。
+//
+// 无载荷枚举底层是 i32 常量表，所以 first + second 是合法的 i32 运算。
+enum Priv { A, B }
+
+pub fn tag<T>(value: T): i32 {
+    let first: Priv = Priv.A;
+    let second: Priv = Priv.B;
+    let total: i32 = first + second;
+    let _: i32 = total;
+    return 1;
+}

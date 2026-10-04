@@ -900,6 +900,10 @@ static FunctionNode *instantiate_function(FunctionNode *template,
     copy->is_extern = template->is_extern;
     copy->is_variadic = template->is_variadic;
     copy->is_pub = template->is_pub;
+    // 单态化后的名字带 `$...` 后缀且可能含模块前缀；诊断优先用模板的原名。
+    copy->original_name = template->original_name
+        ? strdup(template->original_name)
+        : NULL;
 
     ASTNode *param = template->params;
     ASTNode *param_type = template->param_types;
@@ -974,8 +978,10 @@ static VarTypeNode *identifier_type(GenericContext *context, const char *name) {
     TypeSymbol *symbol = find_symbol(context, name);
     if (symbol) return clone_type(symbol->type);
 
-    const char *dot = strchr(name, '.');
-    if (dot && !strchr(dot + 1, '.')) {
+    // 模块私有枚举被改名成 `__tap_module_0.E` 后，成员引用变成 `__tap_module_0.E.B`
+    // （两个点）。按**最后一个**点切分，才能取出正确的前缀；用 strchr 取第一个点会切错。
+    const char *dot = strrchr(name, '.');
+    if (dot) {
         size_t base_size = (size_t)(dot - name);
         char *base = (char *)malloc(base_size + 1);
         if (!base) {
@@ -1126,8 +1132,11 @@ static FunctionNode *find_generic_method_template(
 static FunctionNode *specialize_method_call(
     GenericContext *context, FunctionCallNode *call,
     const VarTypeNode *expected) {
-    const char *dot = strchr(call->name, '.');
-    if (!dot || dot == call->name || strchr(dot + 1, '.')) return NULL;
+    // 接收者类型若是模块私有、被改名成 `__tap_module_N.Type`，方法名会变成
+    // 包含多个点的形状。按**最后一个**点切分，前缀才是正确的接收者类型名；
+    // 拒绝多点的写法会让泛型方法在模块私有类型上无法实例化。
+    const char *dot = strrchr(call->name, '.');
+    if (!dot || dot == call->name) return NULL;
 
     size_t receiver_length = (size_t)(dot - call->name);
     char *receiver_name = malloc(receiver_length + 1);

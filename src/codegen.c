@@ -692,6 +692,13 @@ static const char *function_base_name(const char *name) {
     return dot ? dot + 1 : name;
 }
 
+// 诊断优先用改名前的原名，避免把 __tap_module_N. 内部符号名泄漏给用户。
+static const char *function_display_name(const FunctionNode *function) {
+    if (function && function->original_name) return function->original_name;
+    if (function) return function->name;
+    return "(unknown)";
+}
+
 // 泛型函数单态化后带有 `$...` 后缀，方法查找只比较源语言中的基础名称。
 static int method_name_matches(const char *function_name, const char *method_name) {
     const char *base = function_base_name(function_name);
@@ -2012,7 +2019,7 @@ static LLVMValueRef generate_method_call(
         context->module, llvm_call_name(function->name));
     if (!llvm_function) {
         print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "undefined function '%s'", function->name); // 中文：未定义的函数
+                         "undefined function '%s'", function_display_name(function)); // 中文：未定义的函数
         exit(1);
     }
 
@@ -2190,7 +2197,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
                          is_variadic_call
                              ? "function '%s' expects at least %u arguments, but got %u"
                              : "function '%s' expects %u arguments, but got %u",
-                         call->name, expected_count, count);
+                         function_display_name(function), expected_count, count);
         exit(1);
     }
 
@@ -2212,7 +2219,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
             !expression_assignable_to(context, argument, param_type)) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                              "function '%s' argument %u type mismatch",
-                             call->name, i + 1); // 中文：函数参数类型不匹配
+                             function_display_name(function), i + 1); // 中文：函数参数类型不匹配
             free(arguments);
             exit(1);
         }

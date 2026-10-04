@@ -1,0 +1,13 @@
+import modules.leak as m;
+
+fn main(): i32 {
+    // f 只接受一个参数，这里传两个；报错应显示原名 f 而非 __tap_module_N.f。
+    return m.f(1, 2);
+}
+
+/** -- test
+- .stderr
+function 'f' expects 1 arguments, but got 2
+- .exit
+1
+-- */

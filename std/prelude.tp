@@ -1,8 +1,8 @@
-// 跨平台终端、计时、随机数和终止程序所需的内部 Runtime ABI。
+// 跨平台终端、计时和终止程序所需的内部 Runtime ABI。
+// （随机数已挪到 std.random，不再走 Prelude。）
 extern fn __tap_read_key(): i32;
 extern fn __tap_sleep_ms(milliseconds: i32): i32;
 extern fn __tap_clear_screen(): i32;
-extern fn __tap_random(maximum: i32): i32;
 extern fn __tap_panic(message: string): i32;
 extern fn __tap_exit(code: i32): i32;
 
@@ -19,11 +19,6 @@ fn sleep_ms(milliseconds: i32): i32 {
 // 清空终端并把光标移到左上角；操作成功时返回 0。
 fn clear_screen(): i32 {
     return __tap_clear_screen();
-}
-
-// 返回 [0, maximum) 范围内的伪随机整数；maximum 不大于 0 时返回 0。
-fn random(maximum: i32): i32 {
-    return __tap_random(maximum);
 }
 
 // 打印 `panic: <message>` 到标准错误，并以状态 1 终止程序。

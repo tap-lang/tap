@@ -1,0 +1,12 @@
+// 伪随机数生成，底层走 Runtime 的 __tap_random。
+//
+// 之前这层包装放在 Prelude 里，但随机数更像「标准库能力」而不是「语言内置」，
+// 因此挪到 std.random：使用前先 `import std.random;`，再按 `random.random(maximum)` 调用。
+//
+// Runtime ABI 由 Runtime 持有，这里只做一层薄包装，不引入新的 C 符号。
+extern fn __tap_random(maximum: i32): i32;
+
+// 返回 [0, maximum) 范围内的伪随机整数；maximum 不大于 0 时返回 0。
+pub fn random(maximum: i32): i32 {
+    return __tap_random(maximum);
+}

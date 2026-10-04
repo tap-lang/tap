@@ -181,6 +181,8 @@ typedef struct {
 typedef struct {
     ASTNode base;
     char *name;            // 函数名
+    char *original_name;   // 改名前的原名；模块私有符号被改名成 __tap_module_N.name 后，
+                           // 诊断优先用原名，避免泄漏内部符号名
     char *filename;        // 函数定义所在文件
     int line;              // 函数名所在行
     int column;            // 函数名所在列

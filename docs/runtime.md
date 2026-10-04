@@ -14,7 +14,7 @@ extern fn __tap_sleep_ms(milliseconds: i32): i32;
 | `read_key(): i32` | 非阻塞读取一个真实键值；无按键或 stdin 不是终端时返回 `-1` |
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，负数或系统错误返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移到左上角；成功返回 `0` |
-| `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
+| `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0`；现由 `std.random` 提供，需显式导入 |
 | `argc(): i32` | 返回命令行参数数量，包含程序路径自身 |
 | `arg(index: i32): string` | 返回指定命令行参数；越界时返回空字符串 |
 | `args(): Vec<string>` | 返回全部命令行参数；`Vec` 来自 `std.vec` |

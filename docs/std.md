@@ -20,7 +20,6 @@ tap 标准库由两部分组成：
 | `read_key(): i32` | 非阻塞读取真实键值；无按键时返回 `-1` |
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，失败返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
-| `random(maximum: i32): i32` | 当 `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0` |
 | `panic(message: string): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
 | `exit(code: i32): i32` | 以状态码 `code` 终止程序；不打印任何东西，不会返回 |
 | `printf(format: string, ...): i32` | 直接对接 libc 的 `printf`；格式串由调用方负责，返回写出的字符数 |
@@ -141,6 +140,8 @@ fn main(): i32 {
 
 | 模块 | 函数 | 说明 |
 | --- | --- | --- |
+| `std.random` | `random(maximum: i32): i32` | 返回 `[0, maximum)`，否则返回 `0`；底层走 Runtime 的 `__tap_random`，使用前需 `import std.random` |
+| --- | --- | --- |
 | `std.env` | `argc(): i32` | 返回当前程序的命令行参数数量，包含程序路径自身 |
 | `std.env` | `arg(index: i32): string` | 返回指定位置的命令行参数；越界时返回空字符串 |
 | `std.env` | `args(): Vec<string>` | 返回全部命令行参数；用完要 `vec.free` |
@@ -201,6 +202,19 @@ fn main(): i32 {
 | `std.net` | `close_socket(socket): Socket` | 关闭并返回失效句柄，用法是 `socket = close_socket(socket)` |
 | `std.net` | `is_open(socket): bool` | 句柄是否有效；创建失败或关闭后返回 `false` |
 | `std.net` | `AF_INET` / `SOCK_STREAM` / `ADDRESS_LENGTH` | 地址族、套接字类型常量和 `sockaddr_in` 长度 |
+
+`std.random` 示例：
+
+```text
+import std.random;
+
+fn main(): i32 {
+    // random 已不在 Prelude，必须显式导入；调用时用模块别名前缀。
+    let value: i32 = random.random(100);
+    print("%d\n", value);
+    return 0;
+}
+```
 
 `std.env` 示例：
 
@@ -600,8 +614,8 @@ extern fn __tap_free(pointer: *i8): i32;
 ```
 
 普通程序应使用内建字符串操作、Prelude 封装后的 `read_key`、`sleep_ms`、
-`clear_screen` 和 `random`，以及 `std.env`、`std.memory` 封装后的函数，不要直接调用
-`__tap_` 前缀函数。
+`clear_screen`，以及 `std.random` 封装后的 `random`、`std.env`、`std.memory` 封装后的函数，
+不要直接调用 `__tap_` 前缀函数。
 
 Runtime 的 C ABI 声明位于
 [`runtime/include/tap_runtime.h`](../runtime/include/tap_runtime.h)，实现位于

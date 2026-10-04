@@ -1,0 +1,5 @@
+// 诊断泄漏回归用模块：pub 函数被改名成 __tap_module_N.f 后，参数数量不匹配的报错
+// 应当显示原名 `f`，而不是内部符号名 `__tap_module_N.f`。
+pub fn f(x: i32): i32 {
+    return x;
+}

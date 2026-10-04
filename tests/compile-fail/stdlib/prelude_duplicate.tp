@@ -1,14 +1,14 @@
-fn random(maximum: i32): i32 {
+fn clear_screen(): i32 {
     return 0;
 }
 
 fn main(): i32 {
-    return random(10);
+    return clear_screen();
 }
 
 /** -- test
 - .stderr
-error: duplicate function definition 'random'
+error: duplicate function definition 'clear_screen'
 --> tests/compile-fail/stdlib/prelude_duplicate.tp:1:4
 - .exit
 1

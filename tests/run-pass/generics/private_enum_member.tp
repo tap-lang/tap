@@ -1,0 +1,15 @@
+import modules.priv_enum_generic as m;
+
+fn main(): i32 {
+    // 实例化泛型函数，触发其内部对模块私有枚举构造器的类型解析。
+    let r: i32 = m.tag<i32>(42);
+    print("%d\n", r);
+    return 0;
+}
+
+/** -- test
+- .stdout
+1
+- .exit
+0
+-- */

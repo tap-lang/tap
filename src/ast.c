@@ -508,6 +508,7 @@ FunctionNode *create_function(char *name) {
     function->base.type = NODE_FUNCTION;
     function->base.next = NULL;
     function->name = strdup(name);
+    function->original_name = NULL;
     function->filename = NULL;
     function->line = 0;
     function->column = 0;
