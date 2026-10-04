@@ -1,17 +1,18 @@
 // TCP 套接字（IPv4）。
 //
-// 和标准库其他模块不同，这里**一行 Runtime 代码都不用**：全部通过 extern 直接绑定
-// libc 的 BSD socket 接口，这一层只是薄包装，runtime.c 不需要为它增加任何东西。
+// 平台差异收在 Runtime 的 `__tap_socket_*` 里：POSIX 走 libc 的 BSD socket，
+// Windows 走 winsock（需要先 WSAStartup、句柄是 64 位 SOCKET、关闭要用 closesocket）。
+// tap 没有条件编译，所以这层差异只能由 C 侧的 Runtime 承担 —— 这也是本模块唯一
+// 需要 Runtime 的地方。macOS / Linux / Cygwin 和原生 Windows（MSVC / MinGW）都可用。
 //
 // 三件必须知道的事：
-//   - **只支持 POSIX**（macOS / Linux / Cygwin）。Windows 的 winsock 要先 WSAStartup，
-//     而且 SOCKET 是 64 位句柄，当前不支持。
 //   - **全程阻塞，没有超时**。accept / connect / receive 都会一直等下去，对端不响应时
 //     调用方就卡住了；需要超时得自己配合非阻塞模式，本模块还没做。
 //   - **`Socket` 是值类型**，`close_socket()` 拿到的是副本，没法把调用方手里的句柄置空。
 //     和 std.fs 不同，这里没有 Runtime 侧的句柄登记表，所以关闭之后必须**把返回值赋回去**：
 //         socket = net.close_socket(socket);
 //     不赋值的话，旧副本的 fd 仍然是正数，is_open 会误判为「还开着」。
+//   - **只认 IPv4 字面量**，不做域名解析。
 //
 // 典型用法（服务器）：
 //     let server: Socket = unwrap(net.listen_on("127.0.0.1", 8080, 8));
@@ -19,24 +20,23 @@
 //     let buffer: [u8; 1024] = [0; 1024];
 //     let count: i64 = net.receive(client, &buffer[0], 1024);
 
-// libc 的 BSD socket 接口。这些名字必须和 C 符号完全一致（extern 不做任何重命名），
-// 所以公开 API 只能避开 listen / accept / connect / recv / send / close 这些名字，
-// 改用 listen_on / accept_from / connect_to / receive / send_text / close_socket。
-extern fn socket(domain: i32, kind: i32, protocol: i32): i32;
-extern fn bind(fd: i32, address: *u8, length: u32): i32;
-extern fn listen(fd: i32, backlog: i32): i32;
-extern fn accept(fd: i32, address: *u8, length: *u32): i32;
-extern fn connect(fd: i32, address: *u8, length: u32): i32;
-extern fn getsockname(fd: i32, address: *u8, length: *u32): i32;
-extern fn recv(fd: i32, buffer: *u8, length: uint, flags: i32): i64;
-extern fn send(fd: i32, data: string, length: uint, flags: i32): i64;
-extern fn write(fd: i32, buffer: *u8, length: uint): i64;
-extern fn close(fd: i32): i32;
+// 套接字原语的 Runtime ABI。句柄是 i64，负值表示无效。
+// 名字统一以 __tap_ 开头，不会像直接用 socket / bind / listen 那样占住通用全局名。
+extern fn __tap_socket_create(): i64;
+extern fn __tap_socket_bind(handle: i64, address: *u8, length: u32): i32;
+extern fn __tap_socket_listen(handle: i64, backlog: i32): i32;
+extern fn __tap_socket_accept(handle: i64): i64;
+extern fn __tap_socket_connect(handle: i64, address: *u8, length: u32): i32;
+extern fn __tap_socket_getsockname(handle: i64, address: *u8, length: *u32): i32;
+extern fn __tap_socket_recv(handle: i64, buffer: *u8, length: uint): i64;
+extern fn __tap_socket_send(handle: i64, buffer: *u8, length: uint): i64;
+extern fn __tap_socket_send_text(handle: i64, data: string): i64;
+extern fn __tap_socket_close(handle: i64): i32;
 
-// 地址族：IPv4。
+// 地址族：IPv4。sockaddr_in 里 family 字段的值，两平台一致。
 pub const AF_INET: i32 = 2;
 
-// 套接字类型：面向连接的字节流（TCP）。
+// 套接字类型：面向连接的字节流（TCP）。由 Runtime 固定使用，这里导出供参考。
 pub const SOCK_STREAM: i32 = 1;
 
 // sockaddr_in 的固定长度；IPv4 地址结构就 16 字节。
@@ -44,7 +44,7 @@ pub const ADDRESS_LENGTH: u32 = 16;
 
 // 一个套接字。`fd` 小于 0 表示已关闭或者创建失败，不要直接读写它。
 pub struct Socket {
-    fd: i32,
+    fd: i64,
 }
 
 // 把 "a.b.c.d" 形式的 IPv4 字面量解析成 4 个字节。
@@ -128,16 +128,16 @@ pub fn listen_on(host: string, port: u16, backlog: i32): Result<Socket, string> 
     }
     let address: [u8; 16] = unwrap(built);
 
-    let fd: i32 = socket(AF_INET, SOCK_STREAM, 0);
+    let fd: i64 = __tap_socket_create();
     if (fd < 0) {
         return Result<Socket, string>.Err("socket() failed");
     }
-    if (bind(fd, &address[0], ADDRESS_LENGTH) != 0) {
-        close(fd);
+    if (__tap_socket_bind(fd, &address[0], ADDRESS_LENGTH) != 0) {
+        __tap_socket_close(fd);
         return Result<Socket, string>.Err("bind() failed");
     }
-    if (listen(fd, backlog) != 0) {
-        close(fd);
+    if (__tap_socket_listen(fd, backlog) != 0) {
+        __tap_socket_close(fd);
         return Result<Socket, string>.Err("listen() failed");
     }
     return Result<Socket, string>.Ok(Socket { fd: fd });
@@ -153,12 +153,12 @@ pub fn connect_to(host: string, port: u16): Result<Socket, string> {
     }
     let address: [u8; 16] = unwrap(built);
 
-    let fd: i32 = socket(AF_INET, SOCK_STREAM, 0);
+    let fd: i64 = __tap_socket_create();
     if (fd < 0) {
         return Result<Socket, string>.Err("socket() failed");
     }
-    if (connect(fd, &address[0], ADDRESS_LENGTH) != 0) {
-        close(fd);
+    if (__tap_socket_connect(fd, &address[0], ADDRESS_LENGTH) != 0) {
+        __tap_socket_close(fd);
         return Result<Socket, string>.Err("connect() failed");
     }
     return Result<Socket, string>.Ok(Socket { fd: fd });
@@ -167,14 +167,12 @@ pub fn connect_to(host: string, port: u16): Result<Socket, string> {
 // 从监听套接字上取一个已完成握手的连接，阻塞直到有连接进来。
 // 传入的句柄已关闭、或者底层 accept 失败时返回 Err。
 //
-// 对端地址这里不返回，所以缓冲区只是个必须提供的占位参数。
+// 对端地址这里不返回，所以底层也不需要接收它的缓冲区。
 pub fn accept_from(server: Socket): Result<Socket, string> {
     if (!is_open(server)) {
         return Result<Socket, string>.Err("socket is closed");
     }
-    let peer: [u8; 16] = [0; 16];
-    let peer_length: u32 = ADDRESS_LENGTH;
-    let fd: i32 = accept(server.fd, &peer[0], &peer_length);
+    let fd: i64 = __tap_socket_accept(server.fd);
     if (fd < 0) {
         return Result<Socket, string>.Err("accept() failed");
     }
@@ -189,7 +187,7 @@ pub fn local_port(socket: Socket): u16 {
     }
     let address: [u8; 16] = [0; 16];
     let length: u32 = ADDRESS_LENGTH;
-    if (getsockname(socket.fd, &address[0], &length) != 0) {
+    if (__tap_socket_getsockname(socket.fd, &address[0], &length) != 0) {
         return 0;
     }
     return address[2] * 256 + address[3];
@@ -205,7 +203,7 @@ pub fn receive(socket: Socket, buffer: *u8, capacity: uint): i64 {
     if (!is_open(socket)) {
         return -1;
     }
-    return recv(socket.fd, buffer, capacity, 0);
+    return __tap_socket_recv(socket.fd, buffer, capacity);
 }
 
 // 发送字符串的全部字节，返回**实际发出的字节数**；句柄无效或出错返回 -1。
@@ -216,22 +214,18 @@ pub fn send_text(socket: Socket, data: string): i64 {
     if (!is_open(socket)) {
         return -1;
     }
-    return send(socket.fd, data, data.len(), 0);
+    return __tap_socket_send_text(socket.fd, data);
 }
 
 // 发送缓冲区里的 length 个字节，返回**实际发出的字节数**；句柄无效或出错返回 -1。
 //
 // 和 receive 配对：收到的是裸字节，直接丢回 send_bytes 就能原样回显，内容里含 NUL
 // 也没问题——send_text 只收字符串，发不出这种数据。
-//
-// 底层用 libc 的 write(2) 而不是 send(2)：在 socket fd 上两者等价，而 write 的参数
-// 本来就是缓冲区指针。send 已经按 string 声明给 send_text 用了，同名 extern 不能
-// 声明两次。
 pub fn send_bytes(socket: Socket, buffer: *u8, length: uint): i64 {
     if (!is_open(socket)) {
         return -1;
     }
-    return write(socket.fd, buffer, length);
+    return __tap_socket_send(socket.fd, buffer, length);
 }
 
 // 关闭套接字，返回关闭后的句柄（fd 变成 -1）。
@@ -244,7 +238,7 @@ pub fn send_bytes(socket: Socket, buffer: *u8, length: uint): i64 {
 // 对已经关闭的句柄重复调用是安全的，不会有副作用。
 pub fn close_socket(socket: Socket): Socket {
     if (is_open(socket)) {
-        close(socket.fd);
+        __tap_socket_close(socket.fd);
     }
     return Socket { fd: -1 };
 }

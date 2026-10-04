@@ -113,6 +113,36 @@ libc 的 `exit`**，因为那会占住 LLVM 模块里的 `exit` 符号，和 Pre
 当前打开的句柄（上限 64，超出时 `open` 失败），把已关闭的句柄判定为无效，于是误用只会得到
 空结果或 `-1`，而不是崩溃。
 
+## 套接字 ABI
+
+`std.net` 的 TCP 套接字底层是以下 Runtime ABI：
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_socket_create(): i64` | 创建 TCP 套接字；返回句柄，失败返回 `-1` |
+| `__tap_socket_bind(handle, address, length): i32` | 绑定 16 字节 `sockaddr_in`；成功返回 `0` |
+| `__tap_socket_listen(handle, backlog): i32` | 开始监听；成功返回 `0` |
+| `__tap_socket_accept(handle): i64` | 取一个已完成握手的连接；失败返回 `-1` |
+| `__tap_socket_connect(handle, address, length): i32` | 阻塞连接；成功返回 `0` |
+| `__tap_socket_getsockname(handle, address, length): i32` | 查询本地地址；成功返回 `0` |
+| `__tap_socket_recv(handle, buffer, length): i64` | 收数据；返回字节数（`0` 表示对端关闭），失败返回 `-1` |
+| `__tap_socket_send(handle, buffer, length): i64` | 发裸字节；返回字节数，失败返回 `-1` |
+| `__tap_socket_send_text(handle, data): i64` | 发字符串全部字节；返回字节数，失败返回 `-1` |
+| `__tap_socket_close(handle): i32` | 关闭套接字；成功返回 `0` |
+
+**平台差异全部收在这一层**：POSIX 直接把 `int fd` 交给 libc 的 BSD socket；Windows 的
+winsock 必须先 `WSAStartup`（惰性初始化一次）、句柄是 64 位 `SOCKET`、关闭要用
+`closesocket`。tap 没有条件编译，所以这层适配只能写在 C 侧 —— 这也是 `std.net` 唯一需要
+Runtime 的地方。
+
+句柄统一是 `int64`：POSIX 的 `fd` 原样放进去，Windows 的 `SOCKET` 也是小整数，而
+`INVALID_SOCKET` 恰好等于 `-1`，于是「负值 = 无效」在两平台都成立。地址缓冲区是调用方给的
+16 字节 `sockaddr_in`（两平台的 family / port / addr 字节布局一致），Runtime 不分配内存。
+
+Windows 下 `ws2_32.lib` 必须参与链接：CMake 给静态 Runtime 声明了 `PUBLIC ws2_32`（依赖会
+传给最终链接方）、给共享 Runtime 直接链进去；编译器 `run` 模式调用的 `clang-cl` 也会显式
+带上 `ws2_32.lib`。
+
 ## 底层内存 ABI
 
 Runtime 还提供堆内存管理函数，供后续指针类型、可变数组或容器标准库使用：

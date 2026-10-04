@@ -80,4 +80,31 @@ TAP_RUNTIME_API void *__tap_realloc(void *pointer, size_t size);
 // 释放 Runtime 分配的堆内存；NULL 指针安全无操作，返回 0。
 TAP_RUNTIME_API int32_t __tap_free(void *pointer);
 
+// ---- TCP 套接字（IPv4） ----
+//
+// 平台差异（POSIX 的 BSD socket / Windows 的 winsock）全部收在这一层：winsock 要先
+// WSAStartup、句柄是 64 位 SOCKET、关闭要用 closesocket，而 tap 没有条件编译。
+//
+// 句柄统一是 int64：POSIX 下是 int fd，Windows 下是 SOCKET；**负值表示无效**。
+// 地址缓冲区是调用方提供的 16 字节 sockaddr_in（两平台的 family / port / addr
+// 字节布局一致），Runtime 不分配内存。
+// 约定：0 表示成功、-1 表示失败；recv / send 返回字节数（0 表示对端已关闭），-1 表示失败。
+
+TAP_RUNTIME_API int64_t __tap_socket_create(void);
+TAP_RUNTIME_API int32_t __tap_socket_bind(
+    int64_t handle, const uint8_t *address, uint32_t length);
+TAP_RUNTIME_API int32_t __tap_socket_listen(int64_t handle, int32_t backlog);
+TAP_RUNTIME_API int64_t __tap_socket_accept(int64_t handle);
+TAP_RUNTIME_API int32_t __tap_socket_connect(
+    int64_t handle, const uint8_t *address, uint32_t length);
+TAP_RUNTIME_API int32_t __tap_socket_getsockname(
+    int64_t handle, uint8_t *address, uint32_t *length);
+TAP_RUNTIME_API int64_t __tap_socket_recv(
+    int64_t handle, uint8_t *buffer, uint64_t length);
+TAP_RUNTIME_API int64_t __tap_socket_send(
+    int64_t handle, const uint8_t *buffer, uint64_t length);
+// 发送字符串的全部字节（不含结尾 NUL）。
+TAP_RUNTIME_API int64_t __tap_socket_send_text(int64_t handle, const char *data);
+TAP_RUNTIME_API int32_t __tap_socket_close(int64_t handle);
+
 #endif

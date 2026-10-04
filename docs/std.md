@@ -497,10 +497,11 @@ fn main(): i32 {
 }
 ```
 
-`std.net` 是标准库里唯一**完全不依赖 Runtime** 的模块：全部通过 `extern fn` 直接绑定 libc
-的 BSD socket 接口，`runtime.c` 一行都不用加。代价是 `extern` 的名字必须和 C 符号一致，
-所以公开 API 避开了 `listen` / `accept` / `connect` / `recv` / `send` / `close` 这些名字，
-改用 `listen_on` / `accept_from` / `connect_to` / `receive` / `send_text` / `close_socket`。
+`std.net` 的 socket 原语收在 Runtime 的 `__tap_socket_*` 里：POSIX 走 libc 的 BSD socket，
+Windows 走 winsock（要先 `WSAStartup`、句柄是 64 位 `SOCKET`、关闭用 `closesocket`）。tap
+没有条件编译，所以平台差异只能由 C 侧的 Runtime 承担 —— 这是本模块唯一需要 Runtime 的地方，
+换来的是 macOS / Linux / Cygwin 和原生 Windows（MSVC / MinGW）都能用。底层 ABI 见
+[Runtime 文档的套接字 ABI](runtime.md#套接字-abi)。
 
 四件必须知道的事：
 
@@ -511,8 +512,9 @@ fn main(): i32 {
 - **全程阻塞，没有超时**。`accept_from` / `connect_to` / `receive` 都会一直等下去，
   需要超时得自己配非阻塞模式，本模块还没做。
 - **只认 IPv4 字面量，没有 DNS**。`"localhost"` 之类的域名会直接返回 `Err`。
-- **只支持 POSIX**（macOS / Linux / Cygwin）。Windows 的 winsock 要先 `WSAStartup`，
-  而且 `SOCKET` 是 64 位句柄，当前不支持。
+- **公开 API 用 `listen_on` / `accept_from` / `connect_to` / `receive` / `send_text` /
+  `close_socket`，刻意避开 `listen` / `accept` / `connect` / `recv` / `send` / `close`
+  这些通用名**，用户自己的代码仍能自由使用这些名字。
 
 `receive` 收到的是裸字节，直接写进调用方给的缓冲区，不经过 Runtime 的「字节转字符串」，
 所以内容里含 NUL 也不会终止程序；配 `send_bytes` 就能把收到的内容原样回显或转发。要发
@@ -643,9 +645,10 @@ Runtime 的 C ABI 声明位于
 2. 如果函数应默认可用，放入 `std/prelude.tp`。
 3. 如果函数需要操作系统、终端、时间、随机数、文件、内存等底层能力，先在
    Runtime 中增加 `__tap_` 前缀 C ABI，再在 Prelude 或模块中提供公共包装。
-4. 如果该能力在 libc 里已经有稳定符号（socket、数学函数之类），也可以像 `std.net` 那样
-   用 `extern fn` 直接绑定，不碰 Runtime。注意 `extern` 的名字就是链接时的 C 符号名，
-   不能加 `__tap_` 前缀，公开 API 要另起名字避开冲突。
+4. 如果该能力在 libc 里已经有稳定符号，可以直接用 `extern fn` 绑定；但**跨平台差异
+   （Windows 的 winsock、句柄宽度、初始化要求等）没法在 tap 侧用条件编译处理**，所以
+   需要跨平台的底层能力（socket 之类）仍应下沉到 Runtime。`std.net` 就是例子：公开 API
+   是纯 tap，socket 原语放在 Runtime 里分平台实现。
 
 新增或修改标准库函数后，需要同步：
 
@@ -666,7 +669,7 @@ Runtime 的 C ABI 声明位于
   或 `std.byte_vec`。字符串数组用 `Vec<string>`，`std.env.args()` / `vars()` 就返回它。
 - 结构体没有析构函数，`Vec` / `ByteVec` 用完要自己调 `free`。
   不释放只是进程退出前一直占着，不会出错。
-- `std.net` 只有 TCP over IPv4，只支持 POSIX，且全程阻塞、没有超时；域名解析、UDP、
-  非阻塞模式和 `send_all` 都还没有。
+- `std.net` 只有 TCP over IPv4，且全程阻塞、没有超时；域名解析、UDP、非阻塞模式和
+  `send_all` 都还没有。
 - 模块会导出顶层常量、结构体、枚举和函数，但没有可见性控制；导入的类型名当前进入全局类型命名空间。
 - Prelude 是自动注入的全局函数集合，不支持按需选择导入。

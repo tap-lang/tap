@@ -9,11 +9,14 @@
 
 #ifdef _WIN32
 #include <conio.h>
+// winsock2.h 必须先于 windows.h：windows.h 会拉进老的 winsock.h，两者一起用会冲突。
+#include <winsock2.h>
 #include <windows.h>
 #else
 #include <errno.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <termios.h>
 #include <unistd.h>
 #endif
@@ -477,4 +480,134 @@ int32_t __tap_panic(const char *message) {
 int32_t __tap_exit(int32_t code) {
     exit((int)code);
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// TCP 套接字（IPv4）
+//
+// 这一层存在的唯一理由是跨平台：POSIX 直接把 int fd 交给 libc 的 BSD socket；
+// Windows 的 winsock 必须先 WSAStartup、句柄是 64 位 SOCKET、关闭要用 closesocket。
+// tap 没有条件编译，所以平台差异只能落在这里。
+//
+// 句柄统一成 int64：POSIX 的 fd 原样放进去（负值即无效），Windows 的 SOCKET 也是
+// 小整数，而 INVALID_SOCKET 恰好等于 -1，所以「负值 = 无效」两边都成立。
+
+#ifdef _WIN32
+// winsock 必须先初始化。惰性做一次，避免给不用网络的程序加启动开销。
+static int winsock_ready = 0;
+
+static int ensure_winsock(void) {
+    if (winsock_ready) return 0;
+    WSADATA data;
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return -1;
+    winsock_ready = 1;
+    return 0;
+}
+
+// Windows 的 recv / send 长度参数是 int，超长时截断到 INT32_MAX。
+static int clamp_length(uint64_t length) {
+    return length > (uint64_t)INT32_MAX ? INT32_MAX : (int)length;
+}
+#endif
+
+int64_t __tap_socket_create(void) {
+#ifdef _WIN32
+    if (ensure_winsock() != 0) return -1;
+    SOCKET handle = socket(AF_INET, SOCK_STREAM, 0);
+    if (handle == INVALID_SOCKET) return -1;
+    return (int64_t)handle;
+#else
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    return fd < 0 ? -1 : (int64_t)fd;
+#endif
+}
+
+int32_t __tap_socket_bind(int64_t handle, const uint8_t *address, uint32_t length) {
+    if (handle < 0 || !address) return -1;
+#ifdef _WIN32
+    return bind((SOCKET)handle, (const struct sockaddr *)address, (int)length) == 0 ? 0 : -1;
+#else
+    return bind((int)handle, (const struct sockaddr *)address, (socklen_t)length) == 0 ? 0 : -1;
+#endif
+}
+
+int32_t __tap_socket_listen(int64_t handle, int32_t backlog) {
+    if (handle < 0) return -1;
+#ifdef _WIN32
+    return listen((SOCKET)handle, backlog) == 0 ? 0 : -1;
+#else
+    return listen((int)handle, backlog) == 0 ? 0 : -1;
+#endif
+}
+
+int64_t __tap_socket_accept(int64_t handle) {
+    if (handle < 0) return -1;
+#ifdef _WIN32
+    SOCKET peer = accept((SOCKET)handle, NULL, NULL);
+    return peer == INVALID_SOCKET ? -1 : (int64_t)peer;
+#else
+    int fd = accept((int)handle, NULL, NULL);
+    return fd < 0 ? -1 : (int64_t)fd;
+#endif
+}
+
+int32_t __tap_socket_connect(int64_t handle, const uint8_t *address, uint32_t length) {
+    if (handle < 0 || !address) return -1;
+#ifdef _WIN32
+    return connect((SOCKET)handle, (const struct sockaddr *)address, (int)length) == 0 ? 0 : -1;
+#else
+    return connect((int)handle, (const struct sockaddr *)address, (socklen_t)length) == 0 ? 0 : -1;
+#endif
+}
+
+int32_t __tap_socket_getsockname(int64_t handle, uint8_t *address, uint32_t *length) {
+    if (handle < 0 || !address || !length) return -1;
+#ifdef _WIN32
+    int native_length = (int)*length;
+    if (getsockname((SOCKET)handle, (struct sockaddr *)address, &native_length) != 0) return -1;
+    *length = (uint32_t)native_length;
+    return 0;
+#else
+    socklen_t native_length = (socklen_t)*length;
+    if (getsockname((int)handle, (struct sockaddr *)address, &native_length) != 0) return -1;
+    *length = (uint32_t)native_length;
+    return 0;
+#endif
+}
+
+int64_t __tap_socket_recv(int64_t handle, uint8_t *buffer, uint64_t length) {
+    if (handle < 0 || !buffer) return -1;
+#ifdef _WIN32
+    int received = recv((SOCKET)handle, (char *)buffer, clamp_length(length), 0);
+    return received < 0 ? -1 : (int64_t)received;
+#else
+    ssize_t received = recv((int)handle, buffer, (size_t)length, 0);
+    return received < 0 ? -1 : (int64_t)received;
+#endif
+}
+
+int64_t __tap_socket_send(int64_t handle, const uint8_t *buffer, uint64_t length) {
+    if (handle < 0 || !buffer) return -1;
+#ifdef _WIN32
+    int sent = send((SOCKET)handle, (const char *)buffer, clamp_length(length), 0);
+    return sent < 0 ? -1 : (int64_t)sent;
+#else
+    ssize_t sent = send((int)handle, buffer, (size_t)length, 0);
+    return sent < 0 ? -1 : (int64_t)sent;
+#endif
+}
+
+// 发送字符串的全部字节（不含结尾 NUL）；返回实际发出的字节数，失败返回 -1。
+int64_t __tap_socket_send_text(int64_t handle, const char *data) {
+    if (handle < 0 || !data) return -1;
+    return __tap_socket_send(handle, (const uint8_t *)data, (uint64_t)strlen(data));
+}
+
+int32_t __tap_socket_close(int64_t handle) {
+    if (handle < 0) return -1;
+#ifdef _WIN32
+    return closesocket((SOCKET)handle) == 0 ? 0 : -1;
+#else
+    return close((int)handle) == 0 ? 0 : -1;
+#endif
 }

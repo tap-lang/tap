@@ -16,6 +16,8 @@ RUNTIME_INCLUDE = -Iruntime/include
 RUNTIME_CFLAGS = -Wall -Wextra -g $(RUNTIME_INCLUDE) -fPIC
 RUNTIME_OBJECT = $(BUILD_DIR)/runtime.o
 RUNTIME_STATIC = $(BUILD_DIR)/libtap_runtime.a
+# Windows 的 winsock 符号在 ws2_32 里，共享 Runtime 需要显式链接。
+RUNTIME_SHARED_LIBS =
 VERSION_GENERATOR = $(BUILD_DIR)/get_version
 
 # 根据操作系统类型设置不同的CFLAGS和LDFLAGS
@@ -28,6 +30,7 @@ ifeq ($(OS),Windows_NT)
     LDFLAGS = 
     RUNTIME_SHARED = $(BUILD_DIR)/tap_runtime.dll
     RUNTIME_SHARED_FLAGS = -shared
+    RUNTIME_SHARED_LIBS = -lws2_32
     # Windows下不使用address sanitizer
 else
     # 非Windows系统
@@ -102,7 +105,7 @@ $(RUNTIME_STATIC): $(RUNTIME_OBJECT)
 
 # lli loads this library to resolve extern Runtime declarations.
 $(RUNTIME_SHARED): $(RUNTIME_OBJECT)
-	$(CC) $(RUNTIME_SHARED_FLAGS) -o $@ $<
+	$(CC) $(RUNTIME_SHARED_FLAGS) -o $@ $< $(RUNTIME_SHARED_LIBS)
 
 -include $(DEPS)
 

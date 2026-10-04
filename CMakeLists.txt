@@ -45,6 +45,14 @@ set_target_properties(tap_runtime_shared PROPERTIES
     ARCHIVE_OUTPUT_NAME tap_runtime_shared
 )
 
+# Windows 的 winsock 符号（WSAStartup / socket / closesocket 等）在 ws2_32 里。
+# 静态库把依赖传给最终链接方（编译器 run 模式调用的 clang-cl 也会显式带上 ws2_32.lib），
+# 共享库（lli 加载）自己链进去。
+if(WIN32)
+    target_link_libraries(tap_runtime PUBLIC ws2_32)
+    target_link_libraries(tap_runtime_shared PRIVATE ws2_32)
+endif()
+
 # 设置C++标准
 # set(CMAKE_CXX_STANDARD 17)
 # set(CMAKE_CXX_STANDARD_REQUIRED ON)

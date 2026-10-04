@@ -426,9 +426,10 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
         return 1;
     }
     const char *linker = "clang-cl";
+    // ws2_32.lib 提供 Runtime 里 winsock 的符号（WSAStartup / socket / closesocket 等）。
     char *const argv[] = {
         (char *)linker, "/nologo", "/MT", (char *)object_file,
-        runtime_static_path, output_option, NULL
+        runtime_static_path, output_option, (char *)"ws2_32.lib", NULL
     };
     (void)static_link;
     result = run_process(argv);
