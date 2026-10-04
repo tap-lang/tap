@@ -17,9 +17,11 @@
 #include "helpers.h"
 
 typedef struct ModuleExport {
-    char *name;
-    char *symbol;
+    char *name;      // 源语言里写的名字
+    char *symbol;    // 改写后的内部符号名；extern 和 pub 类型与 name 相同
     int is_constant;
+    int is_type;     // struct / enum 声明
+    int is_pub;      // 只有 pub 的能被其他模块按 `alias.name` 访问
     struct ModuleExport *next;
 } ModuleExport;
 
@@ -53,6 +55,11 @@ static char *copy_string(const char *value) {
     }
     memcpy(copy, value, size);
     return copy;
+}
+
+// 同上，但允许 value 为 NULL —— 类型重写里「不需要改名」就是 NULL，不是错误。
+static char *copy_string_or_null(const char *value) {
+    return value ? copy_string(value) : NULL;
 }
 
 static int file_exists(const char *path) {
@@ -282,6 +289,13 @@ static ModuleExport *find_export(LoadedModule *module, const char *name) {
     return NULL;
 }
 
+// 外部访问（`alias.name`）只认 pub 的顶层声明。模块内部的裸名引用走 find_export，
+// 那里不看 pub —— 本模块自己的东西当然都能用。
+static ModuleExport *find_public_export(LoadedModule *module, const char *name) {
+    ModuleExport *export = find_export(module, name);
+    return export && export->is_pub ? export : NULL;
+}
+
 // 只在本模块导出的**常量**里找。表达式里的裸名只有常量才可能合法出现：函数名
 // 只能出现在调用位置（由 rewrite_call 处理），类型名走 NODE_VAR_TYPE。把函数名也
 // 算进来会误伤同名局部变量，例如 `with_capacity(capacity: uint)` 里的参数 capacity。
@@ -289,6 +303,15 @@ static ModuleExport *find_constant_export(LoadedModule *module, const char *name
     for (ModuleExport *export = module ? module->exports : NULL;
          export; export = export->next) {
         if (export->is_constant && strcmp(export->name, name) == 0) return export;
+    }
+    return NULL;
+}
+
+// 在模块导出的**类型**里按原名找。类型重写用它把非 pub 类型换成模块私有符号。
+static ModuleExport *find_type_export(LoadedModule *module, const char *name) {
+    for (ModuleExport *export = module ? module->exports : NULL;
+         export; export = export->next) {
+        if (export->is_type && strcmp(export->name, name) == 0) return export;
     }
     return NULL;
 }
@@ -344,6 +367,42 @@ static char *create_symbol(const char *prefix, const char *name) {
     return symbol;
 }
 
+// 登记一个顶层类型声明。pub 类型保持裸名（其他模块直接写类型名就能引用），
+// 非 pub 类型改名成模块私有符号。改名结果通过 renamed_out 交回调用方写回定义处；
+// pub 类型不需要改名，renamed_out 置 NULL。
+static int register_type_export(
+    LoadedModule *module, const char *name, int is_pub,
+    ModuleExport ***tail, char **renamed_out) {
+    ModuleExport *export = calloc(1, sizeof(ModuleExport));
+    if (!export) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return 1;
+    }
+    export->name = copy_string(name);
+    export->symbol = is_pub ? copy_string(name) : create_symbol(module->prefix, name);
+    export->is_type = 1;
+    export->is_pub = is_pub;
+    if (!export->name || !export->symbol) {
+        free(export->name);
+        free(export->symbol);
+        free(export);
+        return 1;
+    }
+
+    **tail = export;
+    *tail = &export->next;
+    *renamed_out = is_pub ? NULL : export->symbol;
+    return 0;
+}
+
+// 把模块的顶层符号登记成「原名 → 内部符号名」，并就地改写定义处的名字。
+//
+//   - 常量、普通函数：一律改名成 `__tap_module_N.name`。**非 pub 的也要改名** ——
+//     否则它仍然占着全局名字，会和其他模块的同名符号撞。
+//   - `extern` 函数：符号名就是 C 符号名，加前缀会链接不到，所以保持原名。
+//   - 类型：pub 的保持裸名，非 pub 的改名成模块私有。两个模块因此可以各自拥有
+//     同名私有类型，互不干扰。
+// 只有 pub 的会被 find_public_export 放行给其他模块。
 static int register_exports(LoadedModule *module, ProgramNode *program) {
     FunctionNode *previous = NULL;
     FunctionNode *duplicate = find_internal_duplicate(program->functions, &previous);
@@ -360,6 +419,7 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
         export->name = copy_string(constant->name);
         export->symbol = create_symbol(module->prefix, constant->name);
         export->is_constant = 1;
+        export->is_pub = constant->is_pub;
         if (!export->name || !export->symbol) {
             free(export->name);
             free(export->symbol);
@@ -381,14 +441,17 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
 
     for (ASTNode *node = program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
-        if (function->is_extern) continue;
         ModuleExport *export = calloc(1, sizeof(ModuleExport));
         if (!export) {
             fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             return 1;
         }
         export->name = copy_string(function->name);
-        export->symbol = create_symbol(module->prefix, function->name);
+        // extern 的符号名必须和 C 符号一致，加了前缀就链接不到了。
+        export->symbol = function->is_extern
+            ? copy_string(function->name)
+            : create_symbol(module->prefix, function->name);
+        export->is_pub = function->is_pub;
         if (!export->name || !export->symbol) {
             free(export->name);
             free(export->symbol);
@@ -396,16 +459,46 @@ static int register_exports(LoadedModule *module, ProgramNode *program) {
             return 1;
         }
 
-        free(function->name);
-        function->name = copy_string(export->symbol);
-        if (!function->name) {
-            free(export->name);
-            free(export->symbol);
-            free(export);
-            return 1;
+        if (!function->is_extern) {
+            free(function->name);
+            function->name = copy_string(export->symbol);
+            if (!function->name) {
+                free(export->name);
+                free(export->symbol);
+                free(export);
+                return 1;
+            }
         }
         *tail = export;
         tail = &export->next;
+    }
+
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        StructNode *structure = (StructNode *)node;
+        char *renamed = NULL;
+        if (register_type_export(
+                module, structure->name, structure->is_pub, &tail, &renamed) != 0) {
+            return 1;
+        }
+        if (renamed) {
+            free(structure->name);
+            structure->name = copy_string(renamed);
+            if (!structure->name) return 1;
+        }
+    }
+
+    for (ASTNode *node = program->enums; node; node = node->next) {
+        EnumNode *enum_node = (EnumNode *)node;
+        char *renamed = NULL;
+        if (register_type_export(
+                module, enum_node->name, enum_node->is_pub, &tail, &renamed) != 0) {
+            return 1;
+        }
+        if (renamed) {
+            free(enum_node->name);
+            enum_node->name = copy_string(renamed);
+            if (!enum_node->name) return 1;
+        }
     }
     return 0;
 }
@@ -518,7 +611,8 @@ static char *resolve_exported_name(
         ImportBinding *binding = find_binding(bindings, alias);
         free(alias);
         if (!binding) return NULL;
-        export = find_export(binding->module, dot + 1);
+        // 外部访问只认 pub：非 pub 的顶层符号是模块私有的。
+        export = find_public_export(binding->module, dot + 1);
     } else {
         export = find_export(current_module, name);
     }
@@ -562,6 +656,107 @@ static int rewrite_expression(
     LoadedModule *current_module, ImportBinding *bindings);
 
 // 判断限定标识符是否是当前文件里的 Enum.Member 枚举成员。
+// 本模块私有类型的裸名引用要跟着改名。pub 类型保持裸名（其他模块直接写类型名引用），
+// 外来类型和标量不动。返回要替换成的新名字，NULL 表示不用改。
+static char *resolve_type_name(LoadedModule *module, const char *name) {
+    ModuleExport *export = find_type_export(module, name);
+    if (!export || export->is_pub) return NULL;
+    return export->symbol;
+}
+
+// 递归重写一个类型节点里的类型名。泛型实参在 type_arguments，数组/指针在 element_type。
+static void rewrite_var_type(LoadedModule *module, VarTypeNode *type) {
+    if (!type) return;
+
+    if (type->struct_name) {
+        char *copy = copy_string_or_null(resolve_type_name(module, type->struct_name));
+        if (copy) {
+            free(type->struct_name);
+            type->struct_name = copy;
+        }
+    }
+    if (type->enum_name) {
+        char *copy = copy_string_or_null(resolve_type_name(module, type->enum_name));
+        if (copy) {
+            free(type->enum_name);
+            type->enum_name = copy;
+        }
+    }
+
+    for (ASTNode *node = type->type_arguments; node; node = node->next) {
+        rewrite_var_type(module, (VarTypeNode *)node);
+    }
+    rewrite_var_type(module, type->element_type);
+}
+
+// 把 `Foo.Bar` 里的枚举前缀换成本模块私有符号名。返回新名字（调用方负责释放），
+// NULL 表示前缀不是本模块的私有类型、不需要改。
+//
+// 按**最后一个**点切分：模块前缀本身带点（`__tap_module_0.E`），用第一个点会切错。
+static char *resolve_enum_member_name(LoadedModule *module, const char *name) {
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name || !dot[1]) return NULL;
+
+    size_t prefix_length = (size_t)(dot - name);
+    char *prefix = malloc(prefix_length + 1);
+    if (!prefix) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return NULL;
+    }
+    memcpy(prefix, name, prefix_length);
+    prefix[prefix_length] = '\0';
+    char *renamed = resolve_type_name(module, prefix);
+    free(prefix);
+    if (!renamed) return NULL;
+
+    size_t total = strlen(renamed) + strlen(dot) + 1;
+    char *joined = malloc(total);
+    if (!joined) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return NULL;
+    }
+    snprintf(joined, total, "%s%s", renamed, dot);
+    return joined;
+}
+
+// 模块自己声明的类型（结构体字段、枚举载荷）和顶层常量的类型标注，里面的类型名
+// 同样要跟着改名。函数签名由 rewrite_functions 处理，函数体走表达式重写。
+static void rewrite_declared_types(LoadedModule *module, ProgramNode *program) {
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        StructNode *structure = (StructNode *)node;
+        for (ASTNode *field = structure->fields; field; field = field->next) {
+            rewrite_var_type(module, ((StructFieldNode *)field)->field_type);
+        }
+    }
+    for (ASTNode *node = program->enums; node; node = node->next) {
+        EnumNode *enum_node = (EnumNode *)node;
+        for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
+            for (ASTNode *payload = ((EnumVariantNode *)variant)->payload_types;
+                 payload; payload = payload->next) {
+                rewrite_var_type(module, (VarTypeNode *)payload);
+            }
+        }
+    }
+    for (ASTNode *node = program->constants; node; node = node->next) {
+        rewrite_var_type(module, ((VarDeclNode *)node)->type);
+    }
+}
+
+// 解析 `alias.` 前缀对应的导入绑定；没有同名导入时返回 NULL。
+static ImportBinding *binding_for_qualified_name(
+    const char *name, ImportBinding *bindings) {
+    char *dot = strchr(name, '.');
+    if (!dot) return NULL;
+    size_t alias_length = (size_t)(dot - name);
+    char *alias = malloc(alias_length + 1);
+    if (!alias) return NULL;
+    memcpy(alias, name, alias_length);
+    alias[alias_length] = '\0';
+    ImportBinding *binding = find_binding(bindings, alias);
+    free(alias);
+    return binding;
+}
+
 static int is_local_enum_member(ProgramNode *program, const char *name) {
     char *dot = strchr(name, '.');
     if (!dot || dot == name || strchr(dot + 1, '.')) return 0;
@@ -584,6 +779,9 @@ static int rewrite_statement_list(
         int result = 0;
         switch (statement->type) {
             case NODE_VAR_DECL:
+                // 变量声明上的类型标注里可能引用了本模块的私有类型。
+                rewrite_var_type(
+                    current_module, ((VarDeclNode *)statement)->type);
                 result = rewrite_expression(
                     program, ((VarDeclNode *)statement)->expression,
                     current_module, bindings);
@@ -657,6 +855,13 @@ static int rewrite_statement_list(
                 for (ASTNode *arm_node = match_node->arms;
                      arm_node && result == 0; arm_node = arm_node->next) {
                     MatchArmNode *arm = (MatchArmNode *)arm_node;
+                    // 模式里的枚举名要跟着改名（本模块私有枚举会被加前缀）。
+                    char *renamed_enum = copy_string_or_null(
+                        resolve_type_name(current_module, arm->enum_name));
+                    if (renamed_enum) {
+                        free(arm->enum_name);
+                        arm->enum_name = renamed_enum;
+                    }
                     if (arm->body) {
                         result = rewrite_statement_list(
                             program, arm->body, current_module, bindings);
@@ -685,6 +890,15 @@ static int rewrite_call(
         return 0;
     }
 
+    // 枚举成员构造 `E.B(...)`：E 是本模块私有枚举时前缀要跟着改名。改完就是
+    // 模块内部符号，不需要再走别名解析。
+    char *renamed_member = resolve_enum_member_name(current_module, call->name);
+    if (renamed_member) {
+        free(call->name);
+        call->name = renamed_member;
+        return 0;
+    }
+
     char *dot = strchr(call->name, '.');
     ModuleExport *export = NULL;
 
@@ -704,11 +918,19 @@ static int rewrite_call(
             free(alias);
             return 0;
         }
-        export = find_export(binding->module, dot + 1);
+        export = find_public_export(binding->module, dot + 1);
         if (!export) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "module '%s' has no function '%s'",
-                             binding->import_node->module_name, dot + 1); // 中文：模块中没有函数
+            // 区分「压根没有这个符号」和「有但不是 pub」：后者是可见性问题，
+            // 直接说「是私有的」比说「不存在」有用得多。
+            if (find_export(binding->module, dot + 1)) {
+                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                                 "'%s' is private to module '%s'",
+                                 dot + 1, binding->import_node->module_name); // 中文：该符号是模块私有的
+            } else {
+                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                                 "module '%s' has no function '%s'",
+                                 binding->import_node->module_name, dot + 1); // 中文：模块中没有函数
+            }
             free(alias);
             return 1;
         }
@@ -754,6 +976,16 @@ static int rewrite_expression(
         }
         case NODE_STRUCT_LITERAL: {
             StructLiteralNode *literal = (StructLiteralNode *)expression;
+            // 结构体名和泛型实参里的类型名都要跟着改名。
+            char *renamed = copy_string_or_null(
+                resolve_type_name(current_module, literal->struct_name));
+            if (renamed) {
+                free(literal->struct_name);
+                literal->struct_name = renamed;
+            }
+            for (ASTNode *node = literal->type_arguments; node; node = node->next) {
+                rewrite_var_type(current_module, (VarTypeNode *)node);
+            }
             for (ASTNode *node = literal->fields; node; node = node->next) {
                 StructInitFieldNode *field = (StructInitFieldNode *)node;
                 int result = rewrite_expression(
@@ -762,8 +994,17 @@ static int rewrite_expression(
             }
             return 0;
         }
+        case NODE_SIZEOF:
+            // sizeof(SomeType) 里的类型名同样要跟着改名。
+            rewrite_var_type(
+                current_module, ((SizeofNode *)expression)->operand_type);
+            return 0;
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
+            // 显式泛型实参里的类型名也要跟着改名。
+            for (ASTNode *type = call->type_arguments; type; type = type->next) {
+                rewrite_var_type(current_module, (VarTypeNode *)type);
+            }
             for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
                 int result = rewrite_expression(program, argument, current_module, bindings);
                 if (result != 0) return result;
@@ -779,6 +1020,13 @@ static int rewrite_expression(
             for (ASTNode *arm_node = match_node->arms;
                  arm_node && result == 0; arm_node = arm_node->next) {
                 MatchArmNode *arm = (MatchArmNode *)arm_node;
+                // 模式里的枚举名要跟着改名（本模块私有枚举会被加前缀）。
+                char *renamed_enum = copy_string_or_null(
+                    resolve_type_name(current_module, arm->enum_name));
+                if (renamed_enum) {
+                    free(arm->enum_name);
+                    arm->enum_name = renamed_enum;
+                }
                 if (arm->body) {
                     result = rewrite_statement_list(
                         program, arm->body, current_module, bindings);
@@ -819,6 +1067,16 @@ static int rewrite_expression(
                 return 0;
             }
 
+            // 枚举成员 `Foo.Bar`：Foo 是本模块的私有枚举时前缀要跟着改名，否则
+            // 后面按别名解析会找不到符号。改完就是最终形态，不用再往下走。
+            char *renamed_member =
+                resolve_enum_member_name(current_module, identifier->name);
+            if (renamed_member) {
+                free(identifier->name);
+                identifier->name = renamed_member;
+                return 0;
+            }
+
             if (is_local_enum_member(program, identifier->name)) return 0;
 
             size_t alias_length = (size_t)(dot - identifier->name);
@@ -838,7 +1096,14 @@ static int rewrite_expression(
 
             char *resolved = resolve_exported_name(identifier->name, current_module, bindings);
             if (!resolved) {
-                fprintf(stderr, "error: unknown module constant '%s'\n", identifier->name); // 中文：未知模块常量
+                // 区分「模块里压根没这个符号」和「有但不是 pub」。
+                ImportBinding *owner = binding_for_qualified_name(identifier->name, bindings);
+                if (owner && find_export(owner->module, dot + 1)) {
+                    fprintf(stderr, "error: '%s' is private to module '%s'\n",
+                            dot + 1, owner->import_node->module_name); // 中文：该符号是模块私有的
+                } else {
+                    fprintf(stderr, "error: unknown module constant '%s'\n", identifier->name); // 中文：未知模块常量
+                }
                 return 1;
             }
             free(identifier->name);
@@ -854,6 +1119,12 @@ static int rewrite_functions(
     ProgramNode *program, LoadedModule *current_module, ImportBinding *bindings) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
+        // 签名里的类型名也要跟着改名，否则函数签名会引用到不存在的类型。
+        for (ASTNode *type = function->param_types; type; type = type->next) {
+            rewrite_var_type(current_module, (VarTypeNode *)type);
+        }
+        rewrite_var_type(current_module, function->return_type);
+
         int result = rewrite_statement_list(program, function->body, current_module, bindings);
         if (result != 0) return result;
     }
@@ -881,6 +1152,8 @@ static int load_module(
     int result = register_exports(module, program);
     ImportBinding *bindings = NULL;
     if (result == 0) result = build_bindings(context, program, &bindings);
+    // 类型改名之后，模块自己的类型声明和常量类型标注也要跟着改。
+    if (result == 0) rewrite_declared_types(module, program);
     if (result == 0) result = rewrite_functions(program, module, bindings);
     if (result == 0) {
         append_functions(context->functions, program);

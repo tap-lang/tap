@@ -1439,24 +1439,46 @@ ProgramNode *parse_program(Parser *parser) {
     
     // 解析所有模块导入、顶层常量和函数定义
     while (parser->current_token->type != TOKEN_EOF) {
+        // `pub` 是顶层可见性修饰符：只有带 pub 的顶层声明才能被其他模块导入。
+        // 不写 pub 的顶层符号会改名成模块私有符号，外部既看不到、也不占用全局名字。
+        int is_pub = 0;
+        if (parser->current_token->type == TOKEN_PUB) {
+            is_pub = 1;
+            consume(parser, TOKEN_PUB);
+            if (parser->current_token->type == TOKEN_IMPORT) {
+                parser_error(parser, "`pub` cannot be applied to an import"); // 中文：import 不能用 pub 修饰
+            }
+        }
+
         if (parser->current_token->type == TOKEN_IMPORT) {
             add_import(program, parse_import(parser));
         } else if (parser->current_token->type == TOKEN_ENUM) {
-            add_enum(program, parse_enum(parser));
+            EnumNode *enum_node = parse_enum(parser);
+            enum_node->is_pub = is_pub;
+            add_enum(program, enum_node);
         } else if (parser->current_token->type == TOKEN_STRUCT) {
-            add_struct(program, parse_struct(parser));
+            StructNode *struct_node = parse_struct(parser);
+            struct_node->is_pub = is_pub;
+            add_struct(program, struct_node);
         } else if (parser->current_token->type == TOKEN_CONST) {
-            add_constant(program, parse_var_decl(parser, 1));
+            VarDeclNode *constant = parse_var_decl(parser, 1);
+            constant->is_pub = is_pub;
+            add_constant(program, constant);
         } else if (parser->current_token->type == TOKEN_EXTERN) {
             // Only functions are supported by the first external ABI version.
             consume(parser, TOKEN_EXTERN);
             if (parser->current_token->type != TOKEN_FN) {
                 parser_error(parser, "extern must be followed by a function declaration"); // 中文：extern 后必须是函数声明
             }
-            add_function(program, parse_function(parser, 1));
+            FunctionNode *function = parse_function(parser, 1);
+            function->is_pub = is_pub;
+            add_function(program, function);
         } else if (parser->current_token->type == TOKEN_FN) {
             FunctionNode *function = parse_function(parser, 0);
+            function->is_pub = is_pub;
             add_function(program, function);
+        } else if (is_pub) {
+            parser_error(parser, "`pub` must be followed by a function, constant, enum or struct declaration"); // 中文：pub 后必须是函数、常量、枚举或结构体声明
         } else {
             parser_error(parser, "expected module import, enum declaration, struct declaration, constant declaration, or function definition"); // 中文：期望模块导入、枚举声明、结构体声明、常量声明或函数定义
         }

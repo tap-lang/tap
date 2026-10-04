@@ -6,6 +6,7 @@
 // 标记类型
 enum TokenType {
     // 关键字
+    TOKEN_PUB,       // pub 顶层可见性修饰符
     TOKEN_FN,        // fn 函数定义
     TOKEN_EXTERN,    // extern 外部函数声明
     TOKEN_RETURN,    // return 返回语句

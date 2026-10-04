@@ -107,7 +107,7 @@ fn append_escaped_byte(builder: StringBuilder, value: u8): StringBuilder {
 }
 
 // 把原始字符串转义后追加到构建器，不含两侧引号。
-fn append_escaped(builder: StringBuilder, text: string): StringBuilder {
+pub fn append_escaped(builder: StringBuilder, text: string): StringBuilder {
     let length: uint = text.len();
     let index: uint = 0;
     while (index < length) {
@@ -118,19 +118,19 @@ fn append_escaped(builder: StringBuilder, text: string): StringBuilder {
 }
 
 // 把原始字符串转义后追加，并补上两侧引号。
-fn append_quoted(builder: StringBuilder, text: string): StringBuilder {
+pub fn append_quoted(builder: StringBuilder, text: string): StringBuilder {
     builder = sb.append_byte(builder, 34);
     builder = append_escaped(builder, text);
     return sb.append_byte(builder, 34);
 }
 
 // 返回转义后的字符串，不含两侧引号。
-fn escape(text: string): string {
+pub fn escape(text: string): string {
     return finish(append_escaped(sb.new(), text));
 }
 
 // 返回可直接放进 JSON 的字符串字面量（含两侧引号）。
-fn escape_quoted(text: string): string {
+pub fn escape_quoted(text: string): string {
     return finish(append_quoted(sb.new(), text));
 }
 
@@ -156,7 +156,7 @@ fn append_code_point(builder: StringBuilder, code_point: i32): StringBuilder {
 
 // 反转义 JSON 字符串内容（不含两侧引号）。
 // 遇到非法转义、被截断的 \uXXXX、或孤立的代理时返回 ok = false。
-fn unescape(text: string): Result<string, string> {
+pub fn unescape(text: string): Result<string, string> {
     let builder: StringBuilder = sb.new();
     let length: uint = text.len();
     let index: uint = 0;

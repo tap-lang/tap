@@ -1,5 +1,5 @@
 import a;
 
-fn cycle_b(): i32 {
+pub fn cycle_b(): i32 {
     return a.cycle_a() + 1;
 }

@@ -1,4 +1,4 @@
 // 这个 fixture 用 .tap 后缀，用来验证模块解析同时接受 .tp 和 .tap。
-fn marker(): i32 {
+pub fn marker(): i32 {
     return 42;
 }

@@ -1,18 +1,18 @@
 // 模块级常量：导出后模块外写 constants.SCALE，模块内部直接写裸名 SCALE。
-const SCALE: i32 = 3;
+pub const SCALE: i32 = 3;
 
 // 模块内部引用自己导出的常量。
-fn scaled(value: i32): i32 {
+pub fn scaled(value: i32): i32 {
     return value * SCALE;
 }
 
 // 参数名刻意取成普通小写名，用来固定「裸名改写只匹配常量」——模块里同时存在一个
 // 和参数同名的导出函数时，参数不能被误改成 __tap_module_N.xxx。
-fn step(): i32 {
+pub fn step(): i32 {
     let step: i32 = SCALE + 1;
     return step;
 }
 
-fn offset(value: i32): i32 {
+pub fn offset(value: i32): i32 {
     return value + step();
 }

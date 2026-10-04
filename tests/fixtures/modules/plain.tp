@@ -1,4 +1,4 @@
 // 这个 fixture 用 .tp 后缀，和 suffix.tap 配对验证两种后缀可以混用。
-fn doubled(): i32 {
+pub fn doubled(): i32 {
     return 21;
 }

@@ -513,6 +513,7 @@ FunctionNode *create_function(char *name) {
     function->column = 0;
     function->is_extern = 0;
     function->is_variadic = 0;
+    function->is_pub = 0;
     function->type_params = NULL;
     function->params = NULL;
     function->param_types = NULL;
@@ -534,6 +535,7 @@ EnumNode *create_enum(char *name) {
     enum_node->type_params = NULL;
     enum_node->variants = NULL;
     enum_node->has_payload = 0;
+    enum_node->is_pub = 0;
     return enum_node;
 }
 
@@ -583,6 +585,7 @@ StructNode *create_struct(char *name) {
     struct_node->fields = NULL;
     struct_node->is_tagged_enum = 0;
     struct_node->tagged_enum_name = NULL;
+    struct_node->is_pub = 0;
     return struct_node;
 }
 
@@ -864,6 +867,7 @@ VarDeclNode *create_var_decl(
     var_decl->type = type;
     var_decl->expression = expression;
     var_decl->is_const = is_const;
+    var_decl->is_pub = 0;
     return var_decl;
 }
 

@@ -17,49 +17,49 @@ extern fn __tap_file_eof(handle: *i8): i32;
 extern fn __tap_file_remove(path: string): i32;
 
 // 已打开的文件。`handle` 是不透明指针，不要直接读写它。
-struct File {
+pub struct File {
     handle: *i8,
 }
 
 // 以指定模式打开文件；失败时返回句柄为空的 File，用 is_open 判断。
-fn open(path: string, mode: string): File {
+pub fn open(path: string, mode: string): File {
     return File { handle: __tap_file_open(path, mode) };
 }
 
 // 是否持有有效句柄。打开失败、或已经关闭过的句柄都返回 false。
-fn is_open(file: File): bool {
+pub fn is_open(file: File): bool {
     return __tap_file_is_open(file.handle) != 0;
 }
 
 // 读取最多 count 个字节，返回读到的内容。
 // 已到末尾或读取失败都返回空字符串，用 eof 区分这两种情况。
-fn read(file: File, count: uint): string {
+pub fn read(file: File, count: uint): string {
     return __tap_file_read(file.handle, count);
 }
 
 // 写入 data 的全部字节，返回实际写入的字节数；失败返回 -1。
-fn write(file: File, data: string): i64 {
+pub fn write(file: File, data: string): i64 {
     return __tap_file_write(file.handle, data);
 }
 
 // 关闭文件，成功返回 0；句柄无效或关闭失败返回 -1。
-fn close(file: File): i32 {
+pub fn close(file: File): i32 {
     return __tap_file_close(file.handle);
 }
 
 // 是否已经读到文件末尾。
-fn eof(file: File): bool {
+pub fn eof(file: File): bool {
     return __tap_file_eof(file.handle) != 0;
 }
 
 // 删除文件；成功返回 0，失败返回 -1。
-fn remove(path: string): i32 {
+pub fn remove(path: string): i32 {
     return __tap_file_remove(path);
 }
 
 // 把整个文件读成字符串；打不开时返回 Err。
 // 适合已知不会太大的文件；大文件请用 open + 分次 read。
-fn read_text(path: string): Result<string, string> {
+pub fn read_text(path: string): Result<string, string> {
     let file: File = open(path, "rb");
     if (!is_open(file)) {
         return Result<string, string>.Err("cannot open file");
@@ -70,7 +70,7 @@ fn read_text(path: string): Result<string, string> {
 }
 
 // 把字符串写入文件（覆盖已有内容），返回写入的字节数；打不开时返回 -1。
-fn write_text(path: string, data: string): i64 {
+pub fn write_text(path: string, data: string): i64 {
     let file: File = open(path, "wb");
     if (!is_open(file)) {
         return -1;
@@ -81,7 +81,7 @@ fn write_text(path: string, data: string): i64 {
 }
 
 // 追加到文件末尾，返回写入的字节数；打不开时返回 -1。
-fn append_text(path: string, data: string): i64 {
+pub fn append_text(path: string, data: string): i64 {
     let file: File = open(path, "ab");
     if (!is_open(file)) {
         return -1;
@@ -93,7 +93,7 @@ fn append_text(path: string, data: string): i64 {
 
 // 能否以只读方式打开；文件不存在或无权限时返回 false。
 // 整个文件读写和 exists 都只是流式接口的组合，没有再新增 Runtime ABI。
-fn exists(path: string): bool {
+pub fn exists(path: string): bool {
     let file: File = open(path, "rb");
     if (!is_open(file)) {
         return false;
@@ -104,7 +104,7 @@ fn exists(path: string): bool {
 
 // 读到文件末尾为止，把全部内容拼成一个字符串返回。
 // 适合已知不会太大的文件；大文件请分次 read。
-fn read_all(file: File): string {
+pub fn read_all(file: File): string {
     let builder: StringBuilder = sb.new();
     let running: bool = true;
     while (running) {

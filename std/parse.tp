@@ -22,7 +22,7 @@ fn digit_of(value: u8): i64 {
 
 // 解析十进制整数，接受可选的正负号。
 // 空串、只有符号、含非数字字符或末尾有多余字符时返回 ok = false。
-fn parse_i64(text: string): Result<i64, string> {
+pub fn parse_i64(text: string): Result<i64, string> {
     let length: uint = text.len();
     let index: uint = 0;
     let negative: bool = false;
@@ -62,7 +62,7 @@ fn parse_i64(text: string): Result<i64, string> {
 // 解析十进制浮点，接受可选正负号、小数部分和 e/E 指数。
 // 空串、只有符号、没有任何数字、指数缺少数字或末尾有多余字符时返回 ok = false。
 // 数字要求与 C 的 strtod 一致：整数部分和小数部分至少一侧有数字，".5" 和 "1." 都合法。
-fn parse_f64(text: string): Result<f64, string> {
+pub fn parse_f64(text: string): Result<f64, string> {
     let length: uint = text.len();
     let index: uint = 0;
     let negative: bool = false;
@@ -168,7 +168,7 @@ fn parse_f64(text: string): Result<f64, string> {
 
 // 把整数格式化为十进制字符串。
 // i64 最小值取相反数会溢出，该边界行为与 C 一致。
-fn format_i64(value: i64): string {
+pub fn format_i64(value: i64): string {
     let builder: StringBuilder = sb.new();
     let remaining: i64 = value;
 
@@ -204,6 +204,6 @@ fn format_i64(value: i64): string {
 // 取最短的、能往返的表示：0.1 输出 "0.1"，圆周率输出 "3.141592653589793"。
 // 极大或极小的值用指数形式，例如 1e300 输出 "1e+300"。
 // 非有限值输出 "inf" / "-inf" / "nan"。
-fn format_f64(value: f64): string {
+pub fn format_f64(value: f64): string {
     return __tap_format_f64(value);
 }

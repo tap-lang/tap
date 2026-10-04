@@ -141,6 +141,7 @@ typedef struct {
     ASTNode *type_params;  // 泛型类型参数列表（IdentifierNode）
     ASTNode *variants;     // 枚举成员列表（EnumVariantNode）
     int has_payload;       // 任一成员带载荷时置位；由降级 pass 回填
+    int is_pub;            // pub 声明：可以被其他模块导入
 } EnumNode;
 
 // 结构体声明节点
@@ -151,6 +152,7 @@ typedef struct {
     ASTNode *fields;       // 字段声明列表（StructFieldNode）
     int is_tagged_enum;    // 由载荷枚举降级生成，而非用户声明
     char *tagged_enum_name; // 降级生成时记录来源枚举名；实例化后名字带 $ 后缀，靠它映射回枚举
+    int is_pub;            // pub 声明：可以被其他模块导入
 } StructNode;
 
 // 结构体字段声明节点
@@ -184,6 +186,7 @@ typedef struct {
     int column;            // 函数名所在列
     int is_extern;         // 外部函数只生成 LLVM 声明
     int is_variadic;       // 参数列表末尾带 `...`（变参 ABI，仅 extern 允许）
+    int is_pub;            // pub 声明：可以被其他模块导入
     ASTNode *type_params;  // 泛型类型参数列表（IdentifierNode）
     ASTNode *params;       // 参数列表
     ASTNode *param_types;  // 参数类型列表
@@ -245,6 +248,7 @@ typedef struct {
     VarTypeNode *type;     // 变量类型
     ASTNode *expression;   // 初始化表达式
     int is_const;          // 是否为 const 常量声明
+    int is_pub;            // pub 声明：可以被其他模块导入（仅顶层常量有意义）
 } VarDeclNode;
 
 // 赋值语句节点

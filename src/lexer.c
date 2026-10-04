@@ -160,6 +160,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "u8", 2) == 0) return TOKEN_U8;
         break;
     case 3:
+        if (memcmp(text, "pub", 3) == 0) return TOKEN_PUB;
         if (memcmp(text, "for", 3) == 0) return TOKEN_FOR;
         if (memcmp(text, "let", 3) == 0) return TOKEN_LET;
         if (memcmp(text, "int", 3) == 0) return TOKEN_INT;

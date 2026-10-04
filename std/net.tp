@@ -34,16 +34,16 @@ extern fn write(fd: i32, buffer: *u8, length: uint): i64;
 extern fn close(fd: i32): i32;
 
 // 地址族：IPv4。
-const AF_INET: i32 = 2;
+pub const AF_INET: i32 = 2;
 
 // 套接字类型：面向连接的字节流（TCP）。
-const SOCK_STREAM: i32 = 1;
+pub const SOCK_STREAM: i32 = 1;
 
 // sockaddr_in 的固定长度；IPv4 地址结构就 16 字节。
-const ADDRESS_LENGTH: u32 = 16;
+pub const ADDRESS_LENGTH: u32 = 16;
 
 // 一个套接字。`fd` 小于 0 表示已关闭或者创建失败，不要直接读写它。
-struct Socket {
+pub struct Socket {
     fd: i32,
 }
 
@@ -51,7 +51,7 @@ struct Socket {
 // 每段必须是 0..255 的十进制数、不能为空、必须正好 4 段，否则返回 Err。
 //
 // 只认字面量，不做 DNS 解析——tap 现在还没有域名解析。
-fn parse_ipv4(host: string): Result<[u8; 4], string> {
+pub fn parse_ipv4(host: string): Result<[u8; 4], string> {
     let bytes: [u8; 4] = [0; 4];
     let index: uint = 0;
     let part: i32 = 0;      // 当前这一段的数值
@@ -93,7 +93,7 @@ fn parse_ipv4(host: string): Result<[u8; 4], string> {
 // 端口和地址都按大端（网络字节序）手工拆字节。这里刻意不用 libc 的 htons：
 // htons 返回的 u16 要靠「内存布局」才是网络序，而 tap 的整数是数值语义，再从数值里拆
 // 字节就得先知道宿主机端序了；直接按数值拆反而端序无关。
-fn build_address(host: string, port: u16): Result<[u8; 16], string> {
+pub fn build_address(host: string, port: u16): Result<[u8; 16], string> {
     let parsed: Result<[u8; 4], string> = parse_ipv4(host);
     if (is_err(parsed)) {
         return Result<[u8; 16], string>.Err("invalid IPv4 address");
@@ -112,7 +112,7 @@ fn build_address(host: string, port: u16): Result<[u8; 16], string> {
 }
 
 // 是否持有有效句柄。创建失败、或者 close_socket 返回的那个句柄都返回 false。
-fn is_open(socket: Socket): bool {
+pub fn is_open(socket: Socket): bool {
     return socket.fd >= 0;
 }
 
@@ -121,7 +121,7 @@ fn is_open(socket: Socket): bool {
 // `port` 传 0 表示让内核随便挑一个空闲端口，之后用 local_port 取回来；
 // `backlog` 是等待 accept 的连接队列长度，普通场景 8 就够。
 // 地址非法、端口被占用或权限不足时返回 Err。
-fn listen_on(host: string, port: u16, backlog: i32): Result<Socket, string> {
+pub fn listen_on(host: string, port: u16, backlog: i32): Result<Socket, string> {
     let built: Result<[u8; 16], string> = build_address(host, port);
     if (is_err(built)) {
         return Result<Socket, string>.Err("invalid IPv4 address");
@@ -146,7 +146,7 @@ fn listen_on(host: string, port: u16, backlog: i32): Result<Socket, string> {
 // 连接服务器，返回已连上的套接字；地址非法或对方拒绝连接时返回 Err。
 //
 // 注意这是阻塞连接：对方不回应会一直等，而且不像 C 那样有超时选项。
-fn connect_to(host: string, port: u16): Result<Socket, string> {
+pub fn connect_to(host: string, port: u16): Result<Socket, string> {
     let built: Result<[u8; 16], string> = build_address(host, port);
     if (is_err(built)) {
         return Result<Socket, string>.Err("invalid IPv4 address");
@@ -168,7 +168,7 @@ fn connect_to(host: string, port: u16): Result<Socket, string> {
 // 传入的句柄已关闭、或者底层 accept 失败时返回 Err。
 //
 // 对端地址这里不返回，所以缓冲区只是个必须提供的占位参数。
-fn accept_from(server: Socket): Result<Socket, string> {
+pub fn accept_from(server: Socket): Result<Socket, string> {
     if (!is_open(server)) {
         return Result<Socket, string>.Err("socket is closed");
     }
@@ -183,7 +183,7 @@ fn accept_from(server: Socket): Result<Socket, string> {
 
 // 返回套接字实际绑定的端口；句柄无效或查询失败时返回 0。
 // 服务器绑定端口 0 之后靠它取回内核分配的端口。
-fn local_port(socket: Socket): u16 {
+pub fn local_port(socket: Socket): u16 {
     if (!is_open(socket)) {
         return 0;
     }
@@ -201,7 +201,7 @@ fn local_port(socket: Socket): u16 {
 // 阻塞直到有数据或连接结束，缓冲区由调用方提供，本函数不分配内存。
 //
 // 收到的字节不会被当成字符串处理，所以内容里含 NUL 也不会出事——逐字节读 buffer 即可。
-fn receive(socket: Socket, buffer: *u8, capacity: uint): i64 {
+pub fn receive(socket: Socket, buffer: *u8, capacity: uint): i64 {
     if (!is_open(socket)) {
         return -1;
     }
@@ -212,7 +212,7 @@ fn receive(socket: Socket, buffer: *u8, capacity: uint): i64 {
 //
 // 一次 send 不保证把数据发完，返回小于 data.len() 时调用方要自己接着发剩下的部分
 // （tap 还没有指针算术，切不出「后半段字符串」，所以这里没有提供自动重发的 send_all）。
-fn send_text(socket: Socket, data: string): i64 {
+pub fn send_text(socket: Socket, data: string): i64 {
     if (!is_open(socket)) {
         return -1;
     }
@@ -227,7 +227,7 @@ fn send_text(socket: Socket, data: string): i64 {
 // 底层用 libc 的 write(2) 而不是 send(2)：在 socket fd 上两者等价，而 write 的参数
 // 本来就是缓冲区指针。send 已经按 string 声明给 send_text 用了，同名 extern 不能
 // 声明两次。
-fn send_bytes(socket: Socket, buffer: *u8, length: uint): i64 {
+pub fn send_bytes(socket: Socket, buffer: *u8, length: uint): i64 {
     if (!is_open(socket)) {
         return -1;
     }
@@ -242,7 +242,7 @@ fn send_bytes(socket: Socket, buffer: *u8, length: uint): i64 {
 // 而那个 fd 可能已经被系统分配给了别的连接，继续用就是操作别人的连接。
 //
 // 对已经关闭的句柄重复调用是安全的，不会有副作用。
-fn close_socket(socket: Socket): Socket {
+pub fn close_socket(socket: Socket): Socket {
     if (is_open(socket)) {
         close(socket.fd);
     }

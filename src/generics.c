@@ -619,6 +619,7 @@ static char *instantiate_struct(
     StructNode *copy = create_struct(name);
     // 载荷枚举降级生成的结构体要保留来源枚举名，实例化后靠它映射回枚举声明。
     copy->is_tagged_enum = template->is_tagged_enum;
+    copy->is_pub = template->is_pub;
     if (template->tagged_enum_name) {
         copy->tagged_enum_name = strdup(template->tagged_enum_name);
         if (!copy->tagged_enum_name) {
@@ -898,6 +899,7 @@ static FunctionNode *instantiate_function(FunctionNode *template,
     copy->column = template->column;
     copy->is_extern = template->is_extern;
     copy->is_variadic = template->is_variadic;
+    copy->is_pub = template->is_pub;
 
     ASTNode *param = template->params;
     ASTNode *param_type = template->param_types;

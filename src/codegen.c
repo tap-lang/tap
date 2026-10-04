@@ -385,10 +385,12 @@ static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const c
 }
 
 // 解析 Enum.Member 形式的名称，返回枚举声明，并通过 variant_out 返回成员声明。
+// 解析 Enum.Member 形式。枚举名本身可能带模块前缀（`__tap_module_0.E`），所以按
+// **最后一个**点切分——前缀里的点不能当成分隔符。只有一个点时行为和以前完全一样。
 static EnumNode *variant_reference(
     CodeGenContext *context, const char *name, EnumVariantNode **variant_out) {
-    const char *dot = strchr(name, '.');
-    if (!dot || dot == name || strchr(dot + 1, '.')) return NULL;
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name || !dot[1]) return NULL;
 
     size_t enum_name_length = (size_t)(dot - name);
     char *enum_name = malloc(enum_name_length + 1);
@@ -915,7 +917,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
             IdentifierNode *identifier = (IdentifierNode *)expression;
             uint64_t ignored = 0;
             if (enum_variant_value(context, identifier->name, &ignored)) {
-                const char *dot = strchr(identifier->name, '.');
+                // 枚举名可能带模块前缀（`__tap_module_0.E`），按最后一个点切分。
+                const char *dot = strrchr(identifier->name, '.');
                 return dot && strlen(target_type->enum_name) == (size_t)(dot - identifier->name) &&
                        strncmp(identifier->name, target_type->enum_name,
                                (size_t)(dot - identifier->name)) == 0;

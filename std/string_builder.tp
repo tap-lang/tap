@@ -1,51 +1,51 @@
 import std.byte_vec as bytes;
 
 // 基于 ByteVec 的增量字符串构建器。
-struct StringBuilder {
+pub struct StringBuilder {
     buffer: ByteVec,
 }
 
 // 使用指定初始容量创建空构建器。
-fn with_capacity(capacity: uint): StringBuilder {
+pub fn with_capacity(capacity: uint): StringBuilder {
     return StringBuilder {
         buffer: bytes.with_capacity(capacity),
     };
 }
 
 // 使用默认容量 32 创建空构建器。
-fn new(): StringBuilder {
+pub fn new(): StringBuilder {
     return with_capacity(32);
 }
 
 // 返回当前已追加的 UTF-8 字节数。
-fn len(builder: StringBuilder): uint {
+pub fn len(builder: StringBuilder): uint {
     return bytes.len(builder.buffer);
 }
 
 // 追加一个原始字节。
-fn append_byte(builder: StringBuilder, value: u8): StringBuilder {
+pub fn append_byte(builder: StringBuilder, value: u8): StringBuilder {
     builder.buffer = bytes.push(builder.buffer, value);
     return builder;
 }
 
 // 追加 string 的全部 UTF-8 原始字节。
-fn append(builder: StringBuilder, value: string): StringBuilder {
+pub fn append(builder: StringBuilder, value: string): StringBuilder {
     builder.buffer = bytes.extend(builder.buffer, value);
     return builder;
 }
 
 // 清空内容但保留内部容量。
-fn clear(builder: StringBuilder): StringBuilder {
+pub fn clear(builder: StringBuilder): StringBuilder {
     builder.buffer = bytes.clear(builder.buffer);
     return builder;
 }
 
 // 返回独立字符串快照；后续修改构建器不会改变该字符串。
-fn to_string(builder: StringBuilder): string {
+pub fn to_string(builder: StringBuilder): string {
     return bytes.to_string(builder.buffer);
 }
 
 // 释放内部缓冲区；调用后不能继续使用这个 StringBuilder。
-fn free(builder: StringBuilder): i32 {
+pub fn free(builder: StringBuilder): i32 {
     return bytes.free(builder.buffer);
 }

@@ -1,5 +1,5 @@
 import nested.base;
 
-fn offset(value: i32): i32 {
+pub fn offset(value: i32): i32 {
     return base.increment(value) + 1;
 }

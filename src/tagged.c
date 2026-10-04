@@ -74,6 +74,7 @@ static void lower_enum(ProgramNode *program, EnumNode *enum_node) {
 
     StructNode *structure = create_struct(enum_node->name);
     structure->is_tagged_enum = 1;
+    structure->is_pub = enum_node->is_pub;
     structure->tagged_enum_name = strdup(enum_node->name);
     if (!structure->tagged_enum_name) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败

@@ -42,10 +42,10 @@ typedef struct ASTNode {
 |---|---|---|
 | `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
 | `NODE_IMPORT` | `ImportNode` | 模块名、名称空间别名及导入声明的源文件位置 |
-| `NODE_FUNCTION` | `FunctionNode` | 函数名、泛型类型参数、普通参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明，`is_variadic` 标记参数列表末尾的 `...` |
-| `NODE_STRUCT` | `StructNode` | 结构体名、泛型类型参数和字段声明链表；`is_tagged_enum` 标记它由载荷枚举降级生成 |
+| `NODE_FUNCTION` | `FunctionNode` | 函数名、泛型类型参数、普通参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明，`is_variadic` 标记参数列表末尾的 `...`，`is_pub` 标记可被其他模块导入 |
+| `NODE_STRUCT` | `StructNode` | 结构体名、泛型类型参数和字段声明链表；`is_tagged_enum` 标记它由载荷枚举降级生成，`is_pub` 标记可被其他模块导入 |
 | `NODE_STRUCT_LITERAL` | `StructLiteralNode` | 结构体名、泛型类型实参和字段初始化链表 |
-| `NODE_ENUM` | `EnumNode` | 枚举名和成员声明链表；`has_payload` 标记是否带载荷 |
+| `NODE_ENUM` | `EnumNode` | 枚举名和成员声明链表；`has_payload` 标记是否带载荷，`is_pub` 标记可被其他模块导入 |
 | `NODE_ENUM_VARIANT` | `EnumVariantNode` | 成员名、载荷类型链表，以及降级时回填的 `tag` 和 `field_index` |
 | `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称；`enum_type_arguments` 保存 `Enum<T>.Member` 的显式枚举类型实参 |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
@@ -54,7 +54,7 @@ typedef struct ASTNode {
 | `NODE_BINARY_OP` | `BinaryOpNode` | 操作符、左操作数和右操作数 |
 | `NODE_REFERENCE` | `ReferenceNode` | `target` 指向被取地址的变量、结构体字段或索引表达式 |
 | `NODE_SIZEOF` | `SizeofNode` | `operand_type` 保存 `sizeof(T)` 中的完整类型 |
-| `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型、初始化表达式，以及 `is_const` 声明标记 |
+| `NODE_VAR_DECL` | `VarDeclNode` | 变量名、可选类型、初始化表达式，以及 `is_const` 声明标记；顶层常量用 `is_pub` 标记可被其他模块导入 |
 | `NODE_ASSIGNMENT` | `AssignmentNode` | 被赋值变量名和新的值表达式 |
 | `NODE_ARRAY_LITERAL` | `ArrayLiteralNode` | 初始化元素链表和元素数量 |
 | `NODE_INDEX_EXPRESSION` | `IndexExpressionNode` | 数组表达式和下标表达式 |
