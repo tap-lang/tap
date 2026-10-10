@@ -24,8 +24,7 @@ tap 标准库由两部分组成：
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
 | `panic(message: string): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
 | `exit(code: i32): i32` | 以状态码 `code` 终止程序；不打印任何东西，不会返回 |
-| `printf(format: string, ...): i32` | 直接对接 libc 的 `printf`；格式串由调用方负责，返回写出的字符数 |
-| `print(format: string, ...): i32` | `printf` 的薄封装；单实参时按类型自动挑格式串，返回写出的字符数 |
+| `print(format: string, ...): i32` | 写标准输出；单实参时按类型自动挑格式串，返回写出的字符数 |
 | `Result<T, E>` | 可恢复错误的类型：`Ok(T)` 或 `Err(E)` |
 | `is_ok(value): bool` / `is_err(value): bool` | 判断 `Result` 成功或失败 |
 | `unwrap_or(value, fallback): T` | 取成功值；失败时用 `fallback` |
@@ -41,21 +40,32 @@ tap 标准库由两部分组成：
 | `panic(message)` | 标准错误打印 `panic: <message>` | 固定 `1` | 调用方无法合理恢复的情况 |
 | `exit(code)` | 什么都不打印 | 由调用方决定 | 正常但需要提前结束，例如命令行参数不对时返回 `2` |
 
+输出到**标准输出**用 `print`（零导入）；需要自己控制格式串时用 `std.io` 的 `printf`。
+输出到**标准错误**用 `panic`（会终止）或 `std.io` 的 `eprintf`（只写不终止）。
+
 两者都不会返回，都走 libc 的 `exit`，所以已经写进标准输出缓冲区、还没落盘的内容会被刷新出来。
 
 ### printf 与 print 的分工
 
-`printf` 是 Prelude 里唯一直接对接 C 的变参函数，绑的就是 libc 的同名符号：
+标准输出有两条路，底层都走 Runtime 的 `__tap_printf`（内部是 `vfprintf(stdout, ...)`）：
+
+- **`print`**：在 Prelude 里，零导入。
+- **`printf`**：在 `std.io` 里，要 `import std.io;` 之后按 `io.printf(...)` 调用。
+
+`__tap_printf` 的 extern 声明放在 Prelude（`print` 必须总能转发到它），`std.io` 的 `printf` 直接
+引用那份声明。两者都是「变参 + 一句纯转发」的普通函数：
 
 ```text
-extern fn printf(format: string, ...): i32;
-```
+// std/prelude.tp
+extern fn __tap_printf(format: string, ...): i32;
 
-`print` 则是**用 tap 写的** `printf` 薄封装，函数体只有一句纯转发：
-
-```text
 fn print(format: string, ...): i32 {
-    return printf(format, ...);
+    return __tap_printf(format, ...);
+}
+
+// std/io.tp
+pub fn printf(format: string, ...): i32 {
+    return __tap_printf(format, ...);
 }
 ```
 
@@ -66,10 +76,10 @@ fn print(format: string, ...): i32 {
 
 | | 第一个实参不是字符串字面量时 | 适用场合 |
 | --- | --- | --- |
-| `print` | 编译器按实参类型自动挑格式串，`print(42)` 等价于 `printf("%d", 42)` | 日常输出、快速调试 |
-| `printf` | 照常当成格式串用，类型不匹配就报错 | 需要精确控制格式：`%05d`、`%.3f`、`%x`、`%c`、`%%` |
+| `print` | 编译器按实参类型自动挑格式串，`print(42)` 等价于 `printf("%d", 42)` | 日常输出、快速调试（零导入） |
+| `printf` | 照常当成格式串用，类型不匹配就报错 | 需要精确控制格式：`%05d`、`%.3f`、`%x`、`%c`、`%%`（要 `import std.io`） |
 
-其余情况（第一个实参是字符串字面量）两者**完全等价**，`print` 只是少打几个字母。
+其余情况（第一个实参是字符串字面量）两者**完全等价**，`print` 只是少打几个字母、少一个 import。
 
 ⚠️ 自动挑格式那一档对 `string` 不友好：`print(某个字符串变量)` 会按 `%d` 打出指针值。
 输出字符串一律显式写 `print("%s", value)`。
@@ -92,13 +102,19 @@ fn print(format: string, ...): i32 {
 **一句纯转发** —— 实参按顺序正好是本函数的具名形参，末尾跟 `...`：
 
 ```text
+extern fn printf(format: string, ...): i32;
+
 fn log_line(prefix: string, ...): i32 {
     return printf(prefix, ...);
 }
 ```
 
+**转发的目标必须是一个真实的变参函数（extern）**：转发函数自己没有可供跳转的实体，所以不能
+把另一个转发函数当目标（`return print(prefix, ...)` 会报 `undefined function`）。上面自己声明
+一个 libc 的 `printf` 来转发是最常见的写法。
+
 原因是 LLVM 没有「把当前函数的变参原样传给被调用者」这种指令，函数体里根本看不见那些
-实参。编译器于是只接受这一种写法，并在编译期把对 `log_line` 的调用整个合并到 `printf`
+实参。编译器于是只接受这一种写法，并在编译期把对 `log_line` 的调用整个合并到目标函数
 上，所以转发是**零开销**的。写成别的形态（比如 `return first + 1;`）会报：
 
 ```text
@@ -106,15 +122,17 @@ error: variadic function 'sum' must forward its arguments in a single call, ...
 ```
 
 ```text
+import std.io;
+
 fn main(): i32 {
     let name: string = "tap";
     let small: i8 = -3;
-    printf("name=%s small=%d hex=%x\n", name, small, 255);
+    io.printf("name=%s small=%d hex=%x\n", name, small, 255);
     return 0;
 }
 ```
 
-覆盖用例见 [`printf.tp`](../tests/run-pass/stdlib/printf.tp)（各类型的提升结果）和
+覆盖用例见 [`printf.tp`](../tests/run-pass/stdlib/printf.tp)（各类型的提升结果，用 `io.printf`）和
 [`print.tp`](../tests/run-pass/stdlib/print.tp)（`print` 的两种形态）；自己声明变参
 `extern` 的写法见 [`variadic_extern.tp`](../tests/run-pass/types/variadic_extern.tp)，
 自己写变参包装函数的写法见 [`variadic_forward.tp`](../tests/run-pass/types/variadic_forward.tp)。
@@ -191,6 +209,8 @@ fn main(): i32 {
 | `std.fs` | `write_text(path, data): i64` | 覆盖写入，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `append_text(path, data): i64` | 追加到末尾，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `exists(path): bool` | 能否以只读方式打开；不存在或无权限返回 `false` |
+| `std.io` | `printf(format, ...): i32` | 格式化输出到标准输出，格式串语义同 libc `printf`；返回写出的字符数 |
+| `std.io` | `eprintf(format, ...): i32` | 格式化输出到标准错误，格式串语义同 `printf`；返回写出的字符数 |
 | `std.net` | `Socket` | TCP 套接字句柄；`fd` 小于 `0` 表示已关闭或创建失败 |
 | `std.net` | `parse_ipv4(host): Result<[u8; 4], string>` | 解析 `a.b.c.d` 字面量；不做 DNS，格式非法返回 `Err` |
 | `std.net` | `build_address(host, port): Result<[u8; 16], string>` | 构造 16 字节 `sockaddr_in`，端口按大端拆字节 |
@@ -470,6 +490,35 @@ let notes: string = unwrap_or(loaded, "");
 ```
 
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
+
+`std.io` 示例（标准输出和标准错误）：
+
+```text
+import std.io;
+
+fn main(): i32 {
+    // print 在 Prelude 里，零导入；它不做格式串检查，单实参时按类型自动挑格式。
+    print("processing...\n");
+    // 需要自己写格式串时用 io.printf，语义和 libc 的 printf 一致。
+    io.printf("value=%d ratio=%.3f\n", 42, 1.5);
+    // 诊断信息走标准错误。
+    io.eprintf("warning: %s is missing, using default %d\n", "config", 0);
+    return 0;
+}
+```
+
+`std.io` 只有 `printf` 和 `eprintf` 两个函数，格式串语义都和 libc 的 `printf` 一样，
+`...` 的实参按 C 的默认实参提升规则传递，返回写出的字符数。
+
+- **`printf` 不在 Prelude**，要显式导入。标准输出零导入的那条是 `print`：它同样是转发到
+  Runtime 的标准输出，只是不做格式串检查、单实参时按类型自动挑格式串。日常输出用 `print`，
+  需要精确控制格式（`%05d`、`%.3f`、`%x`、`%s`）用 `io.printf`。
+- **`eprintf` 只写不终止**——要「报告并终止」用 `panic`（补 `panic: ` 前缀、退出码固定 `1`），
+  要「可恢复的错误」仍应优先用 `Result` 交给调用方。
+
+为什么叫 `eprintf` 而不是 `printf`：全局函数名必须唯一，同一个模块里不能再有一个叫 `printf`
+的函数。用名称空间导入（`io.printf(...)` / `io.eprintf(...)`）或单成员导入
+（`import std.io.printf;` 后写裸名 `printf(...)`）都可以。
 
 `std.net` 示例（回环上自连自收）：
 

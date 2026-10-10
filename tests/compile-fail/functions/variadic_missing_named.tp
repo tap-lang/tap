@@ -1,12 +1,12 @@
 // 变参只放宽「实参可以更多」，具名参数的下限依然要满足。
 fn main(): i32 {
-    printf();
+    print();
     return 0;
 }
 
 /** -- test
 - .stderr
-error: function 'printf' expects at least 1 arguments, but got 0
+error: function 'print' expects at least 1 arguments, but got 0
 --> tests/compile-fail/functions/variadic_missing_named.tp:3:5
 - .exit
 1

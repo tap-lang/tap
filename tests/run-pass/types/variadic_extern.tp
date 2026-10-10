@@ -9,7 +9,7 @@ fn main(): i32 {
 
     // 具名参数之外的三组实参（string、i32、i32）都落进 `...`。
     let written: i32 = snprintf(buffer, 64, "%s=%d/%d", "answer", 42, 7);
-    printf("%s written=%d\n", buffer, written);
+    print("%s written=%d\n", buffer, written);
 
     memory.free(buffer);
     return 0;

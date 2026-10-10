@@ -192,13 +192,15 @@ sleep_ms(milliseconds: i32): i32
 clear_screen(): i32
 panic(message: string): i32
 exit(code: i32): i32
-printf(format: string, ...): i32
 print(format: string, ...): i32
 Result<T, E> 及 is_ok / is_err / unwrap_or / unwrap / expect
 ```
 
 [`std.math`](std/math.tp) 需要显式导入，提供 `PI`、`square<T>`、`abs<T>`、`pow<T>` 和
 `pow_f64`；前三个的类型参数由实参推断。
+
+[`std.io`](std/io.tp) 需要显式导入，提供 `printf`（标准输出）和 `eprintf`（标准错误）；
+零导入的 `print` 是标准输出的便利版本，单实参时按类型自动挑格式串。
 
 Prelude 中的函数名不能在用户源码中重复定义。编译器依次从环境变量
 `TAP_STD_PATH`、当前目录的 `std`、可执行文件相邻的源码或安装目录查找

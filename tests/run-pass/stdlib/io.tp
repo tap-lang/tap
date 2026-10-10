@@ -1,0 +1,24 @@
+// std.io：printf 写标准输出，eprintf 写标准错误。两者格式串语义都和 libc 的 printf 一致。
+// run-pass 用例的 .stderr 是全等匹配，所以这里能精确断言错误流的内容。
+import std.io;
+
+fn main(): i32 {
+    // printf 走 std.io；print 在 Prelude 里，零导入。
+    io.printf("out=%d\n", 1);
+    print("prelude print\n");
+
+    let written: i32 = io.eprintf("count=%d name=%s ratio=%.2f\n", 3, "tap", 1.5);
+    io.printf("wrote=%d\n", written > 0);
+    return 0;
+}
+
+/** -- test
+- .stdout
+out=1
+prelude print
+wrote=1
+- .stderr
+count=3 name=tap ratio=1.50
+- .exit
+0
+-- */

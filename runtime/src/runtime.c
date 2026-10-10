@@ -1,6 +1,7 @@
 #include "tap_runtime.h"
 
 #include <math.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -462,6 +463,40 @@ int32_t __tap_file_remove(const char *path) {
 //（需要 libm，链接时要带 -lm）。定义域外的输入按 C 的规则得到 nan 或 inf。
 double __tap_pow_f64(double base, double exponent) {
     return pow(base, exponent);
+}
+
+// 格式化输出到标准输出，格式串语义和 printf 完全一致（内部是 vfprintf(stdout, ...)）。
+// 返回写出的字符数，出错时为负数。
+//
+// 和 __tap_eprintf 对称：标准流的 FILE* 只在 C 侧拿得到，而 tap 的变参转发要求「一句纯转发、
+// 实参正好是具名形参」，中间插不进一个取流句柄的调用，所以流固定在 Runtime 侧。
+//
+// 之所以不直接让 tap 绑 libc 的 printf：std.io 模块要导出名为 printf 的公开函数，而同一个
+// 模块里不能再有一个同名的 extern 声明（全局函数名唯一）。用 __tap_ 前缀两边都干净。
+int32_t __tap_printf(const char *format, ...) {
+    if (!format) return -1;
+    va_list arguments;
+    va_start(arguments, format);
+    int written = vfprintf(stdout, format, arguments);
+    va_end(arguments);
+    return written;
+}
+
+// 格式化输出到标准错误，格式串语义和 printf 完全一致（内部是 vfprintf(stderr, ...)）。
+// 返回写出的字符数，出错时为负数。
+//
+// 单独放在 Runtime 而不是让 tap 侧直接绑 libc 的 fprintf：stderr 是 libc 的 FILE* 全局量，
+// tap 里拿不到；而 tap 的变参转发要求「一句纯转发、实参正好是具名形参」，没法在中间插一个
+// 取流句柄的调用。这里把流固定在 Runtime 侧，tap 侧就只剩一句干净的转发。
+//
+// stderr 按 C 标准默认不带全缓冲，所以不需要额外 flush。
+int32_t __tap_eprintf(const char *format, ...) {
+    if (!format) return -1;
+    va_list arguments;
+    va_start(arguments, format);
+    int written = vfprintf(stderr, format, arguments);
+    va_end(arguments);
+    return written;
 }
 
 // 打印错误信息并以状态 1 终止程序，用于调用方无法合理恢复的情况。

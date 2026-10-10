@@ -1,8 +1,9 @@
-// 跨平台终端、计时和终止程序所需的内部 Runtime ABI。
-// （随机数已挪到 std.random，不再走 Prelude。）
+// 跨平台终端、计时、标准输出和终止程序所需的内部 Runtime ABI。
+// （随机数已挪到 std.random，格式化输出已挪到 std.io，都不再走 Prelude。）
 extern fn __tap_read_key(): i32;
 extern fn __tap_sleep_ms(milliseconds: i32): i32;
 extern fn __tap_clear_screen(): i32;
+extern fn __tap_printf(format: string, ...): i32;
 extern fn __tap_panic(message: string): i32;
 extern fn __tap_exit(code: i32): i32;
 
@@ -40,26 +41,20 @@ fn exit(code: i32): i32 {
     return __tap_exit(code);
 }
 
-// 格式化输出，直接对接 libc 的 printf。
-//
-// `...` 表示后面多出的实参按 C 的默认实参提升规则传递（f32 提升成 f64，位宽小于 32 的
-// 整数提升成 i32）。格式串和实参的对应关系由调用方自己保证，编译器不做检查。
-//
-// 日常输出用下面的 print 就够了；printf 留给需要精确控制格式的场合，例如 `%05d`、
-// `%.3f`、`%x`、`%s`。返回实际写出的字符数，出错时为负数。
-extern fn printf(format: string, ...): i32;
-
-// 打印。实现上就是 printf 的薄封装，`...` 把实参原样转发过去。
+// 打印到标准输出。`...` 把实参原样转发到 Runtime 的 __tap_printf。
 //
 // 函数体形态是硬性要求：变参的普通函数没法在运行时转发变参（LLVM 没有对应的指令），
-// 编译器只接受「一句纯转发」这种写法，并在编译期把对 print 的调用整个合并到 printf 上，
+// 编译器只接受「一句纯转发」这种写法，并在编译期把对 print 的调用整个合并到目标函数上，
 // 所以没有额外的函数调用开销。转发时实参必须按顺序就是本函数的具名形参。
 //
-// 比 printf 多一个便利：只传一个实参、且它不是字符串字面量时，按实参类型自动挑格式串
-// —— print(42) 等价于 printf("%d", 42)。注意这一档对 string 不友好（会按 %d 打出指针
-// 值），输出字符串请显式写 print("%s", value)。需要精确控制格式就用 printf。
+// 只传一个实参、且它不是字符串字面量时，按实参类型自动挑格式串 —— print(42) 等价于
+// printf("%d", 42)。注意这一档对 string 不友好（会按 %d 打出指针值），输出字符串请显式写
+// print("%s", value)。
+//
+// 需要精确控制格式（`%05d`、`%.3f`、`%x`、`%s`）用 std.io 的 printf —— 它不在 Prelude，
+// 要 `import std.io;` 之后按 io.printf(...) 调用。标准错误则用 std.io 的 eprintf。
 fn print(format: string, ...): i32 {
-    return printf(format, ...);
+    return __tap_printf(format, ...);
 }
 
 // 可恢复错误的标准表示：`Ok(T)` 携带成功值，`Err(E)` 携带错误信息，实践中 `E` 多为

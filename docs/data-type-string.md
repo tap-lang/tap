@@ -142,7 +142,7 @@ assert("apple" < "banana");
 
 ## 输出字符串
 
-`print` 是 Prelude 里 `printf` 的薄封装，第一个参数永远是格式字符串。用 `%s` 输出
+`print` 的第一个参数永远是格式字符串（它转发到 Runtime 的标准输出）。用 `%s` 输出
 字符串变量、函数返回值或字符串数组元素：
 
 ```text
@@ -158,11 +158,13 @@ print("%s\n", value);
 print("%s", value);
 ```
 
-需要精确控制格式（宽度、精度、进制）时改用 Prelude 的 `printf`。两者行为一致，只是
-`print` 多一个单实参自动挑格式的便利：
+需要精确控制格式（宽度、精度、进制）时改用 `std.io` 的 `printf`（要 `import std.io;`）。
+两者行为一致，只是 `print` 多一个单实参自动挑格式的便利，而且不需要导入：
 
 ```text
-printf("name=%-8s hex=%06x\n", value, 255);
+import std.io;
+
+io.printf("name=%-8s hex=%06x\n", value, 255);
 ```
 
 分工详见[标准库文档](std.md#printf-与-print-的分工)。

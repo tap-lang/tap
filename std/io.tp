@@ -1,0 +1,44 @@
+// 标准流的格式化输出：printf 写标准输出，eprintf 写标准错误。
+//
+// 用法：
+//     import std.io;
+//     io.printf("value=%d\n", value);
+//     io.eprintf("failed to open %s: %d\n", path, code);
+// 也可以 `import std.io.printf;` / `import std.io.eprintf;` 之后直接写裸名。
+//
+// 标准输出还有一个零导入的 print（在 Prelude 里）：它同样是转发到 Runtime 的标准输出，
+// 只是多了「单实参且不是字符串字面量时按类型自动挑格式串」的便利。需要自己写格式串、
+// 或者要往标准错误写，就用这个模块。
+
+// 标准错误的 Runtime ABI（内部是 vfprintf(stderr, ...)）。
+//
+// 为什么不让 tap 侧直接绑 libc 的 fprintf：stderr 是 libc 的 FILE* 全局量，tap 里拿不到，
+// 而变参转发又要求「一句纯转发、实参正好是具名形参」，中间插不进一个取流句柄的调用。
+// 把流固定在 Runtime 侧之后，这里就只剩一句干净的转发。
+//
+// 名字带 __tap_ 前缀：extern 的符号名就是 C 符号名、不能改名，用 fprintf 这类通用名会占住
+// 全局函数名。
+extern fn __tap_eprintf(format: string, ...): i32;
+
+// 标准输出的 Runtime ABI（__tap_printf）**声明在 std/prelude.tp 里**，这里不再重复声明：
+// 全局函数名唯一，同一个 extern 符号只能有一处声明。Prelude 的 print 也要转发到它，而
+// Prelude 是自动注入、总是存在的，所以把声明放那边最稳。下面的 printf 直接引用它即可。
+
+// 格式化输出到标准输出，格式串语义和 printf 完全一致。
+//
+// `...` 的实参按 C 的默认实参提升规则传递（f32 提升成 f64，位宽小于 32 的整数提升成 i32）。
+// 格式串和实参的对应关系由调用方保证，编译器不做检查。返回写出的字符数，出错时为负数。
+pub fn printf(format: string, ...): i32 {
+    return __tap_printf(format, ...);
+}
+
+// 格式化输出到标准错误，格式串语义和 printf 完全一致。
+//
+// 为什么叫 eprintf 而不是 printf：全局函数名必须唯一，同一个模块里不能再有一个叫 printf 的
+// 函数；而且模块里导出同名函数时，通配导入（`import std.io.*`）会静默盖过 Prelude 的 print。
+//
+// 和 panic 的分工：panic 会补上 `panic: ` 前缀并以状态 1 终止程序；eprintf 只写不终止，
+// 用于「要报告但不是致命错误」的场合，可恢复错误仍应优先用 Result 交给调用方。
+pub fn eprintf(format: string, ...): i32 {
+    return __tap_eprintf(format, ...);
+}

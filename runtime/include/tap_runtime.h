@@ -65,6 +65,12 @@ TAP_RUNTIME_API int32_t __tap_file_eof(void *handle);
 // 删除文件；成功返回 0。
 TAP_RUNTIME_API int32_t __tap_file_remove(const char *path);
 
+// 格式化输出到标准输出 / 标准错误（内部是 vfprintf(stdout/stderr, ...)）；
+// 返回写出的字符数，出错为负。变参 ABI 与 printf 一致，格式串和实参的对应关系由调用方保证。
+// 流固定在 Runtime 侧：tap 拿不到 libc 的 FILE*，而变参转发又插不进取流句柄的调用。
+TAP_RUNTIME_API int32_t __tap_printf(const char *format, ...);
+TAP_RUNTIME_API int32_t __tap_eprintf(const char *format, ...);
+
 // 打印 `panic: <message>` 并以状态 1 终止；不会返回。
 TAP_RUNTIME_API int32_t __tap_panic(const char *message);
 // 以指定状态码终止程序；不会返回。走 libc 的 exit，标准库缓冲区会被刷新。

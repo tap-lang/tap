@@ -294,6 +294,7 @@ static void collect_variadic_forwards(CodeGenContext *context) {
             exit(1);
         }
         forward->from = function->name;
+        forward->owner = function;
         forward->target = target;
         // print 是语言保留的便利名字：单实参时按实参类型自动挑格式串。
         forward->auto_format = strcmp(function->name, "print") == 0;
@@ -2190,6 +2191,10 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     unsigned count = 0;
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
     unsigned expected_count = function_param_count(function);
+    // 变参转发的调用点被合并到了目标函数上，但诊断要报用户写的那个名字（包装函数的源语言名），
+    // 否则会泄漏 Runtime 内部符号（例如 print 报成 '__tap_printf'）。
+    const char *display_name =
+        forward ? function_display_name(forward->owner) : function_display_name(function);
     // 变参函数只约束具名参数的下限；多出来的实参落到 `...` 里，由调用方负责格式串匹配。
     int is_variadic_call = function->is_variadic;
     if (is_variadic_call ? count < expected_count : count != expected_count) {
@@ -2197,7 +2202,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
                          is_variadic_call
                              ? "function '%s' expects at least %u arguments, but got %u"
                              : "function '%s' expects %u arguments, but got %u",
-                         function_display_name(function), expected_count, count);
+                         display_name, expected_count, count);
         exit(1);
     }
 
@@ -2219,7 +2224,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
             !expression_assignable_to(context, argument, param_type)) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                              "function '%s' argument %u type mismatch",
-                             function_display_name(function), i + 1); // 中文：函数参数类型不匹配
+                             display_name, i + 1); // 中文：函数参数类型不匹配
             free(arguments);
             exit(1);
         }
@@ -3854,8 +3859,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         if (find_variadic_forward(context, function->name)) continue;
         const char *name = llvm_function_name(function);
         LLVMTypeRef function_type = create_function_type(context, function);
-        // 同一个 LLVM 符号可能已经被内建声明占用：codegen 为 print 语句预先声明了变参
-        // printf，而 Prelude 里正好有个 `extern fn printf(...)`，两者签名完全一致。
+        // 同一个 LLVM 符号可能已经被内建声明占用：codegen 为 print 的自动格式预先声明了
+        // 变参 printf；用户自己写 `extern fn printf(...)`（签名一致）时也会走到这里。
         // 类型相同时复用那份声明，否则 LLVM 会把后注册的改名成 `printf.1`，
         // 模块里就多出一份指向同一符号的声明。
         LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, name);

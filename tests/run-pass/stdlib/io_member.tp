@@ -1,0 +1,16 @@
+// 单成员导入 eprintf 后按裸名调用，不用模块前缀。
+// 顺带固定住「变参函数被导入改名后仍能正确转发」——转发表是按函数名查的，
+// 模块导出会把 eprintf 改名成 __tap_module_N.eprintf。
+import std.io.eprintf;
+
+fn main(): i32 {
+    eprintf("bare %s %d\n", "call", 7);
+    return 0;
+}
+
+/** -- test
+- .stderr
+bare call 7
+- .exit
+0
+-- */

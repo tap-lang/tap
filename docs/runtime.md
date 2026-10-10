@@ -79,6 +79,23 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的链接命令显式带了 `-lm`
 （放在目标文件之后），因为 glibc 2.34 之前 libm 是独立的。
 
+## 标准流输出 ABI
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_printf(format, ...): i32` | 格式化输出到标准输出（内部是 `vfprintf(stdout, ...)`）；返回写出的字符数 |
+| `__tap_eprintf(format, ...): i32` | 格式化输出到标准错误（内部是 `vfprintf(stderr, ...)`）；返回写出的字符数 |
+
+`__tap_printf` 由 Prelude 的 `print` 和 `std.io` 的 `printf` 共用，`__tap_eprintf` 由 `std.io`
+的 `eprintf` 封装。**流固定在 Runtime 侧是有原因的**：`stdout` / `stderr` 是 libc 的 `FILE *`
+全局量，tap 里拿不到；而 tap 的变参转发要求「一句纯转发、实参正好是具名形参」，中间插不进一个
+取流句柄的调用。把流放在 Runtime 里，tap 侧就只剩一句干净的转发。
+
+`__tap_printf` 的 extern 声明放在 Prelude —— `print` 是自动注入的，必须总能转发到它；`std.io`
+的 `printf` 直接引用那份声明而不重复声明（全局函数名唯一，同一个 extern 符号只能有一处声明）。
+
+`stderr` 按 C 标准默认不带全缓冲，所以这里不需要额外的 flush。
+
 ## 终止 ABI
 
 | C ABI | 行为 |
