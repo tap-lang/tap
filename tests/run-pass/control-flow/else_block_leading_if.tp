@@ -1,0 +1,92 @@
+// `else` 块的首条语句是 `if` 时，块内剩余语句必须照常生成。
+//
+// 历史 bug：ast 转储 / codegen / 泛型克隆三处都用
+// `alternative->type == NODE_IF_STATEMENT` 去区分「else if」和 else 块，
+// 但 else 块的语句链表表头恰好是 if 语句时同样命中，于是整块被当成单条 if 处理，
+// 链表里其余节点被静默丢弃 —— 不报错、不警告。
+//
+// 条件刻意取自函数参数，避免常量折叠把分支提前算掉。
+
+// else 块首条是 if，后面还有两条累加。
+fn leading_if(value: i32): i32 {
+    let total: i32 = 0;
+    if (value == 0) {
+        total = 100;
+    } else {
+        if (value > 10) {
+            total = total + 1;
+        }
+        total = total + 10;
+        total = total + 100;
+    }
+    return total;
+}
+
+// else 块首条是一整条 if / else if / else 链，链后还有一条语句。
+fn leading_chain(value: i32): i32 {
+    let result: i32 = -1;
+    if (value < 0) {
+        result = 0;
+    } else {
+        if (value == 0) {
+            result = 1;
+        } else if (value == 1) {
+            result = 2;
+        } else {
+            result = 3;
+        }
+        result = result + 10;
+    }
+    return result;
+}
+
+// 泛型函数模板：单态化克隆 else 块时同样不能截断。
+// 修复前 flag < 0 会停在 first，正确结果是 second。
+fn after_first_if<T>(flag: i32, first: T, second: T): T {
+    let result: T = second;
+    if (flag == 0) {
+        result = first;
+    } else {
+        if (flag < 0) {
+            result = first;
+        }
+        result = second;
+    }
+    return result;
+}
+
+// else 块首条是 if，且块内后续语句是提前 return。
+fn early_return(value: i32): i32 {
+    if (value == 0) {
+        return -1;
+    } else {
+        if (value > 10) {
+            return 1;
+        }
+        return 2;
+    }
+}
+
+fn main(): i32 {
+    print("leading_if: %d %d %d\n",
+        leading_if(0), leading_if(5), leading_if(20));
+    print("leading_chain: %d %d %d %d\n",
+        leading_chain(-1), leading_chain(0), leading_chain(1), leading_chain(5));
+    print("after_first_if: %d %d %d\n",
+        after_first_if<i32>(0, 7, 9),
+        after_first_if<i32>(-1, 7, 9),
+        after_first_if<i32>(5, 7, 9));
+    print("early_return: %d %d %d\n",
+        early_return(0), early_return(5), early_return(20));
+    return 0;
+}
+
+/** -- test
+- .stdout
+leading_if: 100 110 111
+leading_chain: 0 11 12 13
+after_first_if: 7 9 9
+early_return: -1 2 1
+- .exit
+0
+-- */
