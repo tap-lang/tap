@@ -990,12 +990,15 @@ static VarTypeNode *identifier_type(GenericContext *context, const char *name) {
         memcpy(base, name, base_size);
         base[base_size] = '\0';
         TypeSymbol *base_symbol = find_symbol(context, base);
-        if (base_symbol) {
+        if (base_symbol && base_symbol->type) {
             const char *struct_name = base_symbol->type->struct_name
                 ? base_symbol->type->struct_name
                 : base_symbol->type->enum_name;
-            StructFieldNode *field = find_field(
-                find_struct(context->program, struct_name), dot + 1);
+            // 基础符号不是结构体 / 枚举时（标量，或类型还没推断出来的局部变量），这里
+            // 没有字段可查 —— 当查不到处理，别把 NULL 名字喂给 find_struct（会段错误）。
+            StructFieldNode *field = struct_name
+                ? find_field(find_struct(context->program, struct_name), dot + 1)
+                : NULL;
             free(base);
             if (field) return clone_type(field->field_type);
         } else {
@@ -1081,6 +1084,236 @@ static void check_type_bounds(
             exit(1);
         }
     }
+}
+
+// 取具名类型的名字（结构体或枚举）；标量、数组、指针返回 NULL。
+static const char *var_type_named(const VarTypeNode *type) {
+    if (!type || type->is_array || type->is_pointer) return NULL;
+    return type->struct_name ? type->struct_name : type->enum_name;
+}
+
+// 剥掉模块前缀，诊断里只显示源语言名字（`__tap_module_0.Point` → `Point`）。
+// 按**最后一个**点切分：模块私有枚举的成员形式带两个点（`__tap_module_0.E.B`）。
+static const char *strip_module_prefix(const char *name) {
+    if (!name) return "(none)";
+    const char *dot = strrchr(name, '.');
+    return dot ? dot + 1 : name;
+}
+
+// 诊断用的类型名：标量给名字，具名类型剥掉模块前缀，指针/数组/泛型实参递归展开。
+static char *describe_type(const VarTypeNode *type) {
+    if (!type) return strdup("nothing");
+    if (type->is_pointer) {
+        char *element = describe_type(type->element_type);
+        size_t size = strlen(element) + 2;
+        char *result = (char *)malloc(size);
+        if (!result) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+        snprintf(result, size, "*%s", element);
+        free(element);
+        return result;
+    }
+    if (type->is_array) {
+        char *element = describe_type(type->element_type);
+        size_t size = strlen(element) + 40;
+        char *result = (char *)malloc(size);
+        if (!result) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+        snprintf(result, size, "[%s; %llu]",
+                 element, (unsigned long long)type->array_length);
+        free(element);
+        return result;
+    }
+    const char *named = var_type_named(type);
+    if (!named) return type_key(type); // 标量：type_key 直接给出源语言名字
+    const char *base = strip_module_prefix(named);
+    if (!type->type_arguments) return strdup(base);
+
+    size_t size = strlen(base) + 3;
+    for (ASTNode *argument = type->type_arguments; argument; argument = argument->next) {
+        char *text = describe_type((VarTypeNode *)argument);
+        size += strlen(text) + 2;
+        free(text);
+    }
+    char *result = (char *)malloc(size);
+    if (!result) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    size_t used = (size_t)snprintf(result, size, "%s<", base);
+    for (ASTNode *argument = type->type_arguments; argument; argument = argument->next) {
+        char *text = describe_type((VarTypeNode *)argument);
+        used += (size_t)snprintf(result + used, size - used, "%s%s",
+                                 argument == type->type_arguments ? "" : ", ", text);
+        free(text);
+    }
+    snprintf(result + used, size - used, ">");
+    return result;
+}
+
+// 在程序里按名字查 trait 声明。
+static TraitNode *find_trait(ProgramNode *program, const char *name) {
+    for (ASTNode *node = program ? program->traits : NULL; node; node = node->next) {
+        TraitNode *trait_node = (TraitNode *)node;
+        if (strcmp(trait_node->name, name) == 0) return trait_node;
+    }
+    return NULL;
+}
+
+// 在 trait 里按名字查方法签名。
+static TraitMethodNode *find_trait_method(TraitNode *trait_node, const char *name) {
+    for (ASTNode *node = trait_node ? trait_node->methods : NULL;
+         node; node = node->next) {
+        TraitMethodNode *method = (TraitMethodNode *)node;
+        if (strcmp(method->name, name) == 0) return method;
+    }
+    return NULL;
+}
+
+// 取回 impl 方法在源语言里的名字。
+//
+// 方法在解析时就被改名成 `<方法名>$<类型名>`，进了模块还会再套一层 `__tap_module_N.`。
+// 所以先按**最后一个点**切掉模块前缀，再按**第一个 `$`** 切掉类型后缀 —— 和 Codegen 的
+// 方法查找（method_name_matches）用的是同一套切分规则。
+static char *impl_method_source_name(const FunctionNode *method) {
+    const char *dot = strrchr(method->name, '.');
+    const char *base = dot ? dot + 1 : method->name;
+    const char *dollar = strchr(base, '$');
+    size_t length = dollar ? (size_t)(dollar - base) : strlen(base);
+    char *result = (char *)malloc(length + 1);
+    if (!result) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(result, base, length);
+    result[length] = '\0';
+    return result;
+}
+
+// 校验每个 impl 块里的方法和 trait 声明的签名一致。
+//
+// 必须在**所有模块加载完、类型改名之后**跑：trait 和 impl 可能来自不同模块，而且两边
+// 引用的类型名要先改写完才能直接比对。比较项是「接收者 + 参数个数 + 每个参数类型 +
+// 返回类型」；关联类型和默认方法 v1 都没有，所以不涉及。
+//
+// trait 名找不到时这里不报错（那属于「用了没定义的 trait」，是另一回事），直接跳过。
+int validate_impl_signatures(ProgramNode *program) {
+    for (ASTNode *node = program ? program->impls : NULL; node; node = node->next) {
+        ImplNode *impl_node = (ImplNode *)node;
+        TraitNode *trait_node = find_trait(program, impl_node->trait_name);
+        if (!trait_node) continue;
+
+        for (ImplMethodLink *link = impl_node->methods; link; link = link->next) {
+            FunctionNode *method = link->function;
+            char *method_name = impl_method_source_name(method);
+            TraitMethodNode *signature = find_trait_method(trait_node, method_name);
+            if (!signature) {
+                print_diagnostic(stderr, "error", method->filename, method->line,
+                                 method->column,
+                                 "method '%s' is not a member of trait '%s'",
+                                 method_name, impl_node->trait_name); // 中文：该方法不属于这个 trait
+                free(method_name);
+                return 1;
+            }
+
+            unsigned declared = node_count(signature->param_types) +
+                                (signature->has_self ? 1u : 0u);
+            unsigned actual = node_count(method->params);
+            if (declared != actual) {
+                print_diagnostic(stderr, "error", method->filename, method->line,
+                                 method->column,
+                                 "method '%s' has %u parameters, but trait '%s' declares %u",
+                                 method_name, actual, impl_node->trait_name, declared); // 中文：参数个数与 trait 声明不一致
+                free(method_name);
+                return 1;
+            }
+
+            VarTypeNode *impl_param = (VarTypeNode *)method->param_types;
+            ASTNode *trait_param = signature->param_types;
+            unsigned index = 1;
+
+            // 接收者：trait 里写的是 `self`（不带类型），impl 里必须写成目标类型本身，
+            // 否则方法查找（首参类型 == 接收者类型）根本找不到它。
+            if (signature->has_self && impl_param) {
+                const char *named = var_type_named(impl_param);
+                if (!named || strcmp(named, impl_node->type_name) != 0) {
+                    char *actual_type = describe_type(impl_param);
+                    print_diagnostic(stderr, "error", method->filename, method->line,
+                                     method->column,
+                                     "method '%s' takes '%s' as its receiver, but impl is for '%s'",
+                                     method_name, actual_type,
+                                     strip_module_prefix(impl_node->type_name)); // 中文：接收者类型与 impl 的目标类型不一致
+                    free(actual_type);
+                    free(method_name);
+                    return 1;
+                }
+                impl_param = (VarTypeNode *)impl_param->base.next;
+                index++;
+            }
+
+            while (trait_param && impl_param) {
+                if (!type_equal((VarTypeNode *)trait_param, impl_param)) {
+                    char *expected = describe_type((VarTypeNode *)trait_param);
+                    char *actual_type = describe_type(impl_param);
+                    print_diagnostic(stderr, "error", method->filename, method->line,
+                                     method->column,
+                                     "method '%s' parameter %u has type '%s', but trait '%s' declares '%s'",
+                                     method_name, index, actual_type,
+                                     impl_node->trait_name, expected); // 中文：参数类型与 trait 声明不一致
+                    free(expected);
+                    free(actual_type);
+                    free(method_name);
+                    return 1;
+                }
+                trait_param = trait_param->next;
+                impl_param = (VarTypeNode *)impl_param->base.next;
+                index++;
+            }
+
+            if (!type_equal(method->return_type, signature->return_type)) {
+                char *expected = describe_type(signature->return_type);
+                char *actual_type = describe_type(method->return_type);
+                print_diagnostic(stderr, "error", method->filename, method->line,
+                                 method->column,
+                                 "method '%s' returns '%s', but trait '%s' declares '%s'",
+                                 method_name, actual_type,
+                                 impl_node->trait_name, expected); // 中文：返回类型与 trait 声明不一致
+                free(expected);
+                free(actual_type);
+                free(method_name);
+                return 1;
+            }
+            free(method_name);
+        }
+
+        // 完整性：trait 里声明的每个方法，impl 里都得有 —— 缺一个就不算实现了这个 trait。
+        // （约束检查只看 impl 记录在不在，所以这里必须兜住。）放在逐方法比对之后，
+        // 这样「写了 trait 里没有的方法」会先报到更贴切的那条诊断上。
+        for (ASTNode *declared = trait_node->methods; declared; declared = declared->next) {
+            TraitMethodNode *signature = (TraitMethodNode *)declared;
+            int implemented = 0;
+            for (ImplMethodLink *link = impl_node->methods; link; link = link->next) {
+                char *name = impl_method_source_name(link->function);
+                if (strcmp(name, signature->name) == 0) implemented = 1;
+                free(name);
+                if (implemented) break;
+            }
+            if (!implemented) {
+                print_diagnostic(stderr, "error", impl_node->filename, impl_node->line,
+                                 impl_node->column,
+                                 "impl of trait '%s' for '%s' is missing method '%s'",
+                                 impl_node->trait_name,
+                                 strip_module_prefix(impl_node->type_name),
+                                 signature->name); // 中文：impl 缺少 trait 要求的方法
+                return 1;
+            }
+        }
+    }
+    return 0;
 }
 
 static FunctionNode *specialize_call(GenericContext *context,
@@ -1296,6 +1529,40 @@ static VarTypeNode *index_type(GenericContext *context,
 }
 
 // 处理调用表达式中的嵌套泛型并返回具体返回类型。
+// 查找 receiver.method(...) 对应的普通（非泛型）方法：首参类型和接收者一致的顶层函数。
+//
+// 少了这一步，非泛型方法调用会一路落到 process_call 末尾、被当成默认的 i32，
+// 和 Codegen 侧推断出的真实类型对不上（例如 `let q = p.shift(4);` 之后的泛型调用）。
+static FunctionNode *find_non_generic_method(
+    GenericContext *context, const char *call_name) {
+    const char *dot = strrchr(call_name, '.');
+    if (!dot || dot == call_name) return NULL;
+
+    size_t receiver_length = (size_t)(dot - call_name);
+    char *receiver_name = (char *)malloc(receiver_length + 1);
+    if (!receiver_name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(receiver_name, call_name, receiver_length);
+    receiver_name[receiver_length] = '\0';
+    TypeSymbol *receiver = find_symbol(context, receiver_name);
+    const VarTypeNode *receiver_type = receiver ? receiver->type : NULL;
+    free(receiver_name);
+    if (!receiver_type) return NULL;
+
+    const char *method_name = dot + 1;
+    for (ASTNode *node = context->program->functions; node; node = node->next) {
+        FunctionNode *function = (FunctionNode *)node;
+        if (function->type_params || !function->param_types) continue;
+        if (!function_base_matches(function->name, method_name)) continue;
+        if (type_equal((VarTypeNode *)function->param_types, receiver_type)) {
+            return function;
+        }
+    }
+    return NULL;
+}
+
 static VarTypeNode *process_call(GenericContext *context,
                                  FunctionCallNode *call,
                                  const VarTypeNode *expected) {
@@ -1307,6 +1574,7 @@ static VarTypeNode *process_call(GenericContext *context,
     if (!function) {
         function = specialize_method_call(context, call, expected);
         if (function) return clone_type(function->return_type);
+        function = find_non_generic_method(context, call->name);
     }
     if (call->type_arguments) {
         generic_call_error(call, "function '%s' is not generic", call->name);

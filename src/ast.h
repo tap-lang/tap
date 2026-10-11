@@ -363,16 +363,23 @@ typedef struct {
     int column;
 } TraitNode;
 
+// impl 块里一个方法到脱糖后函数的引用。函数本身挂在 ProgramNode.functions 上，
+// 这里只是额外的入口（**不拥有** FunctionNode），供签名校验按源语言顺序取回方法。
+typedef struct ImplMethodLink {
+    FunctionNode *function;
+    struct ImplMethodLink *next;
+} ImplMethodLink;
+
 // impl 节点：为某个具体类型实现某个 trait。
 //
 // 块内的方法在解析时就被脱糖成**普通的顶层函数**（名字加上类型后缀，如 `show$Point`），
 // 直接挂进 ProgramNode.functions —— 单态化、方法查找和 Codegen 都不用为它们开特例。
-// 这里只保留归属信息（trait / 类型）和块内声明的方法原名，供校验用。
+// 这里只保留归属信息（trait / 类型）和方法引用，供签名校验用。
 typedef struct {
     ASTNode base;
-    char *trait_name;       // 实现的 trait 名
-    char *type_name;        // 目标类型名（v1 只支持具名非泛型类型）
-    ASTNode *method_names;  // IdentifierNode 列表：块内方法在源语言里的名字
+    char *trait_name;        // 实现的 trait 名
+    char *type_name;         // 目标类型名（v1 只支持具名非泛型类型）
+    ImplMethodLink *methods; // 块内方法（脱糖后的函数），按源语言顺序
     char *filename;
     int line;
     int column;
@@ -455,7 +462,7 @@ void add_trait(ProgramNode *program, TraitNode *trait_node);
 void add_impl(ProgramNode *program, ImplNode *impl_node);
 void add_trait_method(TraitNode *trait_node, TraitMethodNode *method);
 void add_trait_method_param_type(TraitMethodNode *method, VarTypeNode *type);
-void add_impl_method_name(ImplNode *impl_node, const char *name);
+void add_impl_method(ImplNode *impl_node, FunctionNode *function);
 void add_type_param_bound(IdentifierNode *type_param, VarTypeNode *bound);
 
 // 条件语句节点

@@ -1,0 +1,7 @@
+// trait 的跨模块 fixture：trait 声明在这里，impl 由导入方提供。
+// 用来验证签名校验在「trait 和 impl 分属不同模块」时也能正确比对（两边的类型名
+// 都在各自的模块里改写过）。
+pub trait Shape {
+    fn area(self): i32;
+    fn name(self): string;
+}

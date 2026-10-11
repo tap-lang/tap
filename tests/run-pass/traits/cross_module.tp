@@ -1,0 +1,32 @@
+// trait 来自模块（modules.shapes），类型和 impl 写在入口文件里。
+// 覆盖「跨模块 trait + 入口 impl + 泛型约束 + 方法调用」这条完整路径：
+// 签名校验要在所有模块加载完、类型改名之后才跑，两边名字才对得上。
+import modules.shapes;
+
+struct Square { side: i32 }
+
+impl Shape for Square {
+    fn area(value: Square): i32 {
+        return value.side * value.side;
+    }
+    fn name(value: Square): string {
+        return "square";
+    }
+}
+
+fn describe<T: Shape>(value: T): string {
+    return value.name();
+}
+
+fn main(): i32 {
+    let s: Square = Square { side: 3 };
+    print("%s %d\n", describe(s), s.area());
+    return 0;
+}
+
+/** -- test
+- .stdout
+square 9
+- .exit
+0
+-- */

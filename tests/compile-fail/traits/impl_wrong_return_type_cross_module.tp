@@ -1,0 +1,25 @@
+// trait 在模块里（modules.shapes），impl 在入口文件里 —— 签名校验要能跨模块比对。
+// 这里 area 的返回类型写错：trait 声明 i32，impl 写成 i64。
+import modules.shapes;
+
+struct Square { side: i32 }
+
+impl Shape for Square {
+    fn area(value: Square): i64 {
+        return 1;
+    }
+    fn name(value: Square): string {
+        return "square";
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'area' returns 'i64', but trait 'Shape' declares 'i32'
+- .exit
+1
+-- */

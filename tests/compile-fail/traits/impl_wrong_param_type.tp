@@ -1,0 +1,24 @@
+// impl 方法的参数类型必须和 trait 声明一致 —— 这里 prefix 从 string 写成了 i32。
+// 签名校验在所有模块加载完、类型改名之后统一做，所以入口文件和模块里的 impl 都能查到。
+trait Show {
+    fn label(self, prefix: string): string;
+}
+
+struct Point { x: i32 }
+
+impl Show for Point {
+    fn label(value: Point, prefix: i32): string {
+        return "point";
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'label' parameter 2 has type 'i32', but trait 'Show' declares 'string'
+- .exit
+1
+-- */

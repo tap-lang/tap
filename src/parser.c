@@ -1576,7 +1576,9 @@ static ImplNode *parse_impl(Parser *parser, ProgramNode *program) {
             parser_error(parser, "expected method definition in impl"); // 中文：期望 impl 里的方法定义
         }
         FunctionNode *method = parse_function(parser, 0);
-        add_impl_method_name(impl_node, method->name);
+        // 记下源语言里的方法名：函数名随后会被改成 `show$Point`，诊断要用原名。
+        method->original_name = strdup(method->name);
+        add_impl_method(impl_node, method);
         char *renamed = impl_method_name(method->name, impl_node->type_name);
         free(method->name);
         method->name = renamed;

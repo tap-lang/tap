@@ -1,0 +1,78 @@
+// 无类型标注的 `let` 要能推断出右值的高层类型（结构体 / 枚举 / 指针 / 数组）。
+//
+// 不推断的话变量会被登记成标量符号（declared_type 为空、存储按标量分配），于是结构体
+// 拷贝、字段访问、方法调用和「传给泛型函数」都会出错 —— 后者报的是
+// `function 'identity$n_Point' argument 1 type mismatch`。
+import modules.geometry;
+
+struct Point { x: i32 }
+
+fn make_point(x: i32): Point {
+    return Point { x: x };
+}
+
+fn identity<T>(value: T): T {
+    return value;
+}
+
+fn shift(self: Point, delta: i32): Point {
+    return Point { x: self.x + delta };
+}
+
+fn main(): i32 {
+    // 一、同文件：函数返回值 → 字段访问。
+    let p = make_point(3);
+    print("%d\n", p.x);
+
+    // 二、结构体拷贝。
+    let copy = p;
+    print("%d\n", copy.x);
+
+    // 三、传给泛型函数（T 推断成 Point），返回值再取字段。
+    let doubled = identity(p);
+    print("%d\n", doubled.x);
+
+    // 四、数组拷贝。
+    let numbers: [i32; 3] = [1, 2, 3];
+    let alias = numbers;
+    print("%d\n", alias[0]);
+
+    // 五、跨模块：pub 函数返回 pub 结构体。
+    let rect = geometry.make_rect(3, 4);
+    print("%d\n", rect.width * rect.height);
+
+    // 六、跨模块返回值直接传给泛型函数。
+    let direct = identity(geometry.make_rect(2, 5));
+    print("%d\n", direct.width * direct.height);
+
+    // 七、跨模块返回值先落成无标注变量，再传给泛型函数（最初报的 bug 场景）。
+    let stored = geometry.make_rect(2, 5);
+    let inferred = identity(stored);
+    print("%d\n", inferred.width * inferred.height);
+
+    // 八、无标注 let 接方法调用的返回值，再访问字段。
+    let shifted = p.shift(4);
+    print("%d\n", shifted.x);
+
+    // 九、方法调用的返回值直接传给泛型函数 —— generics 和 Codegen 对方法调用返回类型的
+    // 推断必须一致，否则这里会被单态化成 i32 版本。
+    let chained = identity(p.shift(1));
+    print("%d\n", chained.x);
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+3
+3
+3
+1
+12
+10
+10
+7
+4
+- .exit
+0
+-- */

@@ -15,6 +15,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "helpers.h"
+#include "generics.h"
 
 typedef struct ModuleExport {
     char *name;      // 源语言里写的名字
@@ -1089,6 +1090,17 @@ static void rewrite_declared_types(LoadedModule *module, ProgramNode *program) {
             impl_node->type_name = renamed;
         }
     }
+    // trait 方法签名里的类型名同样要改，否则和 impl 侧的签名比对会对不上。
+    for (ASTNode *node = program->traits; node; node = node->next) {
+        TraitNode *trait_node = (TraitNode *)node;
+        for (ASTNode *method = trait_node->methods; method; method = method->next) {
+            TraitMethodNode *signature = (TraitMethodNode *)method;
+            for (ASTNode *type = signature->param_types; type; type = type->next) {
+                rewrite_var_type(module, (VarTypeNode *)type);
+            }
+            rewrite_var_type(module, signature->return_type);
+        }
+    }
 }
 
 // 解析 `alias.` 前缀对应的导入绑定；没有同名导入时返回 NULL。
@@ -1549,6 +1561,8 @@ int load_modules(ProgramNode *program, const char *input_file, const char *compi
     int result = build_bindings(&context, program, NULL, &bindings);
     if (result == 0) result = rewrite_functions(program, NULL, bindings);
     if (result == 0) append_functions(program, module_functions);
+    // 所有模块的 trait / impl 都合并完、类型名也改完了，这里统一校验签名一致性。
+    if (result == 0) result = validate_impl_signatures(program);
 
     free_bindings(bindings);
     free_modules(context.modules);

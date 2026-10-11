@@ -1,0 +1,23 @@
+// impl 里只能写 trait 声明过的方法 —— 这里多出来一个 render。
+trait Show {
+    fn show(self): string;
+}
+
+struct Point { x: i32 }
+
+impl Show for Point {
+    fn render(value: Point): string {
+        return "point";
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'render' is not a member of trait 'Show'
+- .exit
+1
+-- */

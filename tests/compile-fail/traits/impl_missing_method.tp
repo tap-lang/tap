@@ -1,0 +1,25 @@
+// impl 必须把 trait 声明的方法都实现：这里漏了 label。
+// 约束检查只看 impl 记录在不在，所以完整性由签名校验兜住。
+trait Show {
+    fn show(self): string;
+    fn label(self, prefix: string): string;
+}
+
+struct Point { x: i32 }
+
+impl Show for Point {
+    fn show(value: Point): string {
+        return "point";
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: impl of trait 'Show' for 'Point' is missing method 'label'
+- .exit
+1
+-- */

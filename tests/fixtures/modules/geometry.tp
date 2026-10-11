@@ -1,0 +1,6 @@
+// 无类型标注 `let` 的类型推断 fixture：pub 函数返回 pub 结构体，跨模块也能推断出类型。
+pub struct Rect { width: i32, height: i32 }
+
+pub fn make_rect(width: i32, height: i32): Rect {
+    return Rect { width: width, height: height };
+}

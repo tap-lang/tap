@@ -382,8 +382,10 @@ void print_ast(const ProgramNode *program) {
         if (node->type == NODE_IMPL) {
             ImplNode *impl_node = (ImplNode *)node;
             printf("  Impl: %s for %s\n", impl_node->trait_name, impl_node->type_name);
-            for (ASTNode *name = impl_node->method_names; name; name = name->next) {
-                printf("    Fn: %s\n", ((IdentifierNode *)name)->name);
+            for (ImplMethodLink *link = impl_node->methods; link; link = link->next) {
+                const FunctionNode *method = link->function;
+                printf("    Fn: %s\n",
+                       method->original_name ? method->original_name : method->name);
             }
         }
     }
@@ -1346,7 +1348,7 @@ ImplNode *create_impl(
     impl_node->base.next = NULL;
     impl_node->trait_name = strdup(trait_name);
     impl_node->type_name = strdup(type_name);
-    impl_node->method_names = NULL;
+    impl_node->methods = NULL;
     impl_node->filename = strdup(filename);
     impl_node->line = line;
     impl_node->column = column;
@@ -1369,8 +1371,17 @@ void add_trait_method_param_type(TraitMethodNode *method, VarTypeNode *type) {
     append_type_argument(&method->param_types, type);
 }
 
-void add_impl_method_name(ImplNode *impl_node, const char *name) {
-    append_node(&impl_node->method_names, (ASTNode *)create_identifier((char *)name));
+void add_impl_method(ImplNode *impl_node, FunctionNode *function) {
+    ImplMethodLink *link = (ImplMethodLink *)malloc(sizeof(ImplMethodLink));
+    if (!link) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    link->function = function;
+    link->next = NULL;
+    ImplMethodLink **tail = &impl_node->methods;
+    while (*tail) tail = &(*tail)->next;
+    *tail = link;
 }
 
 void add_type_param_bound(IdentifierNode *type_param, VarTypeNode *bound) {
@@ -1510,7 +1521,13 @@ void free_ast(ASTNode *node) {
             ImplNode *impl_node = (ImplNode *)node;
             free(impl_node->trait_name);
             free(impl_node->type_name);
-            free_ast(impl_node->method_names);
+            // methods 只是引用，函数本身由 ProgramNode.functions 拥有，这里只释放链表节点。
+            ImplMethodLink *link = impl_node->methods;
+            while (link) {
+                ImplMethodLink *next = link->next;
+                free(link);
+                link = next;
+            }
             free(impl_node->filename);
             break;
         }

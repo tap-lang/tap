@@ -69,7 +69,7 @@ typedef struct ASTNode {
 | `NODE_TRY` | `TryNode` | `?` 传播表达式的内层表达式，以及用于诊断的文件和行列 |
 | `NODE_TRAIT` | `TraitNode` | trait 名、方法签名链表和 `is_pub` |
 | `NODE_TRAIT_METHOD` | `TraitMethodNode` | 方法名、`has_self` 接收者标记、除接收者外的参数类型链表和返回类型 |
-| `NODE_IMPL` | `ImplNode` | 实现的 trait 名、目标类型名，以及块内方法在源语言里的名字链表；块内方法在解析时就被脱糖成普通 `FunctionNode` 挂进 `ProgramNode.functions` |
+| `NODE_IMPL` | `ImplNode` | 实现的 trait 名、目标类型名，以及块内方法的引用链表（`ImplMethodLink`，指向脱糖后的 `FunctionNode`）；块内方法在解析时就被改名成 `<方法名>$<类型名>` 并挂进 `ProgramNode.functions` |
 | `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举和泛型类型实参，或通过 `element_type` 递归表示固定长度数组和指针 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或

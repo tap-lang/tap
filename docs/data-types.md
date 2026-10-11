@@ -65,6 +65,33 @@ const ANSWER: i32 = 42;
 const VALUES: [i32; 4] = [0; 4];
 ```
 
+### 变量声明
+
+`let` 声明局部变量，可以带类型标注，也可以省略、由初始化表达式推断：
+
+```text
+let count: i32 = 0;             // 显式标注
+let label = "tap";              // 推断成 string
+let point = make_point(1);      // 推断成 Point（结构体）
+```
+
+推断覆盖右值表达式能确定的高层类型——结构体、枚举、指针、数组；函数返回值（含方法调用）、
+结构体字面量、数组元素和跨模块的 pub 类型都能推出来：
+
+```text
+let origin = make_point(0);            // Point
+let copy = origin;                     // 结构体拷贝，类型同样是 Point
+let rect = geometry.make_rect(3, 4);   // 跨模块返回的 pub 结构体
+let numbers: [i32; 3] = [1, 2, 3];
+let alias = numbers;                   // 数组拷贝
+```
+
+标量同样能推断（`let x = 42;` 是 `i32`）。只有两类情况必须写标注，因为编译器拿不到目标类型：
+
+- **`match` 表达式和 `?` 传播**：`let value: i32 = match (...) { ... };`
+- **泛型枚举构造**：`let x: Option<i32> = Option.Some(42);` —— 写成
+  `let x = Option<i32>.Some(42);` 会报 `generic enum construction needs a type annotation`。
+
 ### 浮点数类型
 | 类型 | 描述 |
 | --- | --- |
@@ -313,8 +340,8 @@ let absent_explicit: Option<i32> = Option<i32>.None;
 
 两种写法生成的类型完全相同。显式写法多两项检查：类型实参数量要和枚举声明一致，每一项也要和
 推断出的结果相符，所以写错了会直接报错而不是被静默忽略。实例化始终由目标类型驱动，因此
-**没有目标类型时显式实参也帮不上忙**——`let x = Option<i32>.Some(42);` 仍然不支持，和结构体
-字面量一样需要类型标注。
+**没有目标类型时显式实参也帮不上忙**——`let x = Option<i32>.Some(42);` 会报
+`generic enum construction needs a type annotation`，和结构体字面量一样需要类型标注。
 
 `match` 的用法和非泛型一样，载荷绑定的类型由实例化后的成员载荷决定：
 
@@ -462,11 +489,23 @@ fn describe<T: Show>(value: T): string {
 - **约束在单态化时检查**：`describe<Point>(p)` 会检查「Point 实现了 Show 吗」，没有就报
   `type 'Point' does not implement trait 'Show' required by 'T'`。多个约束用 `+` 分隔
   （`T: Show + Clone`）。
+- **签名在模块加载完统一校验**：每个 `impl` 块都要满足 trait 声明 —— trait 里的方法一个都不能
+  少，且参数个数（含接收者）、每个参数类型、返回类型、以及接收者类型（必须是 impl 的目标类型）
+  都要对得上。trait 和 impl 分属不同模块时同样能比对。诊断示例：
+
+  ```text
+  error: method 'label' parameter 2 has type 'i32', but trait 'Show' declares 'string'
+  error: method 'show' returns 'i32', but trait 'Show' declares 'string'
+  error: method 'show' has 2 parameters, but trait 'Show' declares 1
+  error: method 'render' is not a member of trait 'Show'
+  error: method 'show' takes 'Circle' as its receiver, but impl is for 'Point'
+  error: impl of trait 'Show' for 'Point' is missing method 'label'
+  ```
+
 - trait 名和 impl 在整个程序里可见（trait 名不参与模块私有改名）。
 
 **v1 的边界**：没有关联类型、默认方法、`dyn` / 运行时多态和运算符重载；`impl` 的目标类型必须
-是具名的非泛型类型（`impl Show for Vec<i32>` 报错）；trait 方法自身不能是泛型。约束检查只看
-「有没有这条 impl 记录」，不比对 impl 方法的签名与 trait 声明是否一致。
+是具名的非泛型类型（`impl Show for Vec<i32>` 报错）；trait 方法自身不能是泛型。
 
 ### 泛型动态数组
 

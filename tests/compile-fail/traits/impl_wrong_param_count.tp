@@ -1,0 +1,23 @@
+// 参数个数（含接收者）必须一致：trait 声明 1 个（就是 self），impl 写了 2 个。
+trait Show {
+    fn show(self): string;
+}
+
+struct Point { x: i32 }
+
+impl Show for Point {
+    fn show(value: Point, extra: i32): string {
+        return "point";
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'show' has 2 parameters, but trait 'Show' declares 1
+- .exit
+1
+-- */

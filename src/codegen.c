@@ -1066,6 +1066,67 @@ static VarTypeNode *infer_reference_type(
     return create_pointer_type(element_type);
 }
 
+// 复制带高层类型信息（结构体 / 枚举 / 指针 / 数组）的类型节点；标量返回 NULL。
+//
+// 标量返回 NULL 是有意的：调用方据此继续走原来的标量路径（expression_type +
+// insert_symbol），无类型标注的 `let x = 42;` 这类代码的行为完全不变。
+static VarTypeNode *copy_high_level_type(const VarTypeNode *type) {
+    if (!type) return NULL;
+    if (!type->struct_name && !type->enum_name &&
+        !type->is_pointer && !type->is_array) {
+        return NULL;
+    }
+    return copy_var_type(type);
+}
+
+// 推断无类型标注的 `let` 右值表达式的完整类型。
+//
+// 只处理能确定高层类型的情况，标量一律返回 NULL（见 copy_high_level_type）。不推断的话
+// 变量会被登记成标量符号，于是 `let b = a;`（结构体拷贝）、`b.x`（字段访问）以及把变量
+// 传给泛型函数都会出错。
+static VarTypeNode *infer_expression_var_type(
+    CodeGenContext *context, ASTNode *expression) {
+    if (!expression) return NULL;
+
+    switch (expression->type) {
+        case NODE_IDENTIFIER: {
+            const char *name = ((IdentifierNode *)expression)->name;
+            Symbol *symbol = find_symbol(context, name);
+            if (symbol) return copy_high_level_type(symbol->declared_type);
+            StructFieldNode *field =
+                field_access_info(context, name, NULL, NULL, NULL);
+            return field ? copy_high_level_type(field->field_type) : NULL;
+        }
+        case NODE_FUNCTION_CALL: {
+            FunctionCallNode *call = (FunctionCallNode *)expression;
+            // 载荷枚举的构造表达式产生该枚举（降级后是同名结构体）类型的值。
+            EnumVariantNode *variant = NULL;
+            EnumNode *enum_node = variant_reference(context, call->name, &variant);
+            if (enum_node && enum_node->has_payload) {
+                // 泛型枚举到这里已经过了单态化（类型名带上了类型实参），推断函数里拼不出
+                // 实例化后的名字，所以无标注时一律要求写类型标注。
+                if (enum_node->type_params) {
+                    fprintf(stderr,
+                        "error: generic enum construction needs a type annotation\n");
+                    exit(1); // 中文：泛型枚举构造需要类型标注
+                }
+                return create_struct_type(enum_node->name);
+            }
+            FunctionNode *function = find_function(context, call->name);
+            if (!function) {
+                function = resolve_method_call(context, call, NULL, NULL, NULL);
+            }
+            return copy_high_level_type(function_return_var_type(function));
+        }
+        case NODE_STRUCT_LITERAL:
+            return create_struct_type(((StructLiteralNode *)expression)->struct_name);
+        case NODE_INDEX_EXPRESSION:
+            return copy_high_level_type(indexed_value_type(context, expression));
+        default:
+            return NULL;
+    }
+}
+
 // 推断表达式在当前上下文中的标量类型。
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression) {
     if (!expression) return default_integer_type();
@@ -3302,6 +3363,12 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     fprintf(stderr,
                         "error: `?` needs an explicit type annotation\n");
                     exit(1); // 中文：? 需要显式的类型标注
+                }
+                // 没有类型标注时，把右值的高层类型（结构体 / 枚举 / 指针 / 数组）推断出来。
+                // 否则变量会被当成标量，结构体拷贝、字段访问、方法调用和泛型实参检查都会出错。
+                if (!declaration->type && declaration->expression) {
+                    declaration->type = infer_expression_var_type(
+                        context, declaration->expression);
                 }
                 validate_var_type(context, declaration->type);
                 if (declaration->type && declaration->type->is_array) {
