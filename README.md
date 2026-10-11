@@ -97,8 +97,9 @@ tap run [选项] <源文件>
 ./build/tap run examples/snake.tp
 ```
 
-`examples/tetris.tp` 是俄罗斯方块：7-bag 随机发牌、幽灵落点提示、软降与硬降、
-消行计分和按等级加速，WASD / 方向键操作，按 `q` 退出：
+`examples/tetris.tp` 是俄罗斯方块：7-bag 随机发牌、软降与硬降、消行计分和按等级加速，
+方块由彩色 emoji 拼成（同一块内按格子相对位置斜向取色，一块本身就是一组彩色组合），
+落点提示按 `T` 开关（默认关），WASD / 方向键操作，按 `q` 退出：
 
 ```bash
 ./build/tap run examples/tetris.tp

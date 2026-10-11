@@ -9,6 +9,7 @@
 //     W / ↑      顺时针旋转
 //     S / ↓      软降（每格 +1 分）
 //     空格       硬降（每格 +2 分）
+//     T          落点提示开关（默认关）
 //     P          暂停 / 继续
 //     Q          退出
 //
@@ -18,6 +19,8 @@
 //   * 每种方块只存一份「4x4 包围盒内的基准形状」，旋转在运行时按顺时针 90 度
 //     变换 (x, y) -> (3 - y, x) 现算。
 //   * 取块用 7-bag 随机：把 7 种方块打乱成一轮依次取用，避免连续出同一块。
+//   * 渲染用彩色 emoji 方块；同一个方块内部按格子的相对位置斜向取色（见 cell_color），
+//     所以一块本身就是一组彩色组合，而不是整块同色。落点提示用「░░」，默认关闭，按 T 打开。
 
 import std.random.random;
 
@@ -108,14 +111,34 @@ fn collides(board: *i32, px: i32, py: i32, kind: i32, rot: i32): i32 {
     return 0;
 }
 
-// 把方块写进棋盘，颜色编号 = kind + 1。
+// 落点提示的行号：从当前位置一路往下试到撞住为止。
+// 抽成函数是为了让「运行中」和「暂停」两条绘制路径共用同一段逻辑。
+fn ghost_row(board: *i32, px: i32, py: i32, kind: i32, rot: i32): i32 {
+    let row: i32 = py;
+    for (; collides(board, px, row + 1, kind, rot) == 0;) {
+        row = row + 1;
+    }
+    return row;
+}
+
+// 一个格子的颜色编号（1..7）：由它在 4x4 包围盒里的相对坐标和方块种类一起决定。
+//
+// 斜向按 (x + y) 取色，所以同一个方块内部相邻格子颜色必然不同，一块就是一组
+// 彩色组合；再整体按种类错开，不同种类凑出的配色也不一样。
+// 棋盘存的是这个颜色编号（而不是方块种类），这样方块固定之后就再也无法从棋盘
+// 反推出它原来的相对位置了，颜色必须在下落时就算好写进去。
+fn cell_color(rel_x: i32, rel_y: i32, kind: i32): i32 {
+    return (rel_x + rel_y + kind) % 7 + 1;
+}
+
+// 把方块写进棋盘：每个格子写它算好的颜色编号。
 fn lock_piece(board: *i32, px: i32, py: i32, kind: i32, rot: i32): i32 {
     let cells: [i32; 8] = rotated_cells(kind, rot);
     for (let i: i32 = 0; i < 4; i++) {
         let x: i32 = cells[i * 2] + px;
         let y: i32 = cells[i * 2 + 1] + py;
         if (y >= 0) {
-            board[y * WIDTH + x] = kind + 1;
+            board[y * WIDTH + x] = cell_color(cells[i * 2], cells[i * 2 + 1], kind);
         }
     }
     return 0;
@@ -150,21 +173,27 @@ fn clear_lines(board: *i32): i32 {
     return cleared;
 }
 
-// 棋盘上某个格子值对应的两字符显示。用字母区分种类，不依赖终端颜色。
+// 调色板：把格子里存的颜色编号 1..7 映射成对应的彩色 emoji 方块。
+//
+// 用的是 U+1F7E5..U+1F7EB 这一组彩色方块 emoji（红/蓝/橙/黄/绿/紫/棕），
+// 它们在终端里固定占两列，正好对上「一个格子两列宽」的棋盘。
+// 某个格子取哪一号颜色由 cell_color 决定。
 fn cell_glyph(value: i32): string {
-    if (value == 1) { return "II"; }
-    if (value == 2) { return "OO"; }
-    if (value == 3) { return "TT"; }
-    if (value == 4) { return "SS"; }
-    if (value == 5) { return "ZZ"; }
-    if (value == 6) { return "JJ"; }
-    if (value == 7) { return "LL"; }
+    if (value == 1) { return "🟫"; }
+    if (value == 2) { return "🟨"; }
+    if (value == 3) { return "🟪"; }
+    if (value == 4) { return "🟩"; }
+    if (value == 5) { return "🟥"; }
+    if (value == 6) { return "🟦"; }
+    if (value == 7) { return "🟧"; }
     return "  ";
 }
 
 // 画一帧：左边是棋盘，右边是下一个方块和分数。
+// show_ghost 为 0 时不画落点提示（默认就是关的，按 T 打开）。
 fn draw(board: *i32, px: i32, py: i32, kind: i32, rot: i32, ghost_y: i32,
-        next_kind: i32, score: i32, lines: i32, level: i32, paused: i32): i32 {
+        show_ghost: i32, next_kind: i32, score: i32, lines: i32, level: i32,
+        paused: i32): i32 {
     let cells: [i32; 8] = rotated_cells(kind, rot);
     let next_cells: [i32; 8] = rotated_cells(next_kind, 0);
 
@@ -185,14 +214,14 @@ fn draw(board: *i32, px: i32, py: i32, kind: i32, rot: i32, ghost_y: i32,
         print("  │");
         for (let x: i32 = 0; x < WIDTH; x++) {
             let value: i32 = board[y * WIDTH + x];
-            // 正在下落的方块盖在棋盘之上。
+            // 正在下落的方块盖在棋盘之上，颜色和固定时用同一套算法。
             for (let i: i32 = 0; i < 4; i++) {
                 if (cells[i * 2] + px == x && cells[i * 2 + 1] + py == y) {
-                    value = kind + 1;
+                    value = cell_color(cells[i * 2], cells[i * 2 + 1], kind);
                 }
             }
-            // 空位才画幽灵落点。
-            if (value == 0) {
+            // 空位才画落点提示；开关关掉时整段跳过。
+            if (value == 0 && show_ghost != 0) {
                 for (let i: i32 = 0; i < 4; i++) {
                     if (cells[i * 2] + px == x && cells[i * 2 + 1] + ghost_y == y) {
                         value = -1;
@@ -211,14 +240,14 @@ fn draw(board: *i32, px: i32, py: i32, kind: i32, rot: i32, ghost_y: i32,
             let preview_row: i32 = y - 1;
             print("    ");
             for (let x: i32 = 0; x < 4; x++) {
-                let hit: i32 = 0;
+                let preview_color: i32 = 0;
                 for (let i: i32 = 0; i < 4; i++) {
                     if (next_cells[i * 2] == x && next_cells[i * 2 + 1] == preview_row) {
-                        hit = 1;
+                        preview_color = cell_color(next_cells[i * 2], next_cells[i * 2 + 1], next_kind);
                     }
                 }
-                if (hit != 0) {
-                    print("%s", cell_glyph(next_kind + 1));
+                if (preview_color != 0) {
+                    print("%s", cell_glyph(preview_color));
                 } else {
                     print("  ");
                 }
@@ -227,6 +256,8 @@ fn draw(board: *i32, px: i32, py: i32, kind: i32, rot: i32, ghost_y: i32,
         if (y == 4) { print("    分数 %d", score); }
         if (y == 5) { print("    消行 %d", lines); }
         if (y == 6) { print("    等级 %d", level); }
+        if (y == 7 && show_ghost != 0) { print("    落点 开"); }
+        if (y == 7 && show_ghost == 0) { print("    落点 关"); }
         print("\n");
     }
 
@@ -235,7 +266,7 @@ fn draw(board: *i32, px: i32, py: i32, kind: i32, rot: i32, ghost_y: i32,
         print("──");
     }
     print("┘\n");
-    print("\n  操作  A/← 左移   D/→ 右移   W/↑ 旋转   S/↓ 软降   空格 硬降   P 暂停   Q 退出\n");
+    print("\n  操作  A/← 左移   D/→ 右移   W/↑ 旋转   S/↓ 软降   空格 硬降   T 落点提示   P 暂停   Q 退出\n");
     return 0;
 }
 
@@ -258,6 +289,8 @@ fn main(): i32 {
     let drop_interval: i32 = 600;
     let elapsed: i32 = 0;
     let paused: i32 = 0;
+    // 落点提示默认关闭，按 T 切换。
+    let ghost_on: i32 = 0;
     let game_over: i32 = 0;
     let lock_now: i32 = 0;
 
@@ -271,9 +304,15 @@ fn main(): i32 {
             paused = 1 - paused;
         }
 
+        // t / T：落点提示开关。放在暂停判断之外，暂停时也能切。
+        if (key == 116 || key == 84) {
+            ghost_on = 1 - ghost_on;
+        }
+
         // 暂停时只重画画面，不推进游戏逻辑。
         if (paused != 0) {
-            draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, piece_y,
+            let ghost_y: i32 = ghost_row(&board[0], piece_x, piece_y, piece_kind, piece_rot);
+            draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, ghost_y, ghost_on,
                  next_kind, score, lines, level, paused);
             sleep_ms(80);
         }
@@ -357,20 +396,17 @@ fn main(): i32 {
                 }
             }
 
-            // 幽灵落点：从当前位置一路往下试到撞住为止。
-            let ghost_y: i32 = piece_y;
-            for (; collides(&board[0], piece_x, ghost_y + 1, piece_kind, piece_rot) == 0;) {
-                ghost_y = ghost_y + 1;
-            }
+            // 落点提示的位置；开关关掉时 draw 不会用它。
+            let ghost_y: i32 = ghost_row(&board[0], piece_x, piece_y, piece_kind, piece_rot);
 
-            draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, ghost_y,
+            draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, ghost_y, ghost_on,
                  next_kind, score, lines, level, 0);
             sleep_ms(tick);
         }
     }
 
-    // 收尾再画一帧，把最终的棋盘留在屏幕上。
-    draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, piece_y,
+    // 收尾再画一帧，把最终的棋盘留在屏幕上（结束时不再画落点提示）。
+    draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, piece_y, 0,
          next_kind, score, lines, level, 0);
     print("\n  游戏结束！最终分数 %d，共消 %d 行，到达等级 %d。\n", score, lines, level);
     return 0;
