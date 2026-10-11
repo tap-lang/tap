@@ -279,11 +279,8 @@ static void dump_stmt(ASTNode *n, int depth) {
         if (in->alternative) {
             print_indent(depth + 2);
             printf("else:\n");
-            if (in->alternative->type == NODE_IF_STATEMENT) {
-                dump_stmt(in->alternative, depth + 4);
-            } else {
-                dump_stmt_list(in->alternative, depth + 4);
-            }
+            // alternative 一律是语句链表（`else if` 是长度 1 的链表），照链表转储即可。
+            dump_stmt_list(in->alternative, depth + 4);
         }
         break;
     }

@@ -463,7 +463,11 @@ typedef struct {
     ASTNode base;
     ASTNode *condition;    // 条件表达式
     ASTNode *consequence;  // 条件为真时执行的语句
-    ASTNode *alternative;  // 条件为假时执行的语句
+    // 条件为假时执行的语句链表。`else if` / `elseif` 也统一表示成链表，只是长度为 1
+    //（那个 if 节点自己的 next 为 NULL）。因此消费方一律按链表遍历，
+    // 不要再用 `alternative->type == NODE_IF_STATEMENT` 去区分「else if」和 else 块：
+    // else 块的链表表头恰好是 if 语句时同样命中，会把块内其余语句整段丢掉。
+    ASTNode *alternative;
 } IfStatementNode;
 
 // 创建条件语句节点

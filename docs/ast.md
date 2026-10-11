@@ -121,11 +121,17 @@ Module Loader 消费导入列表、解析限定/裸名函数调用并合并模�
 - `MatchStatementNode`：`match (value) { Enum.Member(a, b) => ... }`，解构带载荷枚举；
   分支体可以是代码块或单条语句，`_` 表示通配分支。
 
-`IfStatementNode.consequence` 指向真分支的语句链表。`alternative` 有两种形态：
+`IfStatementNode.consequence` 指向真分支的语句链表。`alternative` 一律是语句链表：
 
-- `else`：指向语句链表。
-- `elseif`：指向另一个 `IfStatementNode`，形成嵌套条件链。`else if` 是 `elseif` 的等价
-  写法，两者生成的 AST 完全相同。
+- `else`：指向块内语句组成的链表。
+- `elseif` / `else if`：指向长度为 1 的链表，表头就是那个 `IfStatementNode`（它自己的
+  `next` 为 `NULL`），形成嵌套条件链。`else if` 是 `elseif` 的等价写法，两者生成的 AST
+  完全相同。
+
+消费方（AST 转储、Codegen、泛型单态化克隆）一律按链表遍历，**不要**用
+`alternative->type == NODE_IF_STATEMENT` 去区分这两种形态：else 块的链表表头恰好是 `if`
+语句时同样命中，那样会把块内其余语句整段丢掉（曾经的真实 bug，回归用例见
+`tests/run-pass/control-flow/else_block_leading_if.tp`）。
 
 `ForStatementNode` 对应 `for (initializer; condition; update) { body }`。三个循环头字段均可为空；
 条件为空时 Codegen 将其视为真。初始化支持 `let` 或赋值，更新支持赋值、后缀 `++` 和后缀 `--`。
@@ -205,7 +211,7 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 | `VarTypeNode.type_arguments` | `VarTypeNode` |
 | `StructLiteralNode.type_arguments` | `VarTypeNode` |
 | `IfStatementNode.consequence` | 语句节点 |
-| `IfStatementNode.alternative` | 语句链表或单个 `IfStatementNode` |
+| `IfStatementNode.alternative` | 语句节点（一律按链表遍历，`elseif` 是长度 1 的链表） |
 
 添加导入、函数、类型参数、参数、语句或实参时，应使用 `add_import()`、`add_function()`、
 `add_type_param()`、`add_param()`、`add_param_type()`、`add_statement()`、`add_type_argument()`、

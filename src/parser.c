@@ -567,7 +567,11 @@ static ASTNode *parse_if_statement(Parser *parser) {
     ASTNode *consequence = parse_block(parser);
     consume(parser, TOKEN_RBRACE);
     
-    // 解析可选的 else 或 elseif 部分
+    // 解析可选的 else 或 elseif 部分。
+    //
+    // 两条路径产出的都是「语句链表」：else 块走 parse_block，`else if` / `elseif`
+    // 递归回来的是单个 if 节点（它的 next 为 NULL，天然就是长度 1 的链表）。
+    // 下游因此不需要、也不应该按节点类型区分这两者（见 IfStatementNode.alternative）。
     ASTNode *alternative = NULL;
     if (parser->current_token->type == TOKEN_ELSE) {
         consume(parser, TOKEN_ELSE);

@@ -473,13 +473,12 @@ static ASTNode *clone_statement(ASTNode *source, FunctionNode *template,
             return clone_expression(source, template, bindings);
         case NODE_IF_STATEMENT: {
             IfStatementNode *statement = (IfStatementNode *)source;
+            // alternative 一律按语句链表克隆：`else if` 是长度 1 的链表。
+            // 按节点类型特判会把「表头恰好是 if 的 else 块」截断成一条语句。
             return (ASTNode *)create_if_statement(
                 clone_expression(statement->condition, template, bindings),
                 clone_statement_list(statement->consequence, template, bindings),
-                statement->alternative &&
-                        statement->alternative->type == NODE_IF_STATEMENT
-                    ? clone_statement(statement->alternative, template, bindings)
-                    : clone_statement_list(statement->alternative, template, bindings));
+                clone_statement_list(statement->alternative, template, bindings));
         }
         case NODE_FOR_STATEMENT: {
             ForStatementNode *statement = (ForStatementNode *)source;

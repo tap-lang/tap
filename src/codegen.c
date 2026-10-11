@@ -2762,11 +2762,10 @@ static void generate_if_statement(CodeGenContext *context, IfStatementNode *if_n
 
     LLVMPositionBuilderAtEnd(context->builder, else_block);
     if (if_node->alternative) {
-        if (if_node->alternative->type == NODE_IF_STATEMENT) {
-            generate_if_statement(context, (IfStatementNode *)if_node->alternative);
-        } else {
-            generate_statement_list(context, if_node->alternative);
-        }
+        // alternative 一律是语句链表：`else if` 是长度 1 的链表，else 块是普通链表。
+        // 不能按 `alternative->type == NODE_IF_STATEMENT` 特判 —— else 块的表头恰好是
+        // if 语句时同样命中，那样会把块内其余语句整段丢掉。
+        generate_statement_list(context, if_node->alternative);
     }
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(context->builder))) {
         LLVMBuildBr(context->builder, merge_block);
