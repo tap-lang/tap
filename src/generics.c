@@ -1029,6 +1029,61 @@ static const VarTypeNode *function_param_type(FunctionNode *function,
 }
 
 // 根据调用点信息实例化泛型函数并改写调用名称。
+// 一个具体类型是否实现了某个 trait：impl 表里有没有 (trait, type) 这条记录。
+static int type_implements_trait(
+    ProgramNode *program, const char *trait_name, const char *type_name) {
+    for (ASTNode *node = program ? program->impls : NULL; node; node = node->next) {
+        ImplNode *impl_node = (ImplNode *)node;
+        if (strcmp(impl_node->trait_name, trait_name) == 0 &&
+            strcmp(impl_node->type_name, type_name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// 检查一次实例化里每个类型参数是否满足自己的约束。
+//
+// 约束在 parser 里存成 trait 名（VarTypeNode.struct_name）。还没落到具体类型的类型参数
+// （嵌套泛型）先跳过，等外层实例化到具体类型时这里会再查一次。
+static void check_type_bounds(
+    GenericContext *context, FunctionCallNode *call, FunctionNode *template,
+    TypeBinding *bindings) {
+    for (ASTNode *node = template->type_params; node; node = node->next) {
+        IdentifierNode *type_param = (IdentifierNode *)node;
+        if (!type_param->type_bounds) continue;
+
+        TypeBinding *binding = find_binding(bindings, type_param->name);
+        if (!binding) continue;
+        const VarTypeNode *actual = binding->type;
+        const char *type_name =
+            actual->struct_name ? actual->struct_name : actual->enum_name;
+
+        // 名字既不是结构体也不是枚举 —— 多半是还没实例化的类型参数，跳过。
+        if (type_name && !find_struct(context->program, type_name) &&
+            !find_enum(context->program, type_name)) {
+            continue;
+        }
+
+        for (ASTNode *bound = type_param->type_bounds; bound; bound = bound->next) {
+            const char *trait_name = ((VarTypeNode *)bound)->struct_name;
+            if (!trait_name) continue;
+            if (type_name &&
+                type_implements_trait(context->program, trait_name, type_name)) {
+                continue;
+            }
+            char *key = type_key(actual);
+            // type_key 给具名类型加了 `n_` 前缀（单态化用），诊断里用源语言的名字更好读。
+            const char *display = type_name ? type_name : key;
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "type '%s' does not implement trait '%s' required by '%s'",
+                             display, trait_name, type_param->name); // 中文：类型没有实现约束要求的 trait
+            free(key);
+            exit(1);
+        }
+    }
+}
+
 static FunctionNode *specialize_call(GenericContext *context,
                                      FunctionCallNode *call,
                                      FunctionNode *template,
@@ -1083,6 +1138,9 @@ static FunctionNode *specialize_call(GenericContext *context,
                 "cannot infer generic type parameter '%s'", name);
         }
     }
+
+    // 类型实参推断完了，检查它们是否满足 `T: Trait` 这类约束。
+    check_type_bounds(context, call, template, bindings);
 
     char *name = specialized_name(template, bindings);
     FunctionNode *specialized = find_function(context->program, name);

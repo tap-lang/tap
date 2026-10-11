@@ -1,0 +1,56 @@
+// trait 约束：`impl` 提供实现，泛型函数用 `T: Trait` 要求类型满足约束。
+//
+// impl 里的方法会被脱糖成普通函数（名字加类型后缀，如 show$Point），所以
+// `value.show()` 走的还是普通的方法查找，单态化时再检查约束是否满足。
+
+trait Show {
+    fn show(self): string;
+    fn label(self, prefix: string): string;
+}
+
+struct Point { x: i32 }
+struct Circle { radius: i32 }
+
+impl Show for Point {
+    fn show(value: Point): string {
+        return "point";
+    }
+    fn label(value: Point, prefix: string): string {
+        return prefix;
+    }
+}
+
+impl Show for Circle {
+    fn show(value: Circle): string {
+        return "circle";
+    }
+    fn label(value: Circle, prefix: string): string {
+        return prefix;
+    }
+}
+
+// T 由实参推断。
+fn describe<T: Show>(value: T): string {
+    return value.show();
+}
+
+// 显式写类型实参，并调用带额外参数的方法。
+fn tagged<T: Show>(value: T, prefix: string): string {
+    return value.label(prefix);
+}
+
+fn main(): i32 {
+    let p: Point = Point { x: 1 };
+    let c: Circle = Circle { radius: 2 };
+    print("%s %s\n", describe(p), describe<Circle>(c));
+    print("%s %s\n", tagged<Point>(p, "P:"), tagged(c, "C:"));
+    return 0;
+}
+
+/** -- test
+- .stdout
+point circle
+P: C:
+- .exit
+0
+-- */

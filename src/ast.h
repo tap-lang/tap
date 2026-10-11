@@ -38,7 +38,10 @@ enum NodeType {
     NODE_MATCH_STATEMENT,           // match 解构语句节点
     NODE_MATCH_ARM,                 // match 分支节点
     NODE_TRY,                       // ? 传播表达式节点
-    NODE_VAR_TYPE                   // 数据类型节点
+    NODE_VAR_TYPE,                  // 数据类型节点
+    NODE_TRAIT,                     // trait 接口声明节点
+    NODE_TRAIT_METHOD,              // trait 方法签名节点
+    NODE_IMPL                       // impl 接口实现节点
 };
 
 // 字面量类型
@@ -100,6 +103,8 @@ typedef struct {
     ASTNode *structs;      // 结构体声明列表
     ASTNode *constants;    // 顶层常量列表
     ASTNode *functions;    // 函数列表
+    ASTNode *traits;       // trait 声明列表
+    ASTNode *impls;        // impl 实现列表
 } ProgramNode;
 
 // 模块导入节点
@@ -210,6 +215,7 @@ typedef struct {
     ASTNode base;
     char *name;            // 标识符名称
     ASTNode *enum_type_arguments; // 显式枚举类型实参，仅 Enum<T>.Member 形式使用
+    ASTNode *type_bounds;  // 作为泛型类型参数时的约束（TraitNode 名字的 VarTypeNode 列表）
 } IdentifierNode;
 
 // 字面量节点
@@ -333,6 +339,45 @@ typedef struct {
     int column;
 } TryNode;
 
+// trait 方法签名节点。trait 里只声明签名，不写函数体。
+// `self` 是接收者标记（不带类型标注）；param_types 里是除接收者外的参数类型。
+typedef struct {
+    ASTNode base;
+    char *name;             // 方法名
+    int has_self;           // 是否带 `self` 接收者（v1 要求必须带）
+    ASTNode *param_types;   // 除接收者外的参数类型列表（VarTypeNode）
+    VarTypeNode *return_type;
+    char *filename;
+    int line;
+    int column;
+} TraitMethodNode;
+
+// trait 声明节点：一组方法签名，用来约束泛型类型参数。
+typedef struct {
+    ASTNode base;
+    char *name;             // trait 名
+    ASTNode *methods;       // TraitMethodNode 列表
+    int is_pub;             // pub trait：可以被其他模块导入
+    char *filename;
+    int line;
+    int column;
+} TraitNode;
+
+// impl 节点：为某个具体类型实现某个 trait。
+//
+// 块内的方法在解析时就被脱糖成**普通的顶层函数**（名字加上类型后缀，如 `show$Point`），
+// 直接挂进 ProgramNode.functions —— 单态化、方法查找和 Codegen 都不用为它们开特例。
+// 这里只保留归属信息（trait / 类型）和块内声明的方法原名，供校验用。
+typedef struct {
+    ASTNode base;
+    char *trait_name;       // 实现的 trait 名
+    char *type_name;        // 目标类型名（v1 只支持具名非泛型类型）
+    ASTNode *method_names;  // IdentifierNode 列表：块内方法在源语言里的名字
+    char *filename;
+    int line;
+    int column;
+} ImplNode;
+
 // 创建节点的函数声明
 ProgramNode *create_program();
 ImportNode *create_import(
@@ -400,6 +445,18 @@ void add_statement(FunctionNode *function, ASTNode *statement);
 void add_argument(FunctionCallNode *function_call, ASTNode *argument);
 void add_type_argument(FunctionCallNode *function_call, VarTypeNode *type_argument);
 void append_type_argument(ASTNode **list, VarTypeNode *type_argument);
+
+// trait / impl
+TraitMethodNode *create_trait_method(const char *name, const char *filename, int line, int column);
+TraitNode *create_trait(const char *name, const char *filename, int line, int column);
+ImplNode *create_impl(const char *trait_name, const char *type_name,
+                      const char *filename, int line, int column);
+void add_trait(ProgramNode *program, TraitNode *trait_node);
+void add_impl(ProgramNode *program, ImplNode *impl_node);
+void add_trait_method(TraitNode *trait_node, TraitMethodNode *method);
+void add_trait_method_param_type(TraitMethodNode *method, VarTypeNode *type);
+void add_impl_method_name(ImplNode *impl_node, const char *name);
+void add_type_param_bound(IdentifierNode *type_param, VarTypeNode *bound);
 
 // 条件语句节点
 typedef struct {

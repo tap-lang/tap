@@ -1,0 +1,377 @@
+// tap 俄罗斯方块（Tetris）
+//
+// 运行：
+//     ./build/tap run examples/tetris.tp
+//
+// 操作：
+//     A / ←      左移
+//     D / →      右移
+//     W / ↑      顺时针旋转
+//     S / ↓      软降（每格 +1 分）
+//     空格       硬降（每格 +2 分）
+//     P          暂停 / 继续
+//     Q          退出
+//
+// 实现说明：
+//   * 棋盘是 10x20 的扁平定长数组，用 *i32 传址交给辅助函数，因为 tap 的定长数组
+//     还不能直接作为函数参数。
+//   * 每种方块只存一份「4x4 包围盒内的基准形状」，旋转在运行时按顺时针 90 度
+//     变换 (x, y) -> (3 - y, x) 现算。
+//   * 取块用 7-bag 随机：把 7 种方块打乱成一轮依次取用，避免连续出同一块。
+
+import std.random.random;
+
+const WIDTH: i32 = 10;
+const HEIGHT: i32 = 20;
+
+// 棋盘格子的取值范围：0 为空；1..7 是已固定的方块（值 = 种类 + 1）；渲染时 -1 表示幽灵落点。
+
+// 把 7 种方块打乱后重新装满一袋。
+fn refill_bag(bag: *i32): i32 {
+    for (let i: i32 = 0; i < 7; i++) {
+        bag[i] = i;
+    }
+    // Fisher-Yates 洗牌，从后往前逐个和前面随机位置交换。
+    for (let i: i32 = 6; i > 0; i--) {
+        let j: i32 = random(i + 1);
+        let temporary: i32 = bag[i];
+        bag[i] = bag[j];
+        bag[j] = temporary;
+    }
+    return 0;
+}
+
+// 从袋里取下一块；袋子空了就先重新洗一袋。index 通过指针回写。
+fn take_piece(bag: *i32, index: *i32): i32 {
+    if (index[0] >= 7) {
+        refill_bag(bag);
+        index[0] = 0;
+    }
+    let value: i32 = bag[index[0]];
+    index[0] = index[0] + 1;
+    return value;
+}
+
+// 基准形状：4x4 包围盒里的 4 个格子，依次是 (x0, y0, x1, y1, x2, y2, x3, y3)。
+// 顺序与 cell_glyph 的编号一致：0=I 1=O 2=T 3=S 4=Z 5=J 6=L。
+fn shape_cells(kind: i32): [i32; 8] {
+    if (kind == 0) { let s: [i32; 8] = [0, 1, 1, 1, 2, 1, 3, 1]; return s; }
+    if (kind == 1) { let s: [i32; 8] = [1, 0, 2, 0, 1, 1, 2, 1]; return s; }
+    if (kind == 2) { let s: [i32; 8] = [1, 0, 0, 1, 1, 1, 2, 1]; return s; }
+    if (kind == 3) { let s: [i32; 8] = [1, 0, 2, 0, 0, 1, 1, 1]; return s; }
+    if (kind == 4) { let s: [i32; 8] = [0, 0, 1, 0, 1, 1, 2, 1]; return s; }
+    if (kind == 5) { let s: [i32; 8] = [0, 0, 0, 1, 1, 1, 2, 1]; return s; }
+    if (kind == 6) { let s: [i32; 8] = [2, 0, 0, 1, 1, 1, 2, 1]; return s; }
+    let fallback: [i32; 8] = [0, 1, 1, 1, 2, 1, 3, 1];
+    return fallback;
+}
+
+// 把基准形状旋转 rotation 个 90 度（顺时针）。负角度也能用，先归一化到 0..3。
+fn rotated_cells(kind: i32, rotation: i32): [i32; 8] {
+    let base: [i32; 8] = shape_cells(kind);
+    let out: [i32; 8] = [0; 8];
+    let r: i32 = ((rotation % 4) + 4) % 4;
+    for (let i: i32 = 0; i < 4; i++) {
+        let x: i32 = base[i * 2];
+        let y: i32 = base[i * 2 + 1];
+        if (r == 0) {
+            out[i * 2] = x;
+            out[i * 2 + 1] = y;
+        }
+        if (r == 1) {
+            out[i * 2] = 3 - y;
+            out[i * 2 + 1] = x;
+        }
+        if (r == 2) {
+            out[i * 2] = 3 - x;
+            out[i * 2 + 1] = 3 - y;
+        }
+        if (r == 3) {
+            out[i * 2] = y;
+            out[i * 2 + 1] = 3 - x;
+        }
+    }
+    return out;
+}
+
+// 方块能不能放在 (px, py) 处：越界或者和已固定格子重叠就算撞上。
+// 顶部之上（y < 0）算空，允许方块在棋盘外旋转。
+fn collides(board: *i32, px: i32, py: i32, kind: i32, rot: i32): i32 {
+    let cells: [i32; 8] = rotated_cells(kind, rot);
+    for (let i: i32 = 0; i < 4; i++) {
+        let x: i32 = cells[i * 2] + px;
+        let y: i32 = cells[i * 2 + 1] + py;
+        if (x < 0 || x >= WIDTH) { return 1; }
+        if (y >= HEIGHT) { return 1; }
+        if (y >= 0 && board[y * WIDTH + x] != 0) { return 1; }
+    }
+    return 0;
+}
+
+// 把方块写进棋盘，颜色编号 = kind + 1。
+fn lock_piece(board: *i32, px: i32, py: i32, kind: i32, rot: i32): i32 {
+    let cells: [i32; 8] = rotated_cells(kind, rot);
+    for (let i: i32 = 0; i < 4; i++) {
+        let x: i32 = cells[i * 2] + px;
+        let y: i32 = cells[i * 2 + 1] + py;
+        if (y >= 0) {
+            board[y * WIDTH + x] = kind + 1;
+        }
+    }
+    return 0;
+}
+
+// 消掉填满的行，返回消掉的行数。从下往上扫；消掉一行后上面的整体下移，
+// 并且不移动 y，这样同一行位置会重新检查一次（可能有连续多行可消）。
+fn clear_lines(board: *i32): i32 {
+    let cleared: i32 = 0;
+    let y: i32 = HEIGHT - 1;
+    for (; y >= 0;) {
+        let full: i32 = 1;
+        for (let x: i32 = 0; x < WIDTH; x++) {
+            if (board[y * WIDTH + x] == 0) {
+                full = 0;
+            }
+        }
+        if (full != 0) {
+            cleared = cleared + 1;
+            for (let row: i32 = y; row > 0; row--) {
+                for (let x: i32 = 0; x < WIDTH; x++) {
+                    board[row * WIDTH + x] = board[(row - 1) * WIDTH + x];
+                }
+            }
+            for (let x: i32 = 0; x < WIDTH; x++) {
+                board[x] = 0;
+            }
+        } else {
+            y = y - 1;
+        }
+    }
+    return cleared;
+}
+
+// 棋盘上某个格子值对应的两字符显示。用字母区分种类，不依赖终端颜色。
+fn cell_glyph(value: i32): string {
+    if (value == 1) { return "II"; }
+    if (value == 2) { return "OO"; }
+    if (value == 3) { return "TT"; }
+    if (value == 4) { return "SS"; }
+    if (value == 5) { return "ZZ"; }
+    if (value == 6) { return "JJ"; }
+    if (value == 7) { return "LL"; }
+    return "  ";
+}
+
+// 画一帧：左边是棋盘，右边是下一个方块和分数。
+fn draw(board: *i32, px: i32, py: i32, kind: i32, rot: i32, ghost_y: i32,
+        next_kind: i32, score: i32, lines: i32, level: i32, paused: i32): i32 {
+    let cells: [i32; 8] = rotated_cells(kind, rot);
+    let next_cells: [i32; 8] = rotated_cells(next_kind, 0);
+
+    clear_screen();
+    print("\n  tap 俄罗斯方块");
+    if (paused != 0) {
+        print("   [已暂停]");
+    }
+    print("\n\n");
+
+    print("  ┌");
+    for (let x: i32 = 0; x < WIDTH; x++) {
+        print("──");
+    }
+    print("┐\n");
+
+    for (let y: i32 = 0; y < HEIGHT; y++) {
+        print("  │");
+        for (let x: i32 = 0; x < WIDTH; x++) {
+            let value: i32 = board[y * WIDTH + x];
+            // 正在下落的方块盖在棋盘之上。
+            for (let i: i32 = 0; i < 4; i++) {
+                if (cells[i * 2] + px == x && cells[i * 2 + 1] + py == y) {
+                    value = kind + 1;
+                }
+            }
+            // 空位才画幽灵落点。
+            if (value == 0) {
+                for (let i: i32 = 0; i < 4; i++) {
+                    if (cells[i * 2] + px == x && cells[i * 2 + 1] + ghost_y == y) {
+                        value = -1;
+                    }
+                }
+            }
+            if (value == 0) { print("  "); }
+            if (value == -1) { print("░░"); }
+            if (value > 0) { print("%s", cell_glyph(value)); }
+        }
+        print("│");
+
+        // 右侧信息面板：和棋盘行对齐着打印。
+        if (y == 0) { print("    下一个"); }
+        if (y == 1 || y == 2) {
+            let preview_row: i32 = y - 1;
+            print("    ");
+            for (let x: i32 = 0; x < 4; x++) {
+                let hit: i32 = 0;
+                for (let i: i32 = 0; i < 4; i++) {
+                    if (next_cells[i * 2] == x && next_cells[i * 2 + 1] == preview_row) {
+                        hit = 1;
+                    }
+                }
+                if (hit != 0) {
+                    print("%s", cell_glyph(next_kind + 1));
+                } else {
+                    print("  ");
+                }
+            }
+        }
+        if (y == 4) { print("    分数 %d", score); }
+        if (y == 5) { print("    消行 %d", lines); }
+        if (y == 6) { print("    等级 %d", level); }
+        print("\n");
+    }
+
+    print("  └");
+    for (let x: i32 = 0; x < WIDTH; x++) {
+        print("──");
+    }
+    print("┘\n");
+    print("\n  操作  A/← 左移   D/→ 右移   W/↑ 旋转   S/↓ 软降   空格 硬降   P 暂停   Q 退出\n");
+    return 0;
+}
+
+fn main(): i32 {
+    let board: [i32; 200] = [0; 200];
+
+    // 7-bag：袋子和取用下标，通过指针交给 take_piece。
+    let bag: [i32; 7] = [0; 7];
+    let bag_index: i32 = 7;
+
+    let next_kind: i32 = take_piece(&bag[0], &bag_index);
+    let piece_kind: i32 = take_piece(&bag[0], &bag_index);
+    let piece_rot: i32 = 0;
+    let piece_x: i32 = 3;
+    let piece_y: i32 = 0;
+
+    let score: i32 = 0;
+    let lines: i32 = 0;
+    let level: i32 = 1;
+    let drop_interval: i32 = 600;
+    let elapsed: i32 = 0;
+    let paused: i32 = 0;
+    let game_over: i32 = 0;
+    let lock_now: i32 = 0;
+
+    // 每 tick 轮询一次按键并推进重力计时，tick 越小手感越跟手。
+    let tick: i32 = 25;
+
+    for (; game_over == 0;) {
+        let key: i32 = read_key();
+
+        if (key == 112) {          // p：暂停 / 继续
+            paused = 1 - paused;
+        }
+
+        // 暂停时只重画画面，不推进游戏逻辑。
+        if (paused != 0) {
+            draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, piece_y,
+                 next_kind, score, lines, level, paused);
+            sleep_ms(80);
+        }
+
+        if (paused == 0) {
+            if (key == 113) { break; }   // q：退出
+
+            // 左右移动。
+            if (key == 97 || key == 68 || key == 75) {
+                if (collides(&board[0], piece_x - 1, piece_y, piece_kind, piece_rot) == 0) {
+                    piece_x = piece_x - 1;
+                }
+            }
+            if (key == 100 || key == 67 || key == 77) {
+                if (collides(&board[0], piece_x + 1, piece_y, piece_kind, piece_rot) == 0) {
+                    piece_x = piece_x + 1;
+                }
+            }
+
+            // 顺时针旋转；转不动就保持原样。
+            if (key == 119 || key == 65 || key == 72) {
+                let next_rot: i32 = (piece_rot + 1) % 4;
+                if (collides(&board[0], piece_x, piece_y, piece_kind, next_rot) == 0) {
+                    piece_rot = next_rot;
+                }
+            }
+
+            // 软降：能下就下并加分，下不去就立刻固定。
+            if (key == 115 || key == 66 || key == 80) {
+                if (collides(&board[0], piece_x, piece_y + 1, piece_kind, piece_rot) == 0) {
+                    piece_y = piece_y + 1;
+                    score = score + 1;
+                    elapsed = 0;
+                } else {
+                    lock_now = 1;
+                }
+            }
+
+            // 硬降：一路落到底，每格 +2 分，然后立刻固定。
+            if (key == 32) {
+                for (; collides(&board[0], piece_x, piece_y + 1, piece_kind, piece_rot) == 0;) {
+                    piece_y = piece_y + 1;
+                    score = score + 2;
+                }
+                lock_now = 1;
+            }
+
+            // 重力：累计够一个下落间隔就走一格，走不动就固定。
+            elapsed = elapsed + tick;
+            if (elapsed >= drop_interval) {
+                elapsed = 0;
+                if (collides(&board[0], piece_x, piece_y + 1, piece_kind, piece_rot) == 0) {
+                    piece_y = piece_y + 1;
+                } else {
+                    lock_now = 1;
+                }
+            }
+
+            if (lock_now != 0) {
+                lock_now = 0;
+                lock_piece(&board[0], piece_x, piece_y, piece_kind, piece_rot);
+                let cleared: i32 = clear_lines(&board[0]);
+                if (cleared == 1) { score = score + 100 * level; }
+                if (cleared == 2) { score = score + 300 * level; }
+                if (cleared == 3) { score = score + 500 * level; }
+                if (cleared == 4) { score = score + 800 * level; }
+                lines = lines + cleared;
+                level = lines / 10 + 1;
+                drop_interval = 620 - level * 50;
+                if (drop_interval < 90) { drop_interval = 90; }
+
+                // 换下一块；出生位置就被占住说明堆到顶了。
+                piece_kind = next_kind;
+                next_kind = take_piece(&bag[0], &bag_index);
+                piece_x = 3;
+                piece_y = 0;
+                piece_rot = 0;
+                elapsed = 0;
+                if (collides(&board[0], piece_x, piece_y, piece_kind, piece_rot) != 0) {
+                    game_over = 1;
+                }
+            }
+
+            // 幽灵落点：从当前位置一路往下试到撞住为止。
+            let ghost_y: i32 = piece_y;
+            for (; collides(&board[0], piece_x, ghost_y + 1, piece_kind, piece_rot) == 0;) {
+                ghost_y = ghost_y + 1;
+            }
+
+            draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, ghost_y,
+                 next_kind, score, lines, level, 0);
+            sleep_ms(tick);
+        }
+    }
+
+    // 收尾再画一帧，把最终的棋盘留在屏幕上。
+    draw(&board[0], piece_x, piece_y, piece_kind, piece_rot, piece_y,
+         next_kind, score, lines, level, 0);
+    print("\n  游戏结束！最终分数 %d，共消 %d 行，到达等级 %d。\n", score, lines, level);
+    return 0;
+}

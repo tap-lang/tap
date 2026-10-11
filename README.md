@@ -97,6 +97,13 @@ tap run [选项] <源文件>
 ./build/tap run examples/snake.tp
 ```
 
+`examples/tetris.tp` 是俄罗斯方块：7-bag 随机发牌、幽灵落点提示、软降与硬降、
+消行计分和按等级加速，WASD / 方向键操作，按 `q` 退出：
+
+```bash
+./build/tap run examples/tetris.tp
+```
+
 `examples/json_poc.tp` 是只用 tap 和标准库实现的 JSON 解析器与序列化器，
 覆盖 object / array / string / number / true / false / null，演示递归结构体、
 泛型动态数组、字符串构建、字符串转义和数值格式化的用法：

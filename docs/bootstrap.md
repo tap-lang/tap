@@ -49,6 +49,7 @@ tap <probe>.tp -o out && ./out
 | 结构体 | ✅ | 定义、嵌套定义、字面量、字段读写、值语义、作参数/返回值 |
 | 枚举 | ✅ | 无载荷 + 带载荷，`match` 语句/表达式，穷尽性检查 |
 | 泛型 | ✅ | 函数、结构体、枚举都能单态化 |
+| trait | ⚠️ | v1：`trait` 声明方法签名 + `impl Trait for Type` + `fn f<T: Trait>` 约束，单态化时检查。无关联类型 / 默认方法 / `dyn` |
 | 错误处理 | ✅ | `Result<T, string>`、`?` 传播、`unwrap` / `expect` |
 | 递归函数 | ✅ | `fact(5) == 120` |
 | 控制流 | ✅ | `if` / `elseif` / `else`、`while`、`for`、`break`、`continue`、提前 `return` |

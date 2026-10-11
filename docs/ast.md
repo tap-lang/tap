@@ -40,14 +40,14 @@ typedef struct ASTNode {
 
 | `NodeType` | 结构体 | 主要字段与含义 |
 |---|---|---|
-| `NODE_PROGRAM` | `ProgramNode` | `imports` 和 `functions` 分别指向导入、函数链表 |
+| `NODE_PROGRAM` | `ProgramNode` | `imports` / `enums` / `structs` / `constants` / `functions` / `traits` / `impls` 分别指向对应的顶层声明链表 |
 | `NODE_IMPORT` | `ImportNode` | 模块名、单成员名、绑定裸名、通配标记及导入声明的源文件位置 |
 | `NODE_FUNCTION` | `FunctionNode` | 函数名、泛型类型参数、普通参数、返回类型和函数体；`is_extern` 标记 C ABI 外部声明，`is_variadic` 标记参数列表末尾的 `...`，`is_pub` 标记可被其他模块导入 |
 | `NODE_STRUCT` | `StructNode` | 结构体名、泛型类型参数和字段声明链表；`is_tagged_enum` 标记它由载荷枚举降级生成，`is_pub` 标记可被其他模块导入 |
 | `NODE_STRUCT_LITERAL` | `StructLiteralNode` | 结构体名、泛型类型实参和字段初始化链表 |
 | `NODE_ENUM` | `EnumNode` | 枚举名和成员声明链表；`has_payload` 标记是否带载荷，`is_pub` 标记可被其他模块导入 |
 | `NODE_ENUM_VARIANT` | `EnumVariantNode` | 成员名、载荷类型链表，以及降级时回填的 `tag` 和 `field_index` |
-| `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称；`enum_type_arguments` 保存 `Enum<T>.Member` 的显式枚举类型实参 |
+| `NODE_IDENTIFIER` | `IdentifierNode` | `name` 保存标识符名称；`enum_type_arguments` 保存 `Enum<T>.Member` 的显式枚举类型实参；作为泛型类型参数时 `type_bounds` 保存 `T: Trait` 的约束（trait 名的 `VarTypeNode` 链表） |
 | `NODE_LITERAL` | `LiteralNode` | 字面量类型及对应的联合值 |
 | `NODE_RETURN` | `ReturnNode` | `expression` 指向返回表达式 |
 | `NODE_BINARY_OP` | `BinaryOpNode` | `op_type` 加左右操作数；算术、比较、逻辑和位运算共用 |
@@ -67,6 +67,9 @@ typedef struct ASTNode {
 | `NODE_MATCH_STATEMENT` | `MatchStatementNode` | 被匹配表达式和分支链表 |
 | `NODE_MATCH_ARM` | `MatchArmNode` | 模式（`enum_name` / `variant_name`，通配分支两者为 `NULL`）、载荷绑定变量链表、分支体（`body`）或分支值（`value`） |
 | `NODE_TRY` | `TryNode` | `?` 传播表达式的内层表达式，以及用于诊断的文件和行列 |
+| `NODE_TRAIT` | `TraitNode` | trait 名、方法签名链表和 `is_pub` |
+| `NODE_TRAIT_METHOD` | `TraitMethodNode` | 方法名、`has_self` 接收者标记、除接收者外的参数类型链表和返回类型 |
+| `NODE_IMPL` | `ImplNode` | 实现的 trait 名、目标类型名，以及块内方法在源语言里的名字链表；块内方法在解析时就被脱糖成普通 `FunctionNode` 挂进 `ProgramNode.functions` |
 | `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举和泛型类型实参，或通过 `element_type` 递归表示固定长度数组和指针 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或
@@ -79,7 +82,8 @@ AST 根节点是 `ProgramNode`：
 ```text
 ProgramNode
 ├── imports -> ImportNode -> ImportNode -> ...
-└── functions -> FunctionNode -> FunctionNode -> ...
+├── enums / structs / constants / functions -> ...
+└── traits / impls -> ...
 ```
 
 `ImportNode.module_name` 保存点分隔模块名，`member` 保存单成员导入的成员名（整模块/通配导入

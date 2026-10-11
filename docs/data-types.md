@@ -430,8 +430,43 @@ fn main(): i32 {
 
 编译器会在 LLVM Codegen 前按实际类型为每组调用生成具体函数，即编译期单态化；运行时不保存
 泛型类型信息。同一个泛型参数在一次调用中必须推断为兼容类型，无法推断或显式类型实参数量
-不匹配时会报错。泛型结构体使用相同的尖括号语法，例如 `Box<i32>`。当前不支持类型约束
-和默认类型实参。
+不匹配时会报错。泛型结构体使用相同的尖括号语法，例如 `Box<i32>`。类型约束见下面的
+[trait 与类型约束](#trait-与类型约束)；当前不支持默认类型实参。
+
+### trait 与类型约束
+
+`trait` 声明一组方法签名，用来约束泛型类型参数；`impl` 为具体类型提供实现：
+
+```text
+trait Show {
+    fn show(self): string;
+    fn label(self, prefix: string): string;
+}
+
+struct Point { x: i32 }
+
+impl Show for Point {
+    fn show(value: Point): string { return "point"; }
+    fn label(value: Point, prefix: string): string { return prefix; }
+}
+
+fn describe<T: Show>(value: T): string {
+    return value.show();
+}
+```
+
+- **`self` 是接收者标记**（不带类型标注），trait 方法必须带它；其余参数照常写 `name: type`。
+- **`impl` 里的方法就是普通的顶层函数**，第一个参数是接收者。编译器在解析时给方法名加上类型
+  后缀（`show` → `show$Point`），避免多个类型实现同一 trait 时撞名；`value.show()` 走的仍然是
+  普通的方法查找，没有新增分派机制。
+- **约束在单态化时检查**：`describe<Point>(p)` 会检查「Point 实现了 Show 吗」，没有就报
+  `type 'Point' does not implement trait 'Show' required by 'T'`。多个约束用 `+` 分隔
+  （`T: Show + Clone`）。
+- trait 名和 impl 在整个程序里可见（trait 名不参与模块私有改名）。
+
+**v1 的边界**：没有关联类型、默认方法、`dyn` / 运行时多态和运算符重载；`impl` 的目标类型必须
+是具名的非泛型类型（`impl Show for Vec<i32>` 报错）；trait 方法自身不能是泛型。约束检查只看
+「有没有这条 impl 记录」，不比对 impl 方法的签名与 trait 声明是否一致。
 
 ### 泛型动态数组
 

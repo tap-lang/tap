@@ -25,6 +25,8 @@ enum TokenType {
     TOKEN_IMPORT,    // import 模块导入
     TOKEN_AS,        // as 导入别名
     TOKEN_MATCH,     // match 载荷枚举解构
+    TOKEN_TRAIT,     // trait 接口声明
+    TOKEN_IMPL,      // impl 接口实现
 
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符

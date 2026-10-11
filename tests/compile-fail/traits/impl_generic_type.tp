@@ -1,0 +1,21 @@
+// v1 只支持为具名的非泛型类型实现 trait；泛型目标在解析阶段就报错。
+trait Show {
+    fn show(self): string;
+}
+
+impl Show for Vec<i32> {
+    fn show(value: Vec<i32>): string {
+        return "vec";
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: impl for a generic type is not supported yet
+- .exit
+1
+-- */

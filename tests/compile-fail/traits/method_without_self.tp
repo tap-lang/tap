@@ -1,0 +1,15 @@
+// trait 方法必须有 `self` 接收者：约束的是「类型上能调用的方法」。
+trait Show {
+    fn show(): string;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: trait method must take `self` as its first parameter
+- .exit
+1
+-- */

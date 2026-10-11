@@ -297,6 +297,41 @@ static VarTypeNode *parse_type(Parser *parser) {
     return create_var_type(type);
 }
 
+// 解析一个泛型类型参数，可选带 `: Trait` 或 `: Trait + Other` 约束。
+// existing 是该类型参数列表里已有的项，用来查重。
+//
+// 约束用 trait 名表示，暂存成 struct_name 的 VarTypeNode —— 它不参与类型检查，
+// 只在单态化时拿名字去查 impl 表。
+static IdentifierNode *parse_type_parameter(Parser *parser, ASTNode *existing) {
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "expected generic type parameter"); // 中文：期望泛型类型参数
+    }
+    for (ASTNode *node = existing; node; node = node->next) {
+        if (strcmp(((IdentifierNode *)node)->name,
+                   parser->current_token->lexeme) == 0) {
+            parser_error(parser, "duplicate generic type parameter"); // 中文：重复的泛型类型参数
+        }
+    }
+
+    IdentifierNode *type_param = create_identifier(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    if (parser->current_token->type == TOKEN_COLON) {
+        consume(parser, TOKEN_COLON);
+        for (;;) {
+            if (parser->current_token->type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "expected trait name in type parameter bound"); // 中文：期望约束里的 trait 名
+            }
+            add_type_param_bound(
+                type_param, create_struct_type(parser->current_token->lexeme));
+            consume(parser, TOKEN_IDENTIFIER);
+            if (parser->current_token->type != TOKEN_PLUS) break;
+            consume(parser, TOKEN_PLUS);
+        }
+    }
+    return type_param;
+}
+
 // 解析顶层枚举声明，枚举成员可用可选尾逗号结束。
 static EnumNode *parse_enum(Parser *parser) {
     consume(parser, TOKEN_ENUM);
@@ -313,18 +348,8 @@ static EnumNode *parse_enum(Parser *parser) {
     if (parser->current_token->type == TOKEN_LESS_THAN) {
         consume(parser, TOKEN_LESS_THAN);
         for (;;) {
-            if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "expected generic type parameter"); // 中文：期望泛型类型参数
-            }
-            for (ASTNode *node = enum_node->type_params; node; node = node->next) {
-                if (strcmp(((IdentifierNode *)node)->name,
-                           parser->current_token->lexeme) == 0) {
-                    parser_error(parser, "duplicate generic type parameter"); // 中文：重复的泛型类型参数
-                }
-            }
             add_enum_type_param(
-                enum_node, create_identifier(parser->current_token->lexeme));
-            consume(parser, TOKEN_IDENTIFIER);
+                enum_node, parse_type_parameter(parser, enum_node->type_params));
             if (parser->current_token->type != TOKEN_COMMA) break;
             consume(parser, TOKEN_COMMA);
         }
@@ -421,18 +446,8 @@ static StructNode *parse_struct(Parser *parser) {
     if (parser->current_token->type == TOKEN_LESS_THAN) {
         consume(parser, TOKEN_LESS_THAN);
         for (;;) {
-            if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "expected generic type parameter"); // 中文：期望泛型类型参数
-            }
-            for (ASTNode *node = struct_node->type_params; node; node = node->next) {
-                if (strcmp(((IdentifierNode *)node)->name,
-                           parser->current_token->lexeme) == 0) {
-                    parser_error(parser, "duplicate generic type parameter"); // 中文：重复的泛型类型参数
-                }
-            }
             add_struct_type_param(
-                struct_node, create_identifier(parser->current_token->lexeme));
-            consume(parser, TOKEN_IDENTIFIER);
+                struct_node, parse_type_parameter(parser, struct_node->type_params));
             if (parser->current_token->type != TOKEN_COMMA) break;
             consume(parser, TOKEN_COMMA);
         }
@@ -707,22 +722,12 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     function->is_extern = is_extern;
     free(function_name);
 
-    // 解析函数名后的泛型类型参数，例如 fn identity<T, U>(...)。
+    // 解析函数名后的泛型类型参数，例如 fn identity<T, U>(...) 或 fn f<T: Show>(...)。
     if (parser->current_token->type == TOKEN_LESS_THAN) {
         consume(parser, TOKEN_LESS_THAN);
         for (;;) {
-            if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "expected generic type parameter"); // 中文：期望泛型类型参数
-            }
-            for (ASTNode *node = function->type_params; node; node = node->next) {
-                if (strcmp(((IdentifierNode *)node)->name,
-                           parser->current_token->lexeme) == 0) {
-                    parser_error(parser, "duplicate generic type parameter"); // 中文：重复的泛型类型参数
-                }
-            }
             add_type_param(
-                function, create_identifier(parser->current_token->lexeme));
-            consume(parser, TOKEN_IDENTIFIER);
+                function, parse_type_parameter(parser, function->type_params));
             if (parser->current_token->type != TOKEN_COMMA) break;
             consume(parser, TOKEN_COMMA);
         }
@@ -1446,6 +1451,137 @@ static ASTNode *parse_expression(Parser *parser) {
 }
 
 // 解析程序
+// trait 里的一个方法签名：`fn name(self, a: T) -> R;`
+// `self` 是接收者标记，不带类型标注；其余参数照常写 `name: type`。
+static TraitMethodNode *parse_trait_method(Parser *parser) {
+    consume(parser, TOKEN_FN);
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "expected method name in trait"); // 中文：期望 trait 里的方法名
+    }
+    int line = parser->current_token->line;
+    int column = parser->current_token->column;
+    TraitMethodNode *method = create_trait_method(
+        parser->current_token->lexeme, parser->lexer->filename, line, column);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    consume(parser, TOKEN_LPAREN);
+    // 方法必须有接收者：trait 约束的是「类型上能调用的方法」。
+    if (parser->current_token->type != TOKEN_IDENTIFIER ||
+        strcmp(parser->current_token->lexeme, "self") != 0) {
+        parser_error(parser, "trait method must take `self` as its first parameter"); // 中文：trait 方法第一个参数必须是 self
+    }
+    method->has_self = 1;
+    consume(parser, TOKEN_IDENTIFIER);
+
+    while (parser->current_token->type == TOKEN_COMMA) {
+        consume(parser, TOKEN_COMMA);
+        if (parser->current_token->type != TOKEN_IDENTIFIER) {
+            parser_error(parser, "expected parameter name"); // 中文：期望参数名
+        }
+        consume(parser, TOKEN_IDENTIFIER);
+        if (parser->current_token->type != TOKEN_COLON) {
+            parser_error(parser, "expected `:` after parameter name"); // 中文：参数名后期望冒号
+        }
+        consume(parser, TOKEN_COLON);
+        add_trait_method_param_type(method, parse_type(parser));
+    }
+    consume(parser, TOKEN_RPAREN);
+
+    if (parser->current_token->type == TOKEN_COLON) {
+        consume(parser, TOKEN_COLON);
+        method->return_type = parse_type(parser);
+    }
+    consume(parser, TOKEN_SEMICOLON);
+    return method;
+}
+
+// 顶层 trait 声明：`trait Name { fn m(self) -> R; ... }`
+static TraitNode *parse_trait(Parser *parser) {
+    consume(parser, TOKEN_TRAIT);
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "expected trait name"); // 中文：期望 trait 名
+    }
+    int line = parser->current_token->line;
+    int column = parser->current_token->column;
+    TraitNode *trait_node = create_trait(
+        parser->current_token->lexeme, parser->lexer->filename, line, column);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    consume(parser, TOKEN_LBRACE);
+    while (parser->current_token->type != TOKEN_RBRACE) {
+        if (parser->current_token->type != TOKEN_FN) {
+            parser_error(parser, "expected method signature in trait"); // 中文：期望 trait 里的方法签名
+        }
+        add_trait_method(trait_node, parse_trait_method(parser));
+    }
+    consume(parser, TOKEN_RBRACE);
+    return trait_node;
+}
+
+// impl 里的方法在脱糖成普通函数时，名字加上类型后缀（`show$Point`），这样多个类型实现
+// 同一个 trait 时不会撞名。Codegen 的方法匹配（method_name_matches）按第一个 `$` 切分，
+// 所以 `x.show()` 仍然能解析到它。
+static char *impl_method_name(const char *method_name, const char *type_name) {
+    size_t size = strlen(method_name) + strlen(type_name) + 2;
+    char *name = malloc(size);
+    if (!name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    snprintf(name, size, "%s$%s", method_name, type_name);
+    return name;
+}
+
+// 顶层 impl 块：`impl Trait for Type { fn m(v: Type, ...): R { ... } ... }`
+//
+// 块内的方法直接脱糖成顶层函数（改名 + 挂进 program->functions），impl 节点只记归属信息。
+static ImplNode *parse_impl(Parser *parser, ProgramNode *program) {
+    consume(parser, TOKEN_IMPL);
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "expected trait name after `impl`"); // 中文：impl 后期望 trait 名
+    }
+    int line = parser->current_token->line;
+    int column = parser->current_token->column;
+    char *trait_name = strdup(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    if (parser->current_token->type != TOKEN_FOR) {
+        parser_error(parser, "expected `for` after trait name in impl"); // 中文：impl 里 trait 名后期望 for
+    }
+    consume(parser, TOKEN_FOR);
+
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "expected type name after `for`"); // 中文：for 后期望类型名
+    }
+    char *type_name = strdup(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+    if (parser->current_token->type == TOKEN_LESS_THAN) {
+        free(trait_name);
+        free(type_name);
+        parser_error(parser, "impl for a generic type is not supported yet"); // 中文：暂不支持为泛型类型实现 trait
+    }
+
+    ImplNode *impl_node = create_impl(
+        trait_name, type_name, parser->lexer->filename, line, column);
+    free(trait_name);
+    free(type_name);
+
+    consume(parser, TOKEN_LBRACE);
+    while (parser->current_token->type != TOKEN_RBRACE) {
+        if (parser->current_token->type != TOKEN_FN) {
+            parser_error(parser, "expected method definition in impl"); // 中文：期望 impl 里的方法定义
+        }
+        FunctionNode *method = parse_function(parser, 0);
+        add_impl_method_name(impl_node, method->name);
+        char *renamed = impl_method_name(method->name, impl_node->type_name);
+        free(method->name);
+        method->name = renamed;
+        add_function(program, method);
+    }
+    consume(parser, TOKEN_RBRACE);
+    return impl_node;
+}
+
 ProgramNode *parse_program(Parser *parser) {
     ProgramNode *program = create_program();
     
@@ -1489,10 +1625,19 @@ ProgramNode *parse_program(Parser *parser) {
             FunctionNode *function = parse_function(parser, 0);
             function->is_pub = is_pub;
             add_function(program, function);
+        } else if (parser->current_token->type == TOKEN_TRAIT) {
+            TraitNode *trait_node = parse_trait(parser);
+            trait_node->is_pub = is_pub;
+            add_trait(program, trait_node);
+        } else if (parser->current_token->type == TOKEN_IMPL) {
+            if (is_pub) {
+                parser_error(parser, "`pub` cannot be applied to an impl block"); // 中文：impl 不能用 pub 修饰
+            }
+            add_impl(program, parse_impl(parser, program));
         } else if (is_pub) {
-            parser_error(parser, "`pub` must be followed by a function, constant, enum or struct declaration"); // 中文：pub 后必须是函数、常量、枚举或结构体声明
+            parser_error(parser, "`pub` must be followed by a function, constant, enum, struct or trait declaration"); // 中文：pub 后必须是函数、常量、枚举、结构体或 trait 声明
         } else {
-            parser_error(parser, "expected module import, enum declaration, struct declaration, constant declaration, or function definition"); // 中文：期望模块导入、枚举声明、结构体声明、常量声明或函数定义
+            parser_error(parser, "expected module import, enum declaration, struct declaration, constant declaration, trait declaration, impl block, or function definition"); // 中文：期望模块导入、枚举声明、结构体声明、常量声明、trait 声明、impl 块或函数定义
         }
     }
     

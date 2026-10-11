@@ -664,6 +664,29 @@ static void append_functions(ProgramNode *destination, ProgramNode *source) {
         }
         source->functions = NULL;
     }
+
+    // trait / impl 也要跟着合并：约束检查和 impl 表都在整个程序的层面做。
+    if (source->traits) {
+        if (!destination->traits) {
+            destination->traits = source->traits;
+        } else {
+            ASTNode *tail = destination->traits;
+            while (tail->next) tail = tail->next;
+            tail->next = source->traits;
+        }
+        source->traits = NULL;
+    }
+
+    if (source->impls) {
+        if (!destination->impls) {
+            destination->impls = source->impls;
+        } else {
+            ASTNode *tail = destination->impls;
+            while (tail->next) tail = tail->next;
+            tail->next = source->impls;
+        }
+        source->impls = NULL;
+    }
 }
 
 // 将模块成员名解析为内部唯一符号名，例如 math.PI -> __tap_module_0.PI。
@@ -1056,6 +1079,15 @@ static void rewrite_declared_types(LoadedModule *module, ProgramNode *program) {
     }
     for (ASTNode *node = program->constants; node; node = node->next) {
         rewrite_var_type(module, ((VarDeclNode *)node)->type);
+    }
+    // impl 的目标类型如果改过名，这里要跟着改，否则约束检查拿到的名字对不上。
+    for (ASTNode *node = program->impls; node; node = node->next) {
+        ImplNode *impl_node = (ImplNode *)node;
+        char *renamed = copy_string_or_null(resolve_type_name(module, impl_node->type_name));
+        if (renamed) {
+            free(impl_node->type_name);
+            impl_node->type_name = renamed;
+        }
     }
 }
 

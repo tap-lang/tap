@@ -370,6 +370,26 @@ void print_ast(const ProgramNode *program) {
             printf("\n");
         }
     }
+    for (ASTNode *node = program->traits; node; node = node->next) {
+        if (node->type == NODE_TRAIT) {
+            TraitNode *trait_node = (TraitNode *)node;
+            printf("  Trait: %s\n", trait_node->name);
+            for (ASTNode *method = trait_node->methods; method; method = method->next) {
+                TraitMethodNode *signature = (TraitMethodNode *)method;
+                printf("    Fn: %s(self%s)\n", signature->name,
+                       signature->param_types ? ", ..." : "");
+            }
+        }
+    }
+    for (ASTNode *node = program->impls; node; node = node->next) {
+        if (node->type == NODE_IMPL) {
+            ImplNode *impl_node = (ImplNode *)node;
+            printf("  Impl: %s for %s\n", impl_node->trait_name, impl_node->type_name);
+            for (ASTNode *name = impl_node->method_names; name; name = name->next) {
+                printf("    Fn: %s\n", ((IdentifierNode *)name)->name);
+            }
+        }
+    }
     for (ASTNode *node = program->enums; node; node = node->next) {
         if (node->type == NODE_ENUM) {
             EnumNode *enum_node = (EnumNode *)node;
@@ -485,6 +505,8 @@ ProgramNode *create_program() {
     program->structs = NULL;
     program->constants = NULL;
     program->functions = NULL;
+    program->traits = NULL;
+    program->impls = NULL;
     return program;
 }
 
@@ -655,6 +677,7 @@ IdentifierNode *create_identifier(char *name) {
     identifier->base.next = NULL;
     identifier->name = strdup(name);
     identifier->enum_type_arguments = NULL;
+    identifier->type_bounds = NULL;
     return identifier;
 }
 
@@ -1265,6 +1288,98 @@ void append_type_argument(ASTNode **list, VarTypeNode *type_argument) {
     current->next = (ASTNode *)type_argument;
 }
 
+// 把节点追加到任意 ASTNode 链表尾部。
+static void append_node(ASTNode **list, ASTNode *node) {
+    if (!*list) {
+        *list = node;
+        return;
+    }
+    ASTNode *current = *list;
+    while (current->next) current = current->next;
+    current->next = node;
+}
+
+// ---- trait / impl ----
+
+TraitMethodNode *create_trait_method(
+    const char *name, const char *filename, int line, int column) {
+    TraitMethodNode *method = (TraitMethodNode *)malloc(sizeof(TraitMethodNode));
+    if (!method) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    method->base.type = NODE_TRAIT_METHOD;
+    method->base.next = NULL;
+    method->name = strdup(name);
+    method->has_self = 0;
+    method->param_types = NULL;
+    method->return_type = NULL;
+    method->filename = strdup(filename);
+    method->line = line;
+    method->column = column;
+    return method;
+}
+
+TraitNode *create_trait(const char *name, const char *filename, int line, int column) {
+    TraitNode *trait_node = (TraitNode *)malloc(sizeof(TraitNode));
+    if (!trait_node) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    trait_node->base.type = NODE_TRAIT;
+    trait_node->base.next = NULL;
+    trait_node->name = strdup(name);
+    trait_node->methods = NULL;
+    trait_node->is_pub = 0;
+    trait_node->filename = strdup(filename);
+    trait_node->line = line;
+    trait_node->column = column;
+    return trait_node;
+}
+
+ImplNode *create_impl(
+    const char *trait_name, const char *type_name,
+    const char *filename, int line, int column) {
+    ImplNode *impl_node = (ImplNode *)malloc(sizeof(ImplNode));
+    if (!impl_node) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    impl_node->base.type = NODE_IMPL;
+    impl_node->base.next = NULL;
+    impl_node->trait_name = strdup(trait_name);
+    impl_node->type_name = strdup(type_name);
+    impl_node->method_names = NULL;
+    impl_node->filename = strdup(filename);
+    impl_node->line = line;
+    impl_node->column = column;
+    return impl_node;
+}
+
+void add_trait(ProgramNode *program, TraitNode *trait_node) {
+    append_node(&program->traits, (ASTNode *)trait_node);
+}
+
+void add_impl(ProgramNode *program, ImplNode *impl_node) {
+    append_node(&program->impls, (ASTNode *)impl_node);
+}
+
+void add_trait_method(TraitNode *trait_node, TraitMethodNode *method) {
+    append_node(&trait_node->methods, (ASTNode *)method);
+}
+
+void add_trait_method_param_type(TraitMethodNode *method, VarTypeNode *type) {
+    append_type_argument(&method->param_types, type);
+}
+
+void add_impl_method_name(ImplNode *impl_node, const char *name) {
+    append_node(&impl_node->method_names, (ASTNode *)create_identifier((char *)name));
+}
+
+void add_type_param_bound(IdentifierNode *type_param, VarTypeNode *bound) {
+    append_type_argument(&type_param->type_bounds, bound);
+}
+
 // 创建条件语句节点
 IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, ASTNode *alternative) {
     IfStatementNode *if_node = (IfStatementNode *)malloc(sizeof(IfStatementNode));
@@ -1331,6 +1446,8 @@ void free_ast(ASTNode *node) {
             free_ast(program->structs);
             free_ast(program->constants);
             free_ast(program->functions);
+            free_ast(program->traits);
+            free_ast(program->impls);
             break;
         }
         case NODE_IMPORT: {
@@ -1377,6 +1494,29 @@ void free_ast(ASTNode *node) {
             free(try_node->filename);
             break;
         }
+        case NODE_TRAIT: {
+            TraitNode *trait_node = (TraitNode *)node;
+            free(trait_node->name);
+            free_ast(trait_node->methods);
+            free(trait_node->filename);
+            break;
+        }
+        case NODE_TRAIT_METHOD: {
+            TraitMethodNode *method = (TraitMethodNode *)node;
+            free(method->name);
+            free_ast(method->param_types);
+            free_ast((ASTNode *)method->return_type);
+            free(method->filename);
+            break;
+        }
+        case NODE_IMPL: {
+            ImplNode *impl_node = (ImplNode *)node;
+            free(impl_node->trait_name);
+            free(impl_node->type_name);
+            free_ast(impl_node->method_names);
+            free(impl_node->filename);
+            break;
+        }
         case NODE_MATCH_ARM: {
             MatchArmNode *arm = (MatchArmNode *)node;
             free(arm->enum_name);
@@ -1418,6 +1558,7 @@ void free_ast(ASTNode *node) {
             IdentifierNode *identifier = (IdentifierNode *)node;
             free(identifier->name);
             free_ast(identifier->enum_type_arguments);
+            free_ast(identifier->type_bounds);
             break;
         }
         case NODE_LITERAL: {
