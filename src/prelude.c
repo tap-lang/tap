@@ -49,11 +49,17 @@ static char *compiler_directory(const char *compiler_path) {
     char resolved[PRELUDE_PATH_MAX];
     const char *path = compiler_path;
 
+    // 优先问操作系统要可执行文件位置：靠 PATH 调用时 argv[0] 只是裸名字，
+    // realpath 解析不出来，装到 <prefix>/bin 之后就找不到 ../share/tap/std。
+    if (tap_executable_path(resolved, sizeof(resolved))) {
+        path = resolved;
+    } else {
 #ifdef _WIN32
-    if (_fullpath(resolved, compiler_path, PRELUDE_PATH_MAX)) path = resolved;
+        if (_fullpath(resolved, compiler_path, PRELUDE_PATH_MAX)) path = resolved;
 #else
-    if (realpath(compiler_path, resolved)) path = resolved;
+        if (realpath(compiler_path, resolved)) path = resolved;
 #endif
+    }
 
     const char *slash = strrchr(path, '/');
 #ifdef _WIN32

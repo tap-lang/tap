@@ -1,9 +1,48 @@
 #include "helpers.h"
 
+#include <limits.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
+
+// 取当前可执行文件的绝对路径，成功返回 1。
+//
+// 不能用 argv[0]：靠 PATH 调用时它只是裸文件名，realpath 解析不出来，
+// 装到 <prefix>/bin 之后编译器就找不到 <prefix>/share/tap/std。
+// 只有问操作系统才知道真实位置。
+int tap_executable_path(char *buffer, size_t size) {
+    if (!buffer || size == 0) return 0;
+#ifdef _WIN32
+    DWORD length = GetModuleFileNameA(NULL, buffer, (DWORD)size);
+    if (length == 0 || (size_t)length >= size) return 0;
+    return 1;
+#elif defined(__APPLE__)
+    uint32_t capacity = (uint32_t)size;
+    if (_NSGetExecutablePath(buffer, &capacity) != 0) return 0;
+    // 这里可能给出相对路径或带 .. 的路径，再解析一次。
+    char resolved[PATH_MAX];
+    if (realpath(buffer, resolved)) {
+        snprintf(buffer, size, "%s", resolved);
+    }
+    return 1;
+#else
+    // Linux 和 Cygwin 都有 /proc/self/exe。
+    ssize_t length = readlink("/proc/self/exe", buffer, size - 1);
+    if (length <= 0 || (size_t)length >= size - 1) return 0;
+    buffer[length] = '\0';
+    return 1;
+#endif
+}
 
 char *get_basename_no_ext(const char *input_file) {
     const char *filename = input_file;

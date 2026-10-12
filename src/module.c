@@ -128,6 +128,13 @@ static char *canonical_path(const char *path) {
 }
 
 static char *compiler_directory(const char *compiler_path) {
+    // 优先问操作系统要可执行文件位置：靠 PATH 调用时 argv[0] 只是裸名字，
+    // canonical_path 解析不出来，装好的编译器就找不到 ../share/tap/std。
+    char executable[MODULE_PATH_MAX];
+    if (tap_executable_path(executable, sizeof(executable))) {
+        return path_directory(executable);
+    }
+
     char *resolved = canonical_path(compiler_path);
     const char *path = resolved ? resolved : compiler_path;
     char *directory = path_directory(path);

@@ -44,6 +44,38 @@ cmake --build .
 
 版本号由 C 生成器 `src/scripts/get_version.c` 从 git 生成 `src/version.h`。
 
+## 安装
+
+两种构建方式都支持 `install`，装出来的布局一致：
+
+```bash
+make install                    # 默认装到 /usr/local，可能需要 sudo
+make install PREFIX=$HOME/.local  # 装到不需要权限的位置
+```
+
+CMake 构建则用 `cmake --install build`（可配 `--prefix`）。
+
+装出来的结构：
+
+```text
+<prefix>/bin/tap                       编译器
+<prefix>/lib/libtap_runtime.a          原生可执行文件链接的静态 Runtime
+<prefix>/lib/libtap_runtime.{dylib,so} fast 模式给 lli 加载的共享 Runtime
+<prefix>/include/tap/tap_runtime.h     Runtime 头文件
+<prefix>/share/tap/std/*.tp            标准库
+```
+
+**这个布局不是随便定的**：编译器按「可执行文件所在目录 → `../lib`」找 Runtime，按
+「当前目录的 `std` → `../std` → `../share/tap/std`」找标准库。装完直接就能用，
+不需要设置 `TAP_STD_PATH` 或 `TAP_RUNTIME_PATH`。
+
+`make uninstall` 只删 `install` 放进去的文件，不会动 `<prefix>` 下的其他内容。
+打包做阶段性安装时用 `DESTDIR`：
+
+```bash
+make install DESTDIR=/tmp/stage PREFIX=/usr
+```
+
 ## 用法
 
 ```text
