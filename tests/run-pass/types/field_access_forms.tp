@@ -1,0 +1,47 @@
+// 表达式接收者的字段访问：`接收者.字段`，接收者可以是索引、函数调用结果，也可以是
+// 另一个字段访问（多级）。
+//
+// 标识符接收者的一层访问（`a.b`）走的是 IdentifierNode 的名字拼接老路；这个用例覆盖
+// FieldAccessNode 那条路径（接收者不是标识符，或者点多于一个）。
+
+struct Inner { v: i32 }
+struct Outer { inner: Inner }
+struct Point { x: i32 }
+struct Line { a: Point, b: Point }
+
+fn make_point(x: i32): Point {
+    return Point { x: x };
+}
+
+fn main(): i32 {
+    // 一、多级字段。
+    let o: Outer = Outer { inner: Inner { v: 9 } };
+    print("%d\n", o.inner.v);
+
+    // 二、索引结果取字段。
+    let points: [Point; 2] = [Point { x: 1 }, Point { x: 2 }];
+    print("%d\n", points[1].x);
+
+    // 三、函数返回值取字段。
+    print("%d\n", make_point(8).x);
+
+    // 四、索引 + 多级混合。
+    let lines: [Line; 2] = [Line { a: Point { x: 1 }, b: Point { x: 2 } }, Line { a: Point { x: 3 }, b: Point { x: 4 } }];
+    print("%d\n", lines[1].a.x);
+
+    // 五、作为运算的操作数。
+    print("%d\n", points[0].x + make_point(10).x);
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+9
+2
+8
+3
+11
+- .exit
+0
+-- */

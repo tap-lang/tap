@@ -1233,46 +1233,64 @@ static ASTNode *parse_factor(Parser *parser) {
         }
 
         // 标识符接收者会在 parse_primary 中解析为限定调用（例如 s.len()）。
-        // 此处处理字符串字面量、数组元素和函数返回值的内建方法。
+        // 此处处理字符串字面量、数组元素和函数返回值：后面跟 `(` 的字符串内建方法走内建路径，
+        // 其余 `.成员` 一律当字段访问（`arr[0].x`、`make().x`、`a.b.c`）。
         if (parser->current_token->type == TOKEN_DOT) {
             int line = parser->current_token->line;
             int column = parser->current_token->column;
             consume(parser, TOKEN_DOT);
             if (parser->current_token->type != TOKEN_IDENTIFIER) {
                 free_ast(expression);
-                parser_error(parser, "expected string method name");
+                parser_error(parser, "expected member name after `.`");
             }
-            const char *method_name = parser->current_token->lexeme;
+            char *member_name = strdup(parser->current_token->lexeme);
+            consume(parser, TOKEN_IDENTIFIER);
+
             const char *internal_name = NULL;
-            if (strcmp(method_name, "len") == 0) {
+            if (strcmp(member_name, "len") == 0) {
                 internal_name = "__tap_builtin_string_len";
-            } else if (strcmp(method_name, "byte_at") == 0) {
+            } else if (strcmp(member_name, "byte_at") == 0) {
                 internal_name = "__tap_builtin_string_byte_at";
-            } else if (strcmp(method_name, "slice") == 0) {
+            } else if (strcmp(member_name, "slice") == 0) {
                 internal_name = "__tap_builtin_string_slice";
-            } else {
+            }
+
+            if (internal_name && parser->current_token->type == TOKEN_LPAREN) {
+                consume(parser, TOKEN_LPAREN);
+                // 将接收者作为第一个内部参数保存。
+                FunctionCallNode *call = create_function_call(internal_name);
+                call->filename = strdup(parser->lexer->filename);
+                call->line = line;
+                call->column = column;
+                add_argument(call, expression);
+                if (parser->current_token->type != TOKEN_RPAREN) {
+                    add_argument(call, parse_expression(parser));
+                }
+                while (parser->current_token->type == TOKEN_COMMA) {
+                    consume(parser, TOKEN_COMMA);
+                    add_argument(call, parse_expression(parser));
+                }
+                consume(parser, TOKEN_RPAREN);
+                free(member_name);
+                expression = (ASTNode *)call;
+                continue;
+            }
+
+            // 在表达式结果上调用方法还不支持（这里只认字符串内建方法）。
+            if (parser->current_token->type == TOKEN_LPAREN) {
+                free(member_name);
                 free_ast(expression);
                 parser_error(parser,
-                    "only string methods 'len', 'byte_at', and 'slice' are supported");
+                    "calling a method on an expression result is not supported; "
+                    "bind the value to a variable first");
             }
-            consume(parser, TOKEN_IDENTIFIER);
-            consume(parser, TOKEN_LPAREN);
 
-            // 将接收者作为第一个内部参数保存。
-            FunctionCallNode *call = create_function_call(internal_name);
-            call->filename = strdup(parser->lexer->filename);
-            call->line = line;
-            call->column = column;
-            add_argument(call, expression);
-            if (parser->current_token->type != TOKEN_RPAREN) {
-                add_argument(call, parse_expression(parser));
-            }
-            while (parser->current_token->type == TOKEN_COMMA) {
-                consume(parser, TOKEN_COMMA);
-                add_argument(call, parse_expression(parser));
-            }
-            consume(parser, TOKEN_RPAREN);
-            expression = (ASTNode *)call;
+            FieldAccessNode *access = create_field_access(expression, member_name);
+            access->filename = strdup(parser->lexer->filename);
+            access->line = line;
+            access->column = column;
+            free(member_name);
+            expression = (ASTNode *)access;
             continue;
         }
 

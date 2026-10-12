@@ -70,6 +70,7 @@ typedef struct ASTNode {
 | `NODE_TRAIT` | `TraitNode` | trait 名、方法签名链表和 `is_pub` |
 | `NODE_TRAIT_METHOD` | `TraitMethodNode` | 方法名、`has_self` 接收者标记、除接收者外的参数类型链表和返回类型 |
 | `NODE_IMPL` | `ImplNode` | 实现的 trait 名、目标类型名，以及块内方法的引用链表（`ImplMethodLink`，指向脱糖后的 `FunctionNode`）；块内方法在解析时就被改名成 `<方法名>$<类型名>` 并挂进 `ProgramNode.functions` |
+| `NODE_FIELD_ACCESS` | `FieldAccessNode` | `接收者.字段名`，`object` 是任意表达式；只用于**读取**字段。标识符接收者的一层访问（`a.b`）仍走 `IdentifierNode` 的名字拼接，这个节点表示接收者不是标识符（`arr[0].x` / `make().x`）或多于一层（`a.b.c`）的情况 |
 | `NODE_VAR_TYPE` | `VarTypeNode` | 标量、结构体、枚举和泛型类型实参，或通过 `element_type` 递归表示固定长度数组和指针 |
 
 `NODE_STATEMENT` 和 `NODE_EXPRESSION` 当前只是枚举占位项，没有对应的结构体、构造函数或

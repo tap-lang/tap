@@ -164,6 +164,13 @@ static void dump_expr(ASTNode *n, int depth) {
         dump_expr(index->index, depth + 2);
         break;
     }
+    case NODE_FIELD_ACCESS: {
+        FieldAccessNode *access = (FieldAccessNode *)n;
+        print_indent(depth);
+        printf("FieldAccess: .%s\n", access->field);
+        dump_expr(access->object, depth + 2);
+        break;
+    }
     case NODE_FUNCTION_CALL: {
         FunctionCallNode *fc = (FunctionCallNode *)n;
         print_indent(depth);
@@ -957,6 +964,19 @@ IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index) {
     return expression;
 }
 
+FieldAccessNode *create_field_access(ASTNode *object, const char *field) {
+    FieldAccessNode *access =
+        (FieldAccessNode *)calloc(1, sizeof(FieldAccessNode));
+    if (!access) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    access->base.type = NODE_FIELD_ACCESS;
+    access->object = object;
+    access->field = strdup(field);
+    return access;
+}
+
 IndexAssignmentNode *create_index_assignment(
     IndexExpressionNode *target, ASTNode *expression) {
     IndexAssignmentNode *assignment =
@@ -1631,6 +1651,13 @@ void free_ast(ASTNode *node) {
             IndexExpressionNode *index = (IndexExpressionNode *)node;
             free_ast(index->array);
             free_ast(index->index);
+            break;
+        }
+        case NODE_FIELD_ACCESS: {
+            FieldAccessNode *access = (FieldAccessNode *)node;
+            free_ast(access->object);
+            free(access->field);
+            free(access->filename);
             break;
         }
         case NODE_INDEX_ASSIGNMENT: {

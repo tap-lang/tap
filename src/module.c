@@ -1422,6 +1422,11 @@ static int rewrite_expression(
                 ? rewrite_expression(program, index->index, current_module, bindings)
                 : result;
         }
+        case NODE_FIELD_ACCESS:
+            // `接收者.字段`：接收者里可能藏着模块限定名（`mod.make().x`），要递归改写。
+            return rewrite_expression(
+                program, ((FieldAccessNode *)expression)->object,
+                current_module, bindings);
         case NODE_IDENTIFIER: {
             IdentifierNode *identifier = (IdentifierNode *)expression;
             char *dot = strchr(identifier->name, '.');

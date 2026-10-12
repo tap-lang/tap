@@ -59,6 +59,15 @@ fn main(): i32 {
     let chained = identity(p.shift(1));
     print("%d\n", chained.x);
 
+    // 十、数组字面量从元素反推类型。
+    let squares = [4, 5, 6];
+    print("%d\n", squares[2]);
+
+    // 十一、元素是结构体字面量时同样能推（元素类型由第一个元素决定）。
+    let points = [Point { x: 1 }, Point { x: 2 }];
+    let second = points[1];
+    print("%d\n", second.x);
+
     return 0;
 }
 
@@ -73,6 +82,8 @@ fn main(): i32 {
 10
 7
 4
+6
+2
 - .exit
 0
 -- */

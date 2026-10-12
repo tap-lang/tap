@@ -135,23 +135,31 @@ static StructFieldNode *find_field(StructNode *struct_node, const char *name) {
     return NULL;
 }
 
-// 判断名称是否是当前泛型函数的类型参数。
-static int is_type_parameter(FunctionNode *function, const char *name) {
-    for (ASTNode *node = function ? function->type_params : NULL;
-         node; node = node->next) {
+// 判断名称是否在给定的类型参数列表里。
+static int has_type_parameter(ASTNode *type_params, const char *name) {
+    for (ASTNode *node = type_params; node; node = node->next) {
         if (strcmp(((IdentifierNode *)node)->name, name) == 0) return 1;
     }
     return 0;
 }
 
-// 判断类型节点是否直接表示泛型类型参数。
-static const char *type_parameter_name(
-    FunctionNode *function, const VarTypeNode *type) {
+// 判断类型节点是否直接表示类型参数（按给定的类型参数列表判断）。
+//
+// 泛型函数和泛型结构体用的是同一套类型参数机制，所以这一层收在「类型参数列表」上，
+// 两边共用 —— 泛型结构体字面量的类型实参推断就是靠它复用 unify_type 的。
+static const char *type_parameter_name_in(
+    ASTNode *type_params, const VarTypeNode *type) {
     if (!type || type->is_pointer || type->is_array || type->struct_name ||
         !type->enum_name) {
         return NULL;
     }
-    return is_type_parameter(function, type->enum_name) ? type->enum_name : NULL;
+    return has_type_parameter(type_params, type->enum_name) ? type->enum_name : NULL;
+}
+
+// 判断类型节点是否直接表示当前泛型函数的类型参数。
+static const char *type_parameter_name(
+    FunctionNode *function, const VarTypeNode *type) {
+    return type_parameter_name_in(function ? function->type_params : NULL, type);
 }
 
 // 在泛型类型绑定中按名称查找具体类型。
@@ -209,12 +217,14 @@ static void free_bindings(TypeBinding *bindings) {
     }
 }
 
-// 将形参类型与实际类型递归统一并收集泛型绑定。
-static int unify_type(FunctionNode *function, const VarTypeNode *pattern,
-                      const VarTypeNode *actual, TypeBinding **bindings,
-                      int only_unbound) {
+// 用给定的类型参数列表把形参类型与实际类型递归统一并收集泛型绑定。
+//
+// 泛型函数和泛型结构体共用这一份实现（`type_params` 就是各自的类型参数链表）。
+static int unify_type_params(ASTNode *type_params, const VarTypeNode *pattern,
+                             const VarTypeNode *actual, TypeBinding **bindings,
+                             int only_unbound) {
     if (!pattern || !actual) return 0;
-    const char *parameter = type_parameter_name(function, pattern);
+    const char *parameter = type_parameter_name_in(type_params, pattern);
     if (parameter) {
         TypeBinding *existing = find_binding(*bindings, parameter);
         if (only_unbound && existing) return 1;
@@ -225,13 +235,13 @@ static int unify_type(FunctionNode *function, const VarTypeNode *pattern,
         return 0;
     }
     if (pattern->is_pointer) {
-        return unify_type(function, pattern->element_type, actual->element_type,
-                          bindings, only_unbound);
+        return unify_type_params(type_params, pattern->element_type,
+                                 actual->element_type, bindings, only_unbound);
     }
     if (pattern->is_array) {
         return pattern->array_length == actual->array_length &&
-               unify_type(function, pattern->element_type, actual->element_type,
-                          bindings, only_unbound);
+               unify_type_params(type_params, pattern->element_type,
+                                 actual->element_type, bindings, only_unbound);
     }
     const char *pattern_name = pattern->struct_name
         ? pattern->struct_name : pattern->enum_name;
@@ -250,9 +260,9 @@ static int unify_type(FunctionNode *function, const VarTypeNode *pattern,
         ASTNode *pattern_argument = pattern->type_arguments;
         ASTNode *actual_argument = actual->type_arguments;
         while (pattern_argument && actual_argument) {
-            if (!unify_type(function, (VarTypeNode *)pattern_argument,
-                            (VarTypeNode *)actual_argument, bindings,
-                            only_unbound)) return 0;
+            if (!unify_type_params(type_params, (VarTypeNode *)pattern_argument,
+                                   (VarTypeNode *)actual_argument, bindings,
+                                   only_unbound)) return 0;
             pattern_argument = pattern_argument->next;
             actual_argument = actual_argument->next;
         }
@@ -260,6 +270,14 @@ static int unify_type(FunctionNode *function, const VarTypeNode *pattern,
     }
     // 不含类型参数的具体类型仍交给现有类型检查器处理转换和诊断。
     return 1;
+}
+
+// 泛型函数版本：类型参数来自函数的 type_params。
+static int unify_type(FunctionNode *function, const VarTypeNode *pattern,
+                      const VarTypeNode *actual, TypeBinding **bindings,
+                      int only_unbound) {
+    return unify_type_params(function ? function->type_params : NULL,
+                             pattern, actual, bindings, only_unbound);
 }
 
 // 使用泛型绑定复制并替换类型节点中的类型参数。
@@ -366,6 +384,16 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
             return (ASTNode *)create_index_expression(
                 clone_expression(index->array, template, bindings),
                 clone_expression(index->index, template, bindings));
+        }
+        case NODE_FIELD_ACCESS: {
+            FieldAccessNode *access = (FieldAccessNode *)source;
+            FieldAccessNode *copy = create_field_access(
+                clone_expression(access->object, template, bindings),
+                access->field);
+            copy->filename = access->filename ? strdup(access->filename) : NULL;
+            copy->line = access->line;
+            copy->column = access->column;
+            return (ASTNode *)copy;
         }
         case NODE_TRY: {
             TryNode *try_node = (TryNode *)source;
@@ -801,6 +829,10 @@ static void materialize_expression(GenericContext *context, ASTNode *expression)
             materialize_expression(context, node->index);
             break;
         }
+        case NODE_FIELD_ACCESS:
+            materialize_expression(
+                context, ((FieldAccessNode *)expression)->object);
+            break;
         case NODE_TRY:
             materialize_expression(context, ((TryNode *)expression)->inner);
             break;
@@ -1563,6 +1595,55 @@ static FunctionNode *find_non_generic_method(
     return NULL;
 }
 
+// 泛型结构体字面量没写类型实参时，用字段值反推。
+//
+// `Box { value: 42 }` 里 `value` 的声明类型是 `T`、初始化表达式是 i32，unify 得到 T = i32；
+// 结果写回 literal->type_arguments，和显式写 `Box<i32> { value: 42 }` 完全等价。
+// 推不出来的类型参数不写 —— Codegen 会照常报「requires type arguments」。
+static void infer_struct_literal_arguments(
+    GenericContext *context, StructNode *struct_node, StructLiteralNode *literal) {
+    TypeBinding *bindings = NULL;
+    for (ASTNode *node = literal->fields; node; node = node->next) {
+        StructInitFieldNode *field = (StructInitFieldNode *)node;
+        StructFieldNode *definition = find_field(struct_node, field->name);
+        if (!definition) continue;
+        VarTypeNode *actual = process_expression(
+            context, field->expression, definition->field_type);
+        if (actual) {
+            unify_type_params(struct_node->type_params, definition->field_type,
+                              actual, &bindings, 0);
+        }
+        free_ast((ASTNode *)actual);
+    }
+    for (ASTNode *node = struct_node->type_params; node; node = node->next) {
+        const char *name = ((IdentifierNode *)node)->name;
+        TypeBinding *binding = find_binding(bindings, name);
+        if (!binding) continue;
+        add_struct_literal_type_argument(literal, clone_type(binding->type));
+    }
+    free_bindings(bindings);
+}
+
+// 无目标类型时从元素反推数组类型（`[1, 2, 3]` → `[i32; 3]`）。
+//
+// 元素类型取第一个元素的完整类型，其余元素按它逐项处理 —— 结构体字面量、泛型调用这些
+// 需要目标类型的东西就靠这一步拿到类型。空数组推不出来，返回 NULL。
+static VarTypeNode *infer_array_literal_type(
+    GenericContext *context, ArrayLiteralNode *array) {
+    if (!array->elements) return NULL;
+
+    VarTypeNode *element_type = process_expression(context, array->elements, NULL);
+    if (!element_type) return NULL;
+
+    for (ASTNode *element = array->elements->next; element; element = element->next) {
+        VarTypeNode *ignored = process_expression(context, element, element_type);
+        free_ast((ASTNode *)ignored);
+    }
+    // 长度和 Codegen 用同一套口径：`[v; N]` 取重复次数，其余取元素个数。
+    uint64_t length = array->is_repeat ? array->repeat_count : array->count;
+    return create_array_type(element_type, length);
+}
+
 static VarTypeNode *process_call(GenericContext *context,
                                  FunctionCallNode *call,
                                  const VarTypeNode *expected) {
@@ -1604,6 +1685,12 @@ static VarTypeNode *process_call(GenericContext *context,
 }
 
 // 递归处理表达式，完成泛型调用改写并推断结果类型。
+//
+// **注意：这里和 Codegen 的 `expression_type` / `infer_expression_var_type` 是两份并行的
+// 推断实现。** 单态化按这里的结论挑实例，Codegen 按那边的结论生成代码 —— 同一个表达式
+// 两边必须给出一致的类型，否则**不报错，而是静默选错单态化实例**（2026-10-11 修过一次：
+// 非泛型方法调用在这边落到默认 i32，那边推出来是真实的 Point，于是 `identity(q)` 被单态化
+// 成 i32 版本）。改动任一侧的覆盖范围时，务必同步另一侧。
 static VarTypeNode *process_expression(GenericContext *context,
                                        ASTNode *expression,
                                        const VarTypeNode *expected) {
@@ -1619,6 +1706,23 @@ static VarTypeNode *process_expression(GenericContext *context,
                 context, (FunctionCallNode *)expression, expected);
         case NODE_INDEX_EXPRESSION:
             return index_type(context, (IndexExpressionNode *)expression);
+        case NODE_FIELD_ACCESS: {
+            // `接收者.字段`：先推接收者的类型，再按名字查字段。
+            FieldAccessNode *access = (FieldAccessNode *)expression;
+            VarTypeNode *object_type = process_expression(
+                context, access->object, NULL);
+            VarTypeNode *result = NULL;
+            if (object_type && object_type->struct_name) {
+                StructNode *struct_node =
+                    find_struct(context->program, object_type->struct_name);
+                StructFieldNode *field = struct_node
+                    ? find_field(struct_node, access->field)
+                    : NULL;
+                if (field) result = clone_type(field->field_type);
+            }
+            free_ast((ASTNode *)object_type);
+            return result;
+        }
         case NODE_TRY: {
             // 内层按它自己的签名推断，不要把 `?` 的目标类型传下去：内层是 Result<T, string>，
             // 而目标类型是 T，硬统一会失败。
@@ -1648,12 +1752,17 @@ static VarTypeNode *process_expression(GenericContext *context,
         }
         case NODE_ARRAY_LITERAL: {
             ArrayLiteralNode *array = (ArrayLiteralNode *)expression;
-            for (ASTNode *element = array->elements; element; element = element->next) {
-                VarTypeNode *ignored = process_expression(
-                    context, element, expected ? expected->element_type : NULL);
-                free_ast((ASTNode *)ignored);
+            // 有目标类型时按元素类型逐项处理；没有就从元素反推（`[1, 2, 3]` → [i32; 3]）。
+            if (expected) {
+                for (ASTNode *element = array->elements; element;
+                     element = element->next) {
+                    VarTypeNode *ignored = process_expression(
+                        context, element, expected->element_type);
+                    free_ast((ASTNode *)ignored);
+                }
+                return clone_type(expected);
             }
-            return expected ? clone_type(expected) : NULL;
+            return infer_array_literal_type(context, array);
         }
         case NODE_STRUCT_LITERAL: {
             StructLiteralNode *literal = (StructLiteralNode *)expression;
@@ -1667,7 +1776,12 @@ static VarTypeNode *process_expression(GenericContext *context,
                     definition ? definition->field_type : NULL);
                 free_ast((ASTNode *)ignored);
             }
-            VarTypeNode *type = create_enum_type(literal->struct_name);
+            // 泛型结构体没写类型实参时从字段值反推（`Box { value: 42 }` → Box<i32>），
+            // 写回 literal->type_arguments，后面的物化阶段就能按实例化后的类型改名。
+            if (struct_node && struct_node->type_params && !literal->type_arguments) {
+                infer_struct_literal_arguments(context, struct_node, literal);
+            }
+            VarTypeNode *type = create_struct_type(literal->struct_name);
             for (ASTNode *argument = literal->type_arguments; argument;
                  argument = argument->next) {
                 add_var_type_argument(type, clone_type((VarTypeNode *)argument));

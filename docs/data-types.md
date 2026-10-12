@@ -76,21 +76,32 @@ let point = make_point(1);      // 推断成 Point（结构体）
 ```
 
 推断覆盖右值表达式能确定的高层类型——结构体、枚举、指针、数组；函数返回值（含方法调用）、
-结构体字面量、数组元素和跨模块的 pub 类型都能推出来：
+结构体字面量、数组字面量、数组元素和跨模块的 pub 类型都能推出来：
 
 ```text
 let origin = make_point(0);            // Point
 let copy = origin;                     // 结构体拷贝，类型同样是 Point
 let rect = geometry.make_rect(3, 4);   // 跨模块返回的 pub 结构体
-let numbers: [i32; 3] = [1, 2, 3];
+let numbers = [1, 2, 3];               // [i32; 3]，元素类型由第一个元素决定
+let points = [make_point(0), make_point(1)];   // [Point; 2]
 let alias = numbers;                   // 数组拷贝
 ```
 
-标量同样能推断（`let x = 42;` 是 `i32`）。只有两类情况必须写标注，因为编译器拿不到目标类型：
+**泛型结构体字面量**能从字段值反推类型实参，和显式写出等价：
+
+```text
+struct Box<T> { value: T }
+
+let number = Box { value: 42 };                 // Box<i32>
+let nested = Box { value: Box { value: 9 } };   // Box<Box<i32>>
+```
+
+标量同样能推断（`let x = 42;` 是 `i32`）。这几处必须写标注，因为编译器拿不到目标类型：
 
 - **`match` 表达式和 `?` 传播**：`let value: i32 = match (...) { ... };`
 - **泛型枚举构造**：`let x: Option<i32> = Option.Some(42);` —— 写成
-  `let x = Option<i32>.Some(42);` 会报 `generic enum construction needs a type annotation`。
+  `let x = Option<i32>.Some(42);` 会报 `generic enum construction needs a type annotation`
+- **空数组**：`let values = [];` 没有元素可以反推元素类型，仍然要写 `[T; N]`。
 
 ### 浮点数类型
 | 类型 | 描述 |
@@ -191,7 +202,11 @@ let number: Box<i32> = Box<i32> { value: 42 };
 - 结构体字面量使用 `TypeName { field: value, ... }`。
 - 初始化时必须提供所有字段，字段名不能重复，也不能写不存在的字段。
 - 可对非 `const` 结构体变量的字段赋值，例如 `point.x = 10;`。
-- 泛型结构体必须提供全部类型实参；编译器按实际使用的类型组合生成具体结构体。
+- 字段访问的接收者可以是任意表达式：变量、索引（`points[0].x`）、函数返回值（`make().x`），
+  也可以连续取（`outer.inner.v`）。在表达式结果上**调用方法**还不支持（`make().shift(1)` 报
+  `calling a method on an expression result is not supported`），要先绑到变量。
+- 泛型结构体的类型实参能从字段值反推（`Box { value: 42 }` 就是 `Box<i32>`），也可以显式写出；
+  编译器按实际使用的类型组合生成具体结构体。
 - 当前不支持结构体内声明方法和默认字段值。模块级函数可以用结构体作为首个参数，之后通过
   `value.method(...)` 调用。模块中的结构体可以被导入，但类型名会进入全局类型命名空间，
   还不支持 `module.TypeName` 这种限定类型名。
@@ -393,7 +408,11 @@ matrix[1][0] = 40;
 print("%d\n", matrix[1][0]);
 ```
 
-- 数组必须显式声明每层元素类型和长度，嵌套字面量的每一层必须与声明形状一致。`[value; N]` 可用于将同一个值重复初始化为长度为 `N` 的数组。
+- 数组字面量能推断时不必写标注：`let values = [10, 20, 30, 40];` 推成 `[i32; 4]`，元素类型
+  由第一个元素决定（可以是结构体字面量或泛型调用的结果）。**空数组**没有元素可推，仍然要写
+  每层元素类型和长度。`[value; N]` 可用于将同一个值重复初始化为长度为 `N` 的数组。
+- 嵌套字面量的每一层必须与声明形状一致；显式写出类型时逐层标注，例如
+  `let matrix: [[i32; 3]; 2] = [[1, 2, 3], [4, 5, 6]];`。
 - 下标可以是最多 64 位的整数表达式，每一维都会在运行时检查上下界。
 - 多维数组只有索引到最终标量元素后才能用于表达式或赋值。
 - 当前不支持整个数组或子数组赋值、数组参数和动态长度。函数可以返回固定长度数组，

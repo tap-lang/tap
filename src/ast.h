@@ -41,7 +41,8 @@ enum NodeType {
     NODE_VAR_TYPE,                  // 数据类型节点
     NODE_TRAIT,                     // trait 接口声明节点
     NODE_TRAIT_METHOD,              // trait 方法签名节点
-    NODE_IMPL                       // impl 接口实现节点
+    NODE_IMPL,                      // impl 接口实现节点
+    NODE_FIELD_ACCESS               // 字段访问表达式（接收者是任意表达式）
 };
 
 // 字面量类型
@@ -289,6 +290,20 @@ typedef struct {
     ASTNode *index;
 } IndexExpressionNode;
 
+// 字段访问表达式：`接收者.字段名`，接收者是任意表达式。
+//
+// 标识符接收者且只有一层（`a.b`）仍然走 IdentifierNode 的名字拼接老路；这个节点表示
+// 「接收者不是标识符」或「多于一层」的情况，例如 `arr[0].x`、`make().x`、`a.b.c`。
+// 它只用于**读取**字段；`表达式.方法()` 形式的调用还不支持。
+typedef struct {
+    ASTNode base;
+    ASTNode *object;       // 接收者表达式
+    char *field;           // 字段名
+    char *filename;
+    int line;
+    int column;
+} FieldAccessNode;
+
 typedef struct {
     ASTNode base;
     IndexExpressionNode *target;
@@ -421,6 +436,8 @@ ArrayLiteralNode *create_array_literal(void);
 void add_array_element(ArrayLiteralNode *array, ASTNode *element);
 void set_array_repeat(ArrayLiteralNode *array, uint64_t repeat_count);
 IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index);
+// 字段访问接管 object 的所有权。
+FieldAccessNode *create_field_access(ASTNode *object, const char *field);
 IndexAssignmentNode *create_index_assignment(
     IndexExpressionNode *target, ASTNode *expression);
 FunctionCallNode *create_function_call(const char *name);

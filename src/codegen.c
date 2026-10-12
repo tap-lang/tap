@@ -436,6 +436,24 @@ static EnumNode *bare_variant_reference(
     return enum_node;
 }
 
+// 报告「标识符既不是局部变量、字段，也不是全局常量」。
+//
+// 多级字段访问（`a.b.c`）目前不支持，这里单独给一条明确诊断 —— 否则用户只会看到
+// 「未定义变量 a.b.c」，完全指不到点子上。（模块私有枚举的成员形如
+// `__tap_module_0.E.B`，同样带两个点，所以先排除掉枚举成员。）
+static void report_undefined_name(CodeGenContext *context, const char *name) {
+    const char *first_dot = strchr(name, '.');
+    if (first_dot && first_dot[1] && strchr(first_dot + 1, '.') &&
+        !bare_variant_reference(context, name, NULL)) {
+        fprintf(stderr,
+            "error: nested field access '%s' is not supported; "
+            "bind the intermediate value to a variable first\n", name); // 中文：不支持多级字段访问
+        exit(1);
+    }
+    fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
+    exit(1);
+}
+
 // 解析 Enum.Member 形式的枚举成员，并返回成员的判别序号。
 // 只对无载荷枚举成立：带载荷的成员必须写成 Enum.Member(...) 构造。
 static int enum_variant_value(CodeGenContext *context, const char *name, uint64_t *value_out) {
@@ -561,6 +579,10 @@ static const char *llvm_call_name(const char *name) {
 }
 
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression);
+// 表达式的完整类型（标量也给）；见下面的定义。
+static VarTypeNode *expression_full_type(CodeGenContext *context, ASTNode *expression);
+// 复制类型节点（定义在下面）；named_value_type 等早期函数要用。
+static VarTypeNode *copy_var_type(const VarTypeNode *source);
 static LLVMValueRef generate_expression_for_type(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type);
 static LLVMValueRef generate_match_expression(
@@ -685,6 +707,83 @@ static LLVMValueRef generate_field_address(
     if (symbol_out) *symbol_out = symbol;
     return LLVMBuildStructGEP2(
         context->builder, struct_type, symbol->value, index, "struct_field_ptr");
+}
+
+// 按名字查值的完整类型：局部变量、单层字段（`a.b`）、多级字段（`a.b.c`）。
+//
+// `parse_primary` 会把一整串点拼成一个标识符名，所以多级字段访问到这里才拆开 —— 按
+// **最后一个**点切成 base + 字段，递归拿 base 的类型再查字段。返回的节点归调用方所有。
+static VarTypeNode *named_value_type(CodeGenContext *context, const char *name) {
+    Symbol *symbol = find_symbol(context, name);
+    if (symbol) {
+        return symbol->declared_type ? copy_var_type(symbol->declared_type)
+                                     : create_var_type(symbol->type);
+    }
+
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name || !dot[1]) return NULL;
+
+    size_t base_length = (size_t)(dot - name);
+    char *base_name = (char *)malloc(base_length + 1);
+    if (!base_name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(base_name, name, base_length);
+    base_name[base_length] = '\0';
+    VarTypeNode *base_type = named_value_type(context, base_name);
+    free(base_name);
+    if (!base_type) return NULL;
+
+    StructNode *struct_node = base_type->struct_name
+        ? find_struct(context, base_type->struct_name)
+        : NULL;
+    StructFieldNode *field = struct_node
+        ? find_struct_field(struct_node, dot + 1, NULL)
+        : NULL;
+    VarTypeNode *result = field ? copy_var_type(field->field_type) : NULL;
+    free_ast((ASTNode *)base_type);
+    return result;
+}
+
+// 按名字取可寻址值的地址：局部变量、单层字段（`a.b`）、多级字段（`a.b.c`）。
+static LLVMValueRef named_value_address(CodeGenContext *context, const char *name) {
+    Symbol *symbol = find_symbol(context, name);
+    if (symbol) return symbol->value;
+
+    StructFieldNode *field = NULL;
+    LLVMValueRef address = generate_field_address(context, name, &field, NULL);
+    if (address) return address;
+
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name || !dot[1]) return NULL;
+
+    size_t base_length = (size_t)(dot - name);
+    char *base_name = (char *)malloc(base_length + 1);
+    if (!base_name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(base_name, name, base_length);
+    base_name[base_length] = '\0';
+    LLVMValueRef base_address = named_value_address(context, base_name);
+    VarTypeNode *base_type = named_value_type(context, base_name);
+    free(base_name);
+    if (!base_address || !base_type || !base_type->struct_name) {
+        free_ast((ASTNode *)base_type);
+        return NULL;
+    }
+    StructNode *struct_node = find_struct(context, base_type->struct_name);
+    free_ast((ASTNode *)base_type);
+    if (!struct_node) return NULL;
+    unsigned index = 0;
+    StructFieldNode *struct_field =
+        find_struct_field(struct_node, dot + 1, &index);
+    if (!struct_field) return NULL;
+    LLVMTypeRef struct_type =
+        get_llvm_struct_type_by_name(context, struct_node->name);
+    return LLVMBuildStructGEP2(context->builder, struct_type, base_address,
+                               index, "nested_field_ptr");
 }
 
 // 取函数名最后一段，模块函数内部名如 __tap_module_0.push 会得到 push。
@@ -831,6 +930,13 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
     if (expression && expression->type == NODE_TRY) {
         return 1;
     }
+    // 字段访问：按字段自身的类型和目标类型比较，三种目标类型（指针 / 结构体 / 枚举）通用。
+    if (expression && expression->type == NODE_FIELD_ACCESS) {
+        VarTypeNode *field_type = expression_full_type(context, expression);
+        int result = field_type && var_type_equal(field_type, target_type);
+        free_ast((ASTNode *)field_type);
+        return result;
+    }
     if (target_type->is_pointer) {
         if (expression && expression->type == NODE_FUNCTION_CALL &&
             is_runtime_memory_pointer_result((FunctionCallNode *)expression)) {
@@ -972,8 +1078,7 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
             if (field && field->field_type->is_array) {
                 return field->field_type;
             }
-            fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
-            exit(1);
+            report_undefined_name(context, name);
         }
         if (symbol->declared_type && symbol->declared_type->is_pointer) {
             return symbol->declared_type->element_type;
@@ -1079,24 +1184,22 @@ static VarTypeNode *copy_high_level_type(const VarTypeNode *type) {
     return copy_var_type(type);
 }
 
-// 推断无类型标注的 `let` 右值表达式的完整类型。
+// 表达式的完整类型（标量也会给出）。推不出来返回 NULL，返回的节点归调用方所有。
 //
-// 只处理能确定高层类型的情况，标量一律返回 NULL（见 copy_high_level_type）。不推断的话
-// 变量会被登记成标量符号，于是 `let b = a;`（结构体拷贝）、`b.x`（字段访问）以及把变量
-// 传给泛型函数都会出错。
-static VarTypeNode *infer_expression_var_type(
+// 这是 Codegen 侧「表达式 → 类型」的入口，标量和高层类型一视同仁；`let` 推断要的
+// 「只认高层类型」由 infer_expression_var_type 那层 wrapper 过滤。
+//
+// **注意：这里和 generics.c 的 `process_expression` 是两份并行的推断实现**，两边对同一个
+// 表达式必须给出一致的类型（不一致会让单态化静默选错实例）。改动覆盖范围时同步另一侧。
+static VarTypeNode *expression_full_type(
     CodeGenContext *context, ASTNode *expression) {
     if (!expression) return NULL;
 
     switch (expression->type) {
-        case NODE_IDENTIFIER: {
-            const char *name = ((IdentifierNode *)expression)->name;
-            Symbol *symbol = find_symbol(context, name);
-            if (symbol) return copy_high_level_type(symbol->declared_type);
-            StructFieldNode *field =
-                field_access_info(context, name, NULL, NULL, NULL);
-            return field ? copy_high_level_type(field->field_type) : NULL;
-        }
+        case NODE_IDENTIFIER:
+            // 局部变量、全局常量、单层字段（`a.b`）、多级字段（`a.b.c`）都在这里面。
+            return named_value_type(
+                context, ((IdentifierNode *)expression)->name);
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             // 载荷枚举的构造表达式产生该枚举（降级后是同名结构体）类型的值。
@@ -1116,15 +1219,51 @@ static VarTypeNode *infer_expression_var_type(
             if (!function) {
                 function = resolve_method_call(context, call, NULL, NULL, NULL);
             }
-            return copy_high_level_type(function_return_var_type(function));
+            const VarTypeNode *return_type = function_return_var_type(function);
+            return return_type ? copy_var_type(return_type) : NULL;
         }
         case NODE_STRUCT_LITERAL:
             return create_struct_type(((StructLiteralNode *)expression)->struct_name);
-        case NODE_INDEX_EXPRESSION:
-            return copy_high_level_type(indexed_value_type(context, expression));
+        case NODE_ARRAY_LITERAL: {
+            ArrayLiteralNode *array = (ArrayLiteralNode *)expression;
+            if (!array->elements) return NULL;
+            // 元素类型由第一个元素决定；标量元素用 expression_type 兜底。
+            VarTypeNode *element = expression_full_type(context, array->elements);
+            if (!element) {
+                element = create_var_type(expression_type(context, array->elements));
+            }
+            // 长度和数组初始化校验用同一套口径：`[v; N]` 取重复次数，其余取元素个数。
+            uint64_t length = array->is_repeat ? array->repeat_count : array->count;
+            return create_array_type(element, length);
+        }
+        case NODE_INDEX_EXPRESSION: {
+            const VarTypeNode *element = indexed_value_type(context, expression);
+            return element ? copy_var_type(element) : NULL;
+        }
+        case NODE_FIELD_ACCESS: {
+            FieldAccessNode *access = (FieldAccessNode *)expression;
+            VarTypeNode *object_type = expression_full_type(context, access->object);
+            StructNode *struct_node =
+                object_type && object_type->struct_name
+                    ? find_struct(context, object_type->struct_name)
+                    : NULL;
+            StructFieldNode *field = struct_node
+                ? find_struct_field(struct_node, access->field, NULL)
+                : NULL;
+            VarTypeNode *result = field ? copy_var_type(field->field_type) : NULL;
+            free_ast((ASTNode *)object_type);
+            return result;
+        }
         default:
             return NULL;
     }
+}
+
+// 无类型标注的 `let` 用的版本：标量返回 NULL，让调用方继续走原来的标量路径
+// （expression_type + insert_symbol），`let x = 42;` 这类代码的行为完全不变。
+static VarTypeNode *infer_expression_var_type(
+    CodeGenContext *context, ASTNode *expression) {
+    return copy_high_level_type(expression_full_type(context, expression));
 }
 
 // 推断表达式在当前上下文中的标量类型。
@@ -1157,6 +1296,13 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
                 exit(1);
             }
             return type->type;
+        }
+        case NODE_FIELD_ACCESS: {
+            VarTypeNode *field_type = expression_full_type(context, expression);
+            enum LiteralType result = field_type
+                ? field_type->type : default_integer_type();
+            free_ast((ASTNode *)field_type);
+            return result;
         }
         case NODE_SIZEOF:
             return LITERAL_UINT;
@@ -1565,8 +1711,7 @@ static LLVMValueRef generate_index_address(
                 array_address = field_address;
                 array_type = field->field_type;
             } else {
-                fprintf(stderr, "error: undefined variable '%s'\n", name); // 中文：未定义的变量
-                exit(1);
+                report_undefined_name(context, name);
             }
         } else if (symbol->declared_type && symbol->declared_type->is_pointer) {
             array_type = symbol->declared_type;
@@ -1677,6 +1822,63 @@ static LLVMValueRef generate_index_address(
     if (element_type_out) *element_type_out = array_type->element_type;
     return LLVMBuildGEP2(context->builder, llvm_array_type, array_address,
                          indexes, 2, "array_element_ptr");
+}
+
+// 取可寻址表达式的地址（左值）：标识符、名字式字段（`a.b`）、索引、字段访问。
+//
+// 函数调用结果是右值、没有稳定地址，这里给它开一个临时槽存下来再返回槽地址 ——
+// `make().x` 这类写法就靠这一步。不可寻址的表达式返回 NULL，由调用方报错。
+static LLVMValueRef expression_address(
+    CodeGenContext *context, ASTNode *expression) {
+    if (!expression) return NULL;
+
+    switch (expression->type) {
+        case NODE_IDENTIFIER:
+            // 局部变量、单层字段、多级字段都在这里面。
+            return named_value_address(
+                context, ((IdentifierNode *)expression)->name);
+        case NODE_INDEX_EXPRESSION:
+            return generate_index_address(
+                context, (IndexExpressionNode *)expression, NULL);
+        case NODE_FIELD_ACCESS: {
+            FieldAccessNode *access = (FieldAccessNode *)expression;
+            LLVMValueRef object_address = expression_address(context, access->object);
+            if (!object_address) return NULL;
+            VarTypeNode *object_type = expression_full_type(context, access->object);
+            StructNode *struct_node =
+                object_type && object_type->struct_name
+                    ? find_struct(context, object_type->struct_name)
+                    : NULL;
+            free_ast((ASTNode *)object_type);
+            if (!struct_node) return NULL;
+            unsigned index = 0;
+            StructFieldNode *field =
+                find_struct_field(struct_node, access->field, &index);
+            if (!field) return NULL;
+            LLVMTypeRef struct_type =
+                get_llvm_struct_type_by_name(context, struct_node->name);
+            return LLVMBuildStructGEP2(context->builder, struct_type,
+                                       object_address, index, "field_access_ptr");
+        }
+        case NODE_FUNCTION_CALL: {
+            // 调用结果是右值：先存进临时槽，后续的字段访问才有地址可用。
+            VarTypeNode *type = expression_full_type(context, expression);
+            int is_struct = type && type->struct_name;
+            if (!is_struct) {
+                free_ast((ASTNode *)type);
+                return NULL;
+            }
+            LLVMTypeRef llvm_type = get_llvm_var_type(context, type);
+            free_ast((ASTNode *)type);
+            LLVMValueRef slot =
+                create_entry_alloca(context, llvm_type, "call_result_slot");
+            LLVMValueRef value = generate_expression(context, expression);
+            LLVMBuildStore(context->builder, value, slot);
+            return slot;
+        }
+        default:
+            return NULL;
+    }
 }
 
 // 生成可寻址表达式的地址，并阻止通过引用修改常量。
@@ -2350,11 +2552,28 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                         context->builder, get_llvm_var_type(context, field->field_type),
                         field_address, "loaded_struct_field");
                 }
+                // 多级字段访问（`a.b.c`）：parse_primary 把整串点拼成了一个名字，
+                // generate_field_address 只认单层，这里补上递归版本。
+                if (!field) {
+                    LLVMValueRef nested_address =
+                        named_value_address(context, identifier->name);
+                    VarTypeNode *nested_type = nested_address
+                        ? named_value_type(context, identifier->name)
+                        : NULL;
+                    if (nested_type) {
+                        LLVMValueRef value = LLVMBuildLoad2(
+                            context->builder,
+                            get_llvm_var_type(context, nested_type),
+                            nested_address, "loaded_nested_field");
+                        free_ast((ASTNode *)nested_type);
+                        return value;
+                    }
+                    free_ast((ASTNode *)nested_type);
+                }
                 VarDeclNode *constant = find_global_constant(context, identifier->name);
                 LLVMValueRef global = LLVMGetNamedGlobal(context->module, identifier->name);
                 if (!constant || !constant->type || !global) {
-                    fprintf(stderr, "error: undefined variable '%s'\n", identifier->name); // 中文：未定义的变量
-                    exit(1);
+                    report_undefined_name(context, identifier->name);
                 }
                 if (constant->type->is_array) {
                     fprintf(stderr, "error: array constant '%s' must be accessed with an index\n", identifier->name); // 中文：数组常量必须通过下标访问
@@ -2384,6 +2603,24 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             }
             return LLVMBuildLoad2(context->builder, get_llvm_var_type(context, element_type),
                                   address, "array_element");
+        }
+        case NODE_FIELD_ACCESS: {
+            // `接收者.字段`：先取字段地址（接收者是右值时由 expression_address 开临时槽），
+            // 再按字段类型 load。
+            VarTypeNode *field_type = expression_full_type(context, expression);
+            LLVMValueRef address = expression_address(context, expression);
+            if (!field_type || !address) {
+                free_ast((ASTNode *)field_type);
+                fprintf(stderr,
+                    "error: field '%s' is not accessible here (the receiver may not be a struct)\n",
+                    ((FieldAccessNode *)expression)->field); // 中文：无法访问该字段
+                exit(1);
+            }
+            LLVMValueRef value = LLVMBuildLoad2(
+                context->builder, get_llvm_var_type(context, field_type),
+                address, "loaded_field_access");
+            free_ast((ASTNode *)field_type);
+            return value;
         }
         case NODE_REFERENCE:
             return generate_reference(context, (ReferenceNode *)expression);
@@ -2536,8 +2773,7 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
             LLVMBuildStore(context->builder, value, field_address);
             return;
         }
-        fprintf(stderr, "error: undefined variable '%s'\n", assignment->name); // 中文：未定义的变量
-        exit(1);
+        report_undefined_name(context, assignment->name);
     }
     if (symbol->is_const) {
         fprintf(stderr, "error: cannot assign to constant '%s'\n", assignment->name); // 中文：不能给常量赋值
@@ -2619,6 +2855,19 @@ static void generate_array_initializer(
             if (!literal->is_repeat) element = element->next;
             continue;
         }
+        // 具名类型（结构体 / 枚举）必须按完整类型生成 —— 走标量路径会把结构体字面量
+        // 当成标量处理，报出「struct literals must be used with a struct target type」。
+        if (element_type->struct_name || element_type->enum_name) {
+            if (!expression_assignable_to(context, current_element, element_type)) {
+                fprintf(stderr, "error: array element type mismatch\n"); // 中文：数组元素类型不匹配
+                exit(1);
+            }
+            LLVMValueRef value = generate_expression_for_type(
+                context, current_element, element_type);
+            LLVMBuildStore(context->builder, value, element_address);
+            if (!literal->is_repeat) element = element->next;
+            continue;
+        }
         enum LiteralType actual_type = expression_type(context, current_element);
         if (element_type->enum_name
                 ? !expression_assignable_to(context, current_element, element_type)
@@ -2646,8 +2895,7 @@ static LLVMValueRef generate_array_value(
         IdentifierNode *identifier = (IdentifierNode *)expression;
         Symbol *symbol = find_symbol(context, identifier->name);
         if (!symbol) {
-            fprintf(stderr, "error: undefined variable '%s'\n", identifier->name); // 中文：未定义的变量
-            exit(1);
+            report_undefined_name(context, identifier->name);
         }
         if (!symbol->array_type || !var_type_equal(symbol->array_type, expected_type)) {
             fprintf(stderr, "error: array type mismatch\n"); // 中文：数组类型不匹配

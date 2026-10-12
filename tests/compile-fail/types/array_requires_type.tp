@@ -1,5 +1,7 @@
+// 空数组字面量没有元素可以反推元素类型，仍然必须写类型标注。
+// （非空数组现在能从元素推断，见 tests/run-pass/types/inferred_let_type.tp。）
 fn main(): i32 {
-    let values = [10, 20];
+    let values = [];
     return 0;
 }
 

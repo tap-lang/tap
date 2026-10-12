@@ -1,0 +1,40 @@
+// 泛型结构体字面量没写类型实参时，从字段值反推（和显式写出等价）。
+//
+// 推断复用 generics 的 unify_type（和泛型函数共用同一套实现），结果写回字面量的类型实参，
+// 后面的物化阶段就能按实例化后的类型改名。
+
+struct Box<T> { value: T }
+
+fn unbox<T>(box: Box<T>): T {
+    return box.value;
+}
+
+fn main(): i32 {
+    // 无标注：T 从字段值推出来。
+    let number = Box { value: 42 };
+    print("%d\n", number.value);
+
+    // 显式写出类型实参，两者等价。
+    let explicit: Box<i32> = Box<i32> { value: 7 };
+    print("%d\n", explicit.value);
+
+    // 嵌套：Box { value: Box { value: 9 } } 推成 Box<Box<i32>>。
+    let nested = Box { value: Box { value: 9 } };
+    let inner = nested.value;
+    print("%d\n", inner.value);
+
+    // 推出来的类型实参要能参与泛型函数调用。
+    print("%d\n", unbox(number));
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+42
+7
+9
+42
+- .exit
+0
+-- */

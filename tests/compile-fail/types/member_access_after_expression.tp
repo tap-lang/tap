@@ -1,0 +1,23 @@
+// 在表达式结果上**调用方法**仍然不支持：后缀 `.` 只认字符串内建方法（len/byte_at/slice）
+// 和字段访问。报错要明确说「先绑到变量」。
+struct Point { x: i32 }
+
+fn make(): Point {
+    return Point { x: 8 };
+}
+
+fn shift(self: Point, delta: i32): Point {
+    return Point { x: self.x + delta };
+}
+
+fn main(): i32 {
+    print("%d\n", make().shift(1).x);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: calling a method on an expression result is not supported; bind the value to a variable first
+- .exit
+1
+-- */
