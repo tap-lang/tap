@@ -242,7 +242,31 @@ env TAP_MODULE_PATH=/path/to/project:/another/root ./build/tap run app/main.tp
 `internal/util` 不再逐层探测。
 
 有了这条规则，`<包根>/packages/foo/` 这样的布局里 `import foo.lib` 就能直接解析到
-`packages/foo/src/lib.tp`。包布局的完整约定见[包管理文档](package.md)。
+`packages/foo/src/lib.tp`。
+
+### 包模式：`tap build` / `tap run` 不带文件时
+
+```text
+tap build               # 只编译不运行，产物写到 <包根>/build/<name>
+tap run                 # 编译完接着运行
+tap run main.tp         # 文件模式：现有行为，完全不变
+```
+
+**无参数才走包模式**，给了文件就是文件级。包模式下：
+
+- 从当前目录向上找到含 `package.toml` 的那一层，那一层就是包根
+- 按 `[package]` 的 `entry` 定位入口文件，按 `name` 命名构建产物
+- `<包根>/build` 目录由编译器自己创建
+
+编译器读 `entry` **只做极简扫描**，不引入通用 TOML 解析器：
+
+- 只在 `[package]` 段内查找 `entry`
+- 只接受 `entry = "双引号字符串"` 这一种写法
+- 注释、其他键、空行一律跳过
+- 找不到时给出明确诊断，而不是静默回退
+
+包的目录布局约定（`package.toml` / `src/` / `packages/`）见 tapm 仓库的
+`docs/design.md`。
 
 对于 `std.*` 模块，编译器会先尝试 `TAP_STD_PATH`，并去掉模块名开头的
 `std.`。例如 `TAP_STD_PATH=/path/to/std` 时，`import std.math;` 会查找

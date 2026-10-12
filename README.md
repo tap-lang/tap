@@ -86,7 +86,7 @@ tap build
 
 `tap run` / `tap build` 不给文件时按**包模式**工作：从当前目录向上找到 `package.toml`，
 按里面的 `entry` 编译，产物放到 `<包根>/build/<name>`。`run` 编译完接着运行，`build` 只编译。
-包布局的约定见[包管理文档](docs/package.md)。
+包布局的约定见 [tapm 仓库](https://github.com/) 的 `docs/design.md`。
 
 源文件扩展名无强制要求，仓库内示例多为 `.tp`；模块解析同时接受 `.tp` 和 `.tap`
 （同名时 `.tp` 优先）。
@@ -264,7 +264,6 @@ Prelude 中的函数名不能在用户源码中重复定义。编译器依次从
 - [Runtime](docs/runtime.md)
 - [模块导入](docs/module.md)
 - [测试](docs/test.md)
-- [包管理](docs/package.md)（设计规范，尚未实现）
 
 ## 许可
 
