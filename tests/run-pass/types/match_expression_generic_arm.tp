@@ -1,0 +1,67 @@
+// 回归：match 表达式的分支值里放泛型调用。
+//
+// 泛型 pass 的语句遍历器原先只走分支体（body），漏了分支值（value），
+// 于是分支里的泛型调用从未被特化，Codegen 找不到那个函数，报
+// `struct expression type mismatch`。这个用例把几种组合都钉住。
+import std.vec as vec;
+
+// 分支值是泛型调用，载荷是非泛型的
+fn from_plain(source: Result<i32, string>): Vec<string> {
+    return match (source) {
+        Result.Ok(value) => vec.new<string>(),
+        Result.Err(reason) => vec.new<string>(),
+    };
+}
+
+// 分支值是泛型调用，载荷本身也是泛型结构体（原来失败最典型的一种）
+fn from_generic(source: Result<Vec<string>, string>): Vec<string> {
+    return match (source) {
+        Result.Ok(inner) => inner,
+        Result.Err(reason) => vec.new<string>(),
+    };
+}
+
+// 分支值是「泛型调用 + 后续操作」
+fn with_ops(source: Result<i32, string>): Vec<string> {
+    let names: Vec<string> = match (source) {
+        Result.Ok(value) => vec.new<string>(),
+        Result.Err(reason) => vec.new<string>(),
+    };
+    names = vec.push(names, "added");
+    return names;
+}
+
+fn main(): i32 {
+    let plain: Result<i32, string> = Result<i32, string>.Ok(1);
+    let a: Vec<string> = from_plain(plain);
+    print("plain=%u\n", a.len());
+    vec.free(a);
+
+    let seeded: Vec<string> = vec.new();
+    seeded = vec.push(seeded, "first");
+    let generic: Result<Vec<string>, string> = Result<Vec<string>, string>.Ok(seeded);
+    let b: Vec<string> = from_generic(generic);
+    print("generic=%u %s\n", b.len(), b.get(0));
+    vec.free(b);
+
+    let ops: Vec<string> = with_ops(plain);
+    print("ops=%u %s\n", ops.len(), ops.get(0));
+    vec.free(ops);
+
+    // 失败路径也要能走通
+    let bad: Result<Vec<string>, string> = Result<Vec<string>, string>.Err("boom");
+    let c: Vec<string> = from_generic(bad);
+    print("bad=%u\n", c.len());
+    vec.free(c);
+    return 0;
+}
+
+/** -- test
+- .stdout
+plain=0
+generic=1 first
+ops=1 added
+bad=0
+- .exit
+0
+-- */

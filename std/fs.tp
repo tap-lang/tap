@@ -6,6 +6,17 @@
 //   - mode 与 C 的 `fopen` 一致，**务必带 b**（`"rb"` / `"wb"` / `"ab"`）。
 //     少了 b，Windows 上会把 `\n` 翻译成 `\r\n`。
 import std.string_builder as sb;
+import std.vec as vec;
+
+// 目录遍历所需的内部 Runtime ABI。
+extern fn __tap_dir_open(path: string): *i8;
+extern fn __tap_dir_next(handle: *i8): string;
+extern fn __tap_dir_is_open(handle: *i8): i32;
+extern fn __tap_dir_close(handle: *i8): i32;
+extern fn __tap_path_is_directory(path: string): i32;
+extern fn __tap_make_directory(path: string): i32;
+extern fn __tap_symlink(target: string, link_path: string): i32;
+extern fn __tap_remove_entry(path: string): i32;
 
 // 文件读写所需的内部 Runtime ABI。
 extern fn __tap_file_open(path: string, mode: string): *i8;
@@ -100,6 +111,77 @@ pub fn exists(path: string): bool {
     }
     close(file);
     return true;
+}
+
+// 已打开的目录。`handle` 是不透明指针，不要直接读写它。
+pub struct Dir {
+    handle: *i8,
+}
+
+// 打开目录准备遍历；失败时返回句柄为空的 Dir，用 is_dir_open 判断。
+pub fn open_dir(path: string): Dir {
+    return Dir { handle: __tap_dir_open(path) };
+}
+
+// 是否持有有效句柄。
+pub fn is_dir_open(directory: Dir): bool {
+    return __tap_dir_is_open(directory.handle) != 0;
+}
+
+// 取下一条目名；已到末尾返回空字符串（文件名不可能是空串，所以能这样区分）。
+// 名字由 Runtime 持有，关闭目录后失效。
+pub fn next_entry(directory: Dir): string {
+    return __tap_dir_next(directory.handle);
+}
+
+// 关闭目录，成功返回 0；句柄无效返回 -1。
+pub fn close_dir(directory: Dir): i32 {
+    return __tap_dir_close(directory.handle);
+}
+
+// path 是不是目录；不存在或不是目录都返回 false。
+pub fn is_dir(path: string): bool {
+    return __tap_path_is_directory(path) != 0;
+}
+
+// 建目录（已存在算成功）；成功返回 0。
+pub fn make_dir(path: string): i32 {
+    return __tap_make_directory(path);
+}
+
+// 建符号链接 link_path -> target；成功返回 0。
+// Windows 上需要管理员权限或开启开发者模式，失败时调用方应回退到复制。
+pub fn symlink(target: string, link_path: string): i32 {
+    return __tap_symlink(target, link_path);
+}
+
+// 删除文件或空目录；成功返回 0。
+pub fn remove_entry(path: string): i32 {
+    return __tap_remove_entry(path);
+}
+
+// 列出目录里的条目名，不含 "." 和 ".."，**按名字排序**（readdir 的顺序未定义，
+// 排序后结果才稳定）。打不开目录时返回 Err。
+//
+// 返回的 Vec 在堆上，**调用方用完要自己 vec.free**。
+pub fn read_dir(path: string): Result<Vec<string>, string> {
+    let directory: Dir = open_dir(path);
+    if (!is_dir_open(directory)) {
+        return Result<Vec<string>, string>.Err("cannot open directory");
+    }
+
+    let names: Vec<string> = vec.new();
+    let running: bool = true;
+    while (running) {
+        let name: string = next_entry(directory);
+        if (name.len() == 0) {
+            running = false;
+        } else {
+            names = vec.push(names, name);
+        }
+    }
+    close_dir(directory);
+    return Result<Vec<string>, string>.Ok(names);
 }
 
 // 读到文件末尾为止，把全部内容拼成一个字符串返回。

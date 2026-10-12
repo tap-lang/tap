@@ -216,16 +216,33 @@ note: import the namespace form 'import modules.ambig;' and qualify the call, or
 普通模块按以下顺序查找：
 
 1. 导入声明所在文件的目录
-2. `TAP_MODULE_PATH`
-3. 当前工作目录
-4. 编译器可执行文件相邻的源码目录
-5. 安装前缀下的 `share/tap`
-
-`TAP_MODULE_PATH` 当前只接受一个模块根目录。例如：
+2. `TAP_MODULE_PATH`（支持多个根，Unix 用 `:` 分隔，Windows 用 `;`）
+3. 包根下的 `packages/`（从导入文件所在目录向上找到含 `package.toml` 的那一层，
+   那一层就是包根；依赖装在这里，编译器自己认，不需要设环境变量）
+4. 当前工作目录
+5. 编译器可执行文件相邻的源码目录
+6. 安装前缀下的 `share/tap`
 
 ```bash
-env TAP_MODULE_PATH=/path/to/project ./build/tap run app/main.tp
+env TAP_MODULE_PATH=/path/to/project:/another/root ./build/tap run app/main.tp
 ```
+
+### 包边界
+
+**在每一个搜索根里**，解析会试两次：
+
+1. 按原路径 → `<根>/foo/lib.tp`
+2. 按包边界 → 若 `<根>/foo/package.toml` 存在，说明 `foo` 是一个包，源码在它的
+   `src/` 下，于是试 `<根>/foo/src/lib.tp`
+
+两条都命中时报歧义错（和「成员名与模块文件重名」的处理一致）。都没有的目录按原路径解析，
+行为不变。
+
+**包边界只对第一段判定**：`import foo.internal.util` 里只有 `foo` 会去探测 `package.toml`，
+`internal/util` 不再逐层探测。
+
+有了这条规则，`<包根>/packages/foo/` 这样的布局里 `import foo.lib` 就能直接解析到
+`packages/foo/src/lib.tp`。包布局的完整约定见[包管理文档](package.md)。
 
 对于 `std.*` 模块，编译器会先尝试 `TAP_STD_PATH`，并去掉模块名开头的
 `std.`。例如 `TAP_STD_PATH=/path/to/std` 时，`import std.math;` 会查找
@@ -369,6 +386,7 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 
 **其他**
 
-- `TAP_MODULE_PATH` 和 `TAP_STD_PATH` 均只接受单个目录。
+- `TAP_MODULE_PATH` 支持多个根（Unix `:`、Windows `;`）；`TAP_STD_PATH` 仍是单个目录——
+  标准库天然只有一个根。
 - 模块文件后缀接受 `.tp` 和 `.tap`，解析顺序是先 `.tp` 再 `.tap`；同一目录下两者同名时
   以 `.tp` 为准。

@@ -1,0 +1,61 @@
+// std.fs 的目录遍历：read_dir 一次性取回条目名（排序），is_dir 判断目录，
+// open_dir / next_entry / close_dir 是流式版本。
+import std.fs as fs;
+import std.vec as vec;
+
+fn main(): i32 {
+    let result: Result<Vec<string>, string> = fs.read_dir("tests/fixtures/dir_sample");
+    print("is_ok=%d\n", is_ok(result));
+    let names: Vec<string> = match (result) {
+        Result.Ok(inner) => inner,
+        Result.Err(reason) => vec.new<string>(),
+    };
+    print("count=%u\n", names.len());
+    for (let i: uint = 0; i < names.len(); i++) {
+        print("%s\n", names.get(i));
+    }
+    vec.free(names);
+
+    // is_dir 区分目录、文件和不存在
+    print("nested=%d file=%d missing=%d\n",
+        fs.is_dir("tests/fixtures/dir_sample/nested"),
+        fs.is_dir("tests/fixtures/dir_sample/alpha.txt"),
+        fs.is_dir("tests/fixtures/dir_sample/nope"));
+
+    // 打不开目录时返回 Err
+    let missing: Result<Vec<string>, string> = fs.read_dir("tests/fixtures/no_such_dir");
+    print("missing is_err=%d\n", is_err(missing));
+
+    // 流式版本
+    let directory: Dir = fs.open_dir("tests/fixtures/dir_sample");
+    print("open=%d\n", fs.is_dir_open(directory));
+    let running: bool = true;
+    while (running) {
+        let name: string = fs.next_entry(directory);
+        if (name.len() == 0) {
+            running = false;
+        } else {
+            print("stream %s\n", name);
+        }
+    }
+    print("close=%d\n", fs.close_dir(directory));
+    return 0;
+}
+
+/** -- test
+- .stdout
+is_ok=1
+count=3
+alpha.txt
+nested
+zebra.txt
+nested=1 file=0 missing=0
+missing is_err=1
+open=1
+stream alpha.txt
+stream nested
+stream zebra.txt
+close=0
+- .exit
+0
+-- */

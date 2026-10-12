@@ -96,6 +96,36 @@ macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的�
 
 `stderr` 按 C 标准默认不带全缓冲，所以这里不需要额外的 flush。
 
+## 目录 ABI
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_dir_open(path): *void` | 打开目录，**读入全部条目名并排序**；失败返回 NULL |
+| `__tap_dir_next(handle): string` | 取下一条目名；已到末尾返回空串 |
+| `__tap_dir_is_open(handle): i32` | 句柄是否有效 |
+| `__tap_dir_close(handle): i32` | 关闭句柄 |
+| `__tap_path_is_directory(path): i32` | 路径是不是目录 |
+
+**打开时就排序**：`readdir` 的顺序是未定义的，排序后调用方拿到的结果才稳定——
+包管理这类工具要靠它做可复现的输出。
+
+**`__tap_dir_close` 不释放条目名本身**：它们已经通过 `__tap_dir_next` 交给了 tap 侧
+（可能被存进 `Vec`），释放会让调用方拿到悬空指针。和 tap 其他 Runtime 字符串一样，
+这些名字活到进程结束。
+
+Windows 走 `_findfirst` / `_findnext`，其余平台走 `opendir` / `readdir`。
+
+## 文件系统 ABI
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_make_directory(path): i32` | 建目录；已存在也算成功 |
+| `__tap_symlink(target, link_path): i32` | 建符号链接；Windows 需要开发者模式 |
+| `__tap_remove_entry(path): i32` | 删除文件或空目录 |
+
+符号链接在 Windows 上要先试 `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE`，
+失败再退回不带该标志（老系统不认）。`tapm` 靠它把 path 依赖接进 `packages/`。
+
 ## 终止 ABI
 
 | C ABI | 行为 |

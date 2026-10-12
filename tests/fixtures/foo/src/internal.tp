@@ -1,0 +1,4 @@
+// 包内第二层：import foo.internal
+pub fn inner(): i32 {
+    return 7;
+}

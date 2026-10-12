@@ -1,0 +1,4 @@
+// 包边界 fixture：目录里有 package.toml，源码在 src/ 下。
+pub fn marker(): i32 {
+    return 42;
+}

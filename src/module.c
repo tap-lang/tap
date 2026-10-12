@@ -1,5 +1,7 @@
 #include "module.h"
+#include "helpers.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +11,8 @@
 #include <direct.h>
 #define MODULE_PATH_MAX _MAX_PATH
 #else
+#include <sys/stat.h>
+#include <sys/types.h>
 #define MODULE_PATH_MAX PATH_MAX
 #endif
 
@@ -175,6 +179,275 @@ static int is_std_module(const char *module_name) {
     return strncmp(module_name, "std.", 4) == 0;
 }
 
+// TAP_MODULE_PATH 的目录分隔符：Windows 用分号（冒号被盘符占用），其余用冒号。
+#ifdef _WIN32
+#define MODULE_PATH_SEPARATOR ';'
+#else
+#define MODULE_PATH_SEPARATOR ':'
+#endif
+
+// 如果 relative 的第一段是一个包（该目录下有 package.toml），返回加上 src/ 的相对路径。
+// 包边界只判第一段：`foo.lib` 里 foo 是包名，`internal/util` 不再探测。
+// 不是包（或只有一段）时返回 NULL。
+static char *package_scoped_relative(const char *root, const char *relative) {
+    const char *separator = strchr(relative, '/');
+    if (!separator) return NULL; // 单段模块就是文件，没有包边界
+
+    size_t package_length = (size_t)(separator - relative);
+    char *package_directory = malloc(package_length + 1);
+    if (!package_directory) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    memcpy(package_directory, relative, package_length);
+    package_directory[package_length] = '\0';
+
+    char *marker = join_path(root, package_directory);
+    free(package_directory);
+    char *manifest = marker ? join_path(marker, "package.toml") : NULL;
+    free(marker);
+    int is_package = manifest && file_exists(manifest);
+    free(manifest);
+    if (!is_package) return NULL;
+
+    const char *rest = separator + 1;
+    size_t size = package_length + sizeof("/src/") + strlen(rest);
+    char *scoped = malloc(size);
+    if (!scoped) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    snprintf(scoped, size, "%.*s/src/%s", (int)package_length, relative, rest);
+    return scoped;
+}
+
+// 在一个搜索根下找模块：先按原路径，再按包边界。
+// 两条都命中时报歧义错，不静默偏向——和「成员名与模块文件重名」的处理一致。
+static char *resolve_under_root(
+    const char *root, const char *relative, const char *module_name) {
+    char *plain = join_path(root, relative);
+    int plain_exists = plain && file_exists(plain);
+
+    char *scoped = package_scoped_relative(root, relative);
+    char *scoped_path = scoped ? join_path(root, scoped) : NULL;
+    int scoped_exists = scoped_path && file_exists(scoped_path);
+
+    if (plain_exists && scoped_exists) {
+        fprintf(stderr,
+            "error: ambiguous module '%s': both '%s' and '%s' exist\n",
+            module_name, plain, scoped_path); // 中文：模块歧义
+        exit(1);
+    }
+    free(scoped);
+
+    if (scoped_exists) {
+        free(plain);
+        char *resolved = canonical_path(scoped_path);
+        free(scoped_path);
+        return resolved;
+    }
+    free(scoped_path);
+    return existing_canonical_path(plain);
+}
+
+// 按分隔符切分 TAP_MODULE_PATH，逐个根查找。
+static char *resolve_under_module_path(
+    const char *module_path, const char *relative, const char *module_name) {
+    const char *start = module_path;
+    for (;;) {
+        const char *end = strchr(start, MODULE_PATH_SEPARATOR);
+        size_t length = end ? (size_t)(end - start) : strlen(start);
+        if (length > 0) {
+            char *root = malloc(length + 1);
+            if (!root) {
+                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                exit(1);
+            }
+            memcpy(root, start, length);
+            root[length] = '\0';
+            char *resolved = resolve_under_root(root, relative, module_name);
+            free(root);
+            if (resolved) return resolved;
+        }
+        if (!end) return NULL;
+        start = end + 1;
+    }
+}
+
+// 从某个目录向上找到含 package.toml 的那一层，即包根；找不到返回 NULL。
+// 包根下的 packages/ 是依赖所在处，这是「tap build 独立于 tapm」的支点。
+static char *package_root_from(const char *start_directory) {
+    char *directory = copy_string(start_directory);
+    if (!directory) return NULL;
+
+    char *canonical = canonical_path(directory);
+    if (canonical) {
+        free(directory);
+        directory = canonical;
+    }
+
+    while (directory) {
+        char *manifest = join_path(directory, "package.toml");
+        int found = manifest && file_exists(manifest);
+        free(manifest);
+        if (found) return directory;
+
+        char *parent = join_path(directory, "..");
+        char *resolved = parent ? canonical_path(parent) : NULL;
+        free(parent);
+        if (!resolved || strcmp(resolved, directory) == 0) {
+            free(resolved); // 到顶了
+            break;
+        }
+        free(directory);
+        directory = resolved;
+    }
+
+    free(directory);
+    return NULL;
+}
+
+static char *package_root_of(const char *filename) {
+    char *directory = path_directory(filename);
+    if (!directory) return NULL;
+    char *root = package_root_from(directory);
+    free(directory);
+    return root;
+}
+
+// 在 package.toml 的 [package] 段里读一个字符串键。
+//
+// 极简扫描，不引入通用 TOML 解析器：只认 `键 = "值"` 这一种写法，
+// 注释、空行、别的键、别的段一律跳过。找不到返回 NULL。
+static char *read_package_field(const char *package_root, const char *key) {
+    char *manifest = join_path(package_root, "package.toml");
+    if (!manifest) return NULL;
+    char *content = read_source_file(manifest);
+    free(manifest);
+    if (!content) return NULL;
+
+    size_t key_length = strlen(key);
+    int in_package_section = 0;
+    char *cursor = content;
+
+    while (*cursor) {
+        char *line_end = strchr(cursor, '\n');
+        size_t length = line_end ? (size_t)(line_end - cursor) : strlen(cursor);
+        while (length > 0 &&
+               (cursor[length - 1] == '\r' || cursor[length - 1] == ' ' ||
+                cursor[length - 1] == '\t')) {
+            length--;
+        }
+
+        const char *field = cursor;
+        size_t remaining = length;
+        while (remaining > 0 && (*field == ' ' || *field == '\t')) {
+            field++;
+            remaining--;
+        }
+
+        if (remaining > 0 && *field == '[') {
+            in_package_section =
+                remaining >= 9 && strncmp(field, "[package]", 9) == 0;
+        } else if (in_package_section && remaining > key_length &&
+                   strncmp(field, key, key_length) == 0) {
+            const char *rest = field + key_length;
+            while (*rest == ' ' || *rest == '\t') rest++;
+            if (*rest == '=') {
+                rest++;
+                while (*rest == ' ' || *rest == '\t') rest++;
+                if (*rest == '"') {
+                    const char *value_end = strchr(rest + 1, '"');
+                    if (value_end) {
+                        size_t value_length = (size_t)(value_end - rest - 1);
+                        char *value = malloc(value_length + 1);
+                        if (!value) {
+                            fprintf(stderr, "Out of memory\n");
+                            exit(1);
+                        }
+                        memcpy(value, rest + 1, value_length);
+                        value[value_length] = '\0';
+                        free(content);
+                        return value;
+                    }
+                }
+            }
+        }
+
+        if (!line_end) break;
+        cursor = line_end + 1;
+    }
+
+    free(content);
+    return NULL;
+}
+
+// 建目录（已存在算成功）。包模式要自己准备 <包根>/build。
+static int ensure_directory(const char *path) {
+#ifdef _WIN32
+    if (_mkdir(path) == 0) return 0;
+#else
+    if (mkdir(path, 0755) == 0) return 0;
+#endif
+    return errno == EEXIST ? 0 : -1;
+}
+
+int resolve_package_target(
+    const char *start_directory, const char *build_directory,
+    char **source_out, char **output_out) {
+    char *package_root = package_root_from(start_directory);
+    if (!package_root) {
+        fprintf(stderr,
+            "error: no package.toml found in this directory or any parent\n"); // 中文：找不到 package.toml
+        return 1;
+    }
+
+    char *entry = read_package_field(package_root, "entry");
+    if (!entry) {
+        fprintf(stderr,
+            "error: package.toml has no [package] entry\n"); // 中文：清单缺少 entry
+        free(package_root);
+        return 1;
+    }
+
+    char *name = read_package_field(package_root, "name");
+    if (!name) {
+        fprintf(stderr,
+            "error: package.toml has no [package] name\n"); // 中文：清单缺少 name
+        free(entry);
+        free(package_root);
+        return 1;
+    }
+
+    char *source = join_path(package_root, entry);
+    char *build_root = join_path(package_root, build_directory);
+    if (build_root && ensure_directory(build_root) != 0) {
+        fprintf(stderr,
+            "error: cannot create build directory '%s'\n", build_root); // 中文：无法创建构建目录
+        free(build_root);
+        free(name);
+        free(entry);
+        free(package_root);
+        free(source);
+        return 1;
+    }
+    char *output = build_root ? join_path(build_root, name) : NULL;
+    free(build_root);
+    free(name);
+    free(entry);
+    free(package_root);
+
+    if (!source || !output) {
+        free(source);
+        free(output);
+        return 1;
+    }
+
+    *source_out = source;
+    *output_out = output;
+    return 0;
+}
+
 static char *resolve_module_path_with_extension(
     const char *module_name, const char *filename, const char *compiler_path,
     const char *extension) {
@@ -196,48 +469,66 @@ static char *resolve_module_path_with_extension(
         }
     }
 
+    // 1. 导入声明所在文件的目录。
     char *importer_directory = path_directory(filename);
-    char *candidate = importer_directory ? join_path(importer_directory, relative) : NULL;
+    char *resolved = importer_directory
+        ? resolve_under_root(importer_directory, relative, module_name)
+        : NULL;
     free(importer_directory);
-    char *resolved = existing_canonical_path(candidate);
     if (resolved) {
         free(relative);
         return resolved;
     }
 
+    // 2. TAP_MODULE_PATH，支持多个根（Unix 冒号分隔，Windows 分号）。
     const char *module_path = getenv("TAP_MODULE_PATH");
     if (module_path && module_path[0] != '\0') {
-        resolved = existing_canonical_path(join_path(module_path, relative));
+        resolved = resolve_under_module_path(module_path, relative, module_name);
         if (resolved) {
             free(relative);
             return resolved;
         }
     }
 
+    // 3. 包根下的 packages/：依赖装在这里，编译器自己认，不依赖 tapm 设环境变量。
+    char *package_root = package_root_of(filename);
+    if (package_root) {
+        char *dependencies = join_path(package_root, "packages");
+        free(package_root);
+        resolved = dependencies
+            ? resolve_under_root(dependencies, relative, module_name)
+            : NULL;
+        free(dependencies);
+        if (resolved) {
+            free(relative);
+            return resolved;
+        }
+    }
+
+    // 4. 当前工作目录。
     resolved = existing_canonical_path(copy_string(relative));
     if (resolved) {
         free(relative);
         return resolved;
     }
 
+    // 5. 编译器相邻的源码目录，以及 6. 安装前缀下的 share/tap。
     char *directory = compiler_directory(compiler_path);
     if (directory) {
-        candidate = join_path(directory, "..");
-        char *source_root = candidate;
-        candidate = source_root ? join_path(source_root, relative) : NULL;
+        char *source_root = join_path(directory, "..");
+        resolved = source_root
+            ? resolve_under_root(source_root, relative, module_name) : NULL;
         free(source_root);
-        resolved = existing_canonical_path(candidate);
         if (resolved) {
             free(directory);
             free(relative);
             return resolved;
         }
 
-        candidate = join_path(directory, "../share/tap");
-        char *install_root = candidate;
-        candidate = install_root ? join_path(install_root, relative) : NULL;
+        char *install_root = join_path(directory, "../share/tap");
+        resolved = install_root
+            ? resolve_under_root(install_root, relative, module_name) : NULL;
         free(install_root);
-        resolved = existing_canonical_path(candidate);
         free(directory);
         if (resolved) {
             free(relative);

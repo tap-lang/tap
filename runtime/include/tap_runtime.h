@@ -71,6 +71,26 @@ TAP_RUNTIME_API int32_t __tap_file_remove(const char *path);
 TAP_RUNTIME_API int32_t __tap_printf(const char *format, ...);
 TAP_RUNTIME_API int32_t __tap_eprintf(const char *format, ...);
 
+// 目录遍历：打开时读入全部条目名并排序（不含 "." 和 ".."）。
+// 名字由 Runtime 持有，__tap_dir_close 之后失效。
+TAP_RUNTIME_API void *__tap_dir_open(const char *path);
+TAP_RUNTIME_API const char *__tap_dir_next(void *handle);
+TAP_RUNTIME_API int32_t __tap_dir_is_open(void *handle);
+TAP_RUNTIME_API int32_t __tap_dir_close(void *handle);
+
+// path 是不是目录；不存在或不是目录都返回 0。
+TAP_RUNTIME_API int32_t __tap_path_is_directory(const char *path);
+
+// 建符号链接 link_path -> target；成功返回 0。
+// Windows 需要管理员权限或开发者模式，失败时调用方应回退到复制。
+TAP_RUNTIME_API int32_t __tap_symlink(const char *target, const char *link_path);
+
+// 建目录（已存在算成功）；成功返回 0。
+TAP_RUNTIME_API int32_t __tap_make_directory(const char *path);
+
+// 删除文件或空目录；成功返回 0。
+TAP_RUNTIME_API int32_t __tap_remove_entry(const char *path);
+
 // 打印 `panic: <message>` 并以状态 1 终止；不会返回。
 TAP_RUNTIME_API int32_t __tap_panic(const char *message);
 // 以指定状态码终止程序；不会返回。走 libc 的 exit，标准库缓冲区会被刷新。

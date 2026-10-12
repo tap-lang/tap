@@ -20,9 +20,11 @@
 // 打印用法
 static void print_usage() {
     printf("用法: tap [选项] <源文件>\n");
-    printf("      tap run [选项] <源文件> [-- 程序参数...]\n");
+    printf("      tap run [选项] [源文件] [-- 程序参数...]\n");
+    printf("      tap build\n");
     printf("命令:\n");
-    printf("  run               编译为本地可执行文件并运行\n");
+    printf("  run               编译为本地可执行文件并运行；不给文件时编译并运行当前包\n");
+    printf("  build             编译当前包，产物放到 <包根>/build/<name>\n");
     printf("选项:\n");
     printf("  -h, --help        显示此帮助信息\n");
     printf("  -o <文件>         指定输出文件\n");
@@ -55,6 +57,7 @@ int main(int argc, char *argv[]) {
     int static_link = 0;
     int lex_only = 0;
     int parse_only = 0;
+    int build_package = 0;
     int program_argc = 0;
     char **program_argv = NULL;
 
@@ -98,6 +101,8 @@ int main(int argc, char *argv[]) {
             return 1;
         } else if (strcmp(argv[i], "run") == 0 && !input_file && !run_native) {
             run_native = 1;
+        } else if (strcmp(argv[i], "build") == 0 && !input_file && !build_package) {
+            build_package = 1;
         } else if (!input_file) {
             input_file = argv[i];
         } else {
@@ -105,6 +110,34 @@ int main(int argc, char *argv[]) {
             print_usage();
             return 1;
         }
+    }
+
+    // `build` 是包级命令，不接受文件参数。
+    if (build_package && input_file) {
+        fprintf(stderr,
+            "error: `build` takes no file argument; use `tap <file> -o <out>` for single-file builds\n"); // 中文：build 不接受文件参数
+        return 1;
+    }
+
+    // 包模式：`tap build`，或 `tap run` 不带文件时，从当前目录向上找 package.toml，
+    // 按里面的 entry 编译，产物放到 <包根>/build/<name>。
+    // 只在没给文件参数时才走这条路，`tap run main.tp` 的行为完全不变。
+    if (build_package || (run_native && !input_file)) {
+        if (output_file) {
+            fprintf(stderr,
+                "error: -o cannot be combined with package mode\n"); // 中文：包模式不能和 -o 组合
+            return 1;
+        }
+
+        char *package_source = NULL;
+        char *package_output = NULL;
+        if (resolve_package_target(".", "build", &package_source, &package_output) != 0) {
+            return 1;
+        }
+        input_file = package_source;
+        output_file = package_output;
+        // `build` 只编译不运行；`run` 保持 run_native，编译完接着跑。
+        if (build_package) run_native = 0;
     }
 
     // 检查输入文件

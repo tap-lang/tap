@@ -791,6 +791,8 @@ static void materialize_statements(GenericContext *context, ASTNode *statement) 
                 materialize_expression(context, node->expression);
                 for (ASTNode *arm = node->arms; arm; arm = arm->next) {
                     materialize_statements(context, ((MatchArmNode *)arm)->body);
+                    // match 作表达式时分支值在 value 里，别漏。
+                    materialize_expression(context, ((MatchArmNode *)arm)->value);
                 }
                 break;
             }
@@ -836,6 +838,15 @@ static void materialize_expression(GenericContext *context, ASTNode *expression)
         case NODE_TRY:
             materialize_expression(context, ((TryNode *)expression)->inner);
             break;
+        case NODE_MATCH_STATEMENT: {
+            // match 作表达式：被匹配值和各分支的值都要走一遍。
+            MatchStatementNode *node = (MatchStatementNode *)expression;
+            materialize_expression(context, node->expression);
+            for (ASTNode *arm = node->arms; arm; arm = arm->next) {
+                materialize_expression(context, ((MatchArmNode *)arm)->value);
+            }
+            break;
+        }
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             for (ASTNode *type = call->type_arguments; type; type = type->next) {
@@ -1731,6 +1742,19 @@ static VarTypeNode *process_expression(GenericContext *context,
             free_ast((ASTNode *)inner);
             return expected ? clone_type(expected) : NULL;
         }
+        case NODE_MATCH_STATEMENT: {
+            // match 作表达式：分支值里的泛型调用要在这里特化。
+            MatchStatementNode *node = (MatchStatementNode *)expression;
+            VarTypeNode *matched = process_expression(
+                context, node->expression, NULL);
+            free_ast((ASTNode *)matched);
+            for (ASTNode *arm = node->arms; arm; arm = arm->next) {
+                VarTypeNode *arm_value = process_expression(
+                    context, ((MatchArmNode *)arm)->value, NULL);
+                free_ast((ASTNode *)arm_value);
+            }
+            return expected ? clone_type(expected) : NULL;
+        }
         case NODE_REFERENCE: {
             VarTypeNode *target = process_expression(
                 context, ((ReferenceNode *)expression)->target, NULL);
@@ -1864,6 +1888,11 @@ static void process_statements(GenericContext *context, ASTNode *statement,
                 for (ASTNode *arm = match_node->arms; arm; arm = arm->next) {
                     process_statements(
                         context, ((MatchArmNode *)arm)->body, return_type);
+                    // match 作表达式时分支值在 value 里：里面的泛型调用同样要特化，
+                    // 漏了会让 Codegen 找不到那个函数（报 struct expression type mismatch）。
+                    VarTypeNode *arm_value_type = process_expression(
+                        context, ((MatchArmNode *)arm)->value, NULL);
+                    free_ast((ASTNode *)arm_value_type);
                 }
                 break;
             }

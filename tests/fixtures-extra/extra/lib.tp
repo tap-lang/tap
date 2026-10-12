@@ -1,0 +1,4 @@
+// 第二个模块根的 fixture，用来验证 TAP_MODULE_PATH 支持多目录。
+pub fn marker(): i32 {
+    return 99;
+}

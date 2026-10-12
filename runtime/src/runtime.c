@@ -10,13 +10,16 @@
 
 #ifdef _WIN32
 #include <conio.h>
+#include <io.h>
 // winsock2.h 必须先于 windows.h：windows.h 会拉进老的 winsock.h，两者一起用会冲突。
 #include <winsock2.h>
 #include <windows.h>
 #else
+#include <dirent.h>
 #include <errno.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <termios.h>
 #include <unistd.h>
@@ -497,6 +500,196 @@ int32_t __tap_eprintf(const char *format, ...) {
     int written = vfprintf(stderr, format, arguments);
     va_end(arguments);
     return written;
+}
+
+// ---------------------------------------------------------------------------
+// 目录遍历
+//
+// 打开时把条目名一次性读进内存并排序：readdir 的顺序是未定义的，排序之后调用方
+// 拿到的结果才稳定（包管理这类工具要靠它做可复现的输出）。
+// 句柄就是下面这个结构体，通过不透明指针传给 tap 侧。
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    char **names;
+    int32_t count;
+    int32_t index;
+} TapDirectory;
+
+static int compare_directory_names(const void *left, const void *right) {
+    return strcmp(*(const char *const *)left, *(const char *const *)right);
+}
+
+// 释放目录句柄。keep_names 为真时保留条目名本身：它们已经通过 __tap_dir_next
+// 交给了 tap 侧（可能被存进 Vec），释放会让调用方拿到悬空指针。
+// 和 tap 其他 Runtime 字符串一样，这些名字活到进程结束。
+static void free_directory(TapDirectory *directory, int keep_names) {
+    if (!directory) return;
+    if (!keep_names) {
+        for (int32_t index = 0; index < directory->count; index++) {
+            free(directory->names[index]);
+        }
+    }
+    free(directory->names);
+    free(directory);
+}
+
+static int directory_append(
+    TapDirectory *directory, int32_t *capacity, const char *name) {
+    if (directory->count == *capacity) {
+        int32_t next = (*capacity) * 2;
+        char **grown = realloc(directory->names, sizeof(char *) * (size_t)next);
+        if (!grown) return -1;
+        directory->names = grown;
+        *capacity = next;
+    }
+
+    size_t length = strlen(name);
+    char *copy = malloc(length + 1);
+    if (!copy) return -1;
+    memcpy(copy, name, length + 1);
+    directory->names[directory->count++] = copy;
+    return 0;
+}
+
+// 打开目录准备遍历；失败返回 NULL。条目里不含 "." 和 ".."。
+void *__tap_dir_open(const char *path) {
+    if (!path) return NULL;
+
+    TapDirectory *directory = calloc(1, sizeof(TapDirectory));
+    if (!directory) return NULL;
+
+    int32_t capacity = 8;
+    directory->names = malloc(sizeof(char *) * (size_t)capacity);
+    if (!directory->names) {
+        free(directory);
+        return NULL;
+    }
+
+#ifdef _WIN32
+    size_t path_length = strlen(path);
+    char *pattern = malloc(path_length + 3);
+    if (!pattern) {
+        free_directory(directory, 0);
+        return NULL;
+    }
+    memcpy(pattern, path, path_length);
+    pattern[path_length] = '\\';
+    pattern[path_length + 1] = '*';
+    pattern[path_length + 2] = '\0';
+
+    struct _finddata_t entry;
+    intptr_t handle = _findfirst(pattern, &entry);
+    free(pattern);
+    if (handle == -1) {
+        free_directory(directory, 0);
+        return NULL;
+    }
+    do {
+        if (strcmp(entry.name, ".") == 0 || strcmp(entry.name, "..") == 0) continue;
+        if (directory_append(directory, &capacity, entry.name) != 0) {
+            _findclose(handle);
+            free_directory(directory, 0);
+            return NULL;
+        }
+    } while (_findnext(handle, &entry) == 0);
+    _findclose(handle);
+#else
+    DIR *handle = opendir(path);
+    if (!handle) {
+        free_directory(directory, 0);
+        return NULL;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(handle)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        if (directory_append(directory, &capacity, entry->d_name) != 0) {
+            closedir(handle);
+            free_directory(directory, 0);
+            return NULL;
+        }
+    }
+    closedir(handle);
+#endif
+
+    if (directory->count > 1) {
+        qsort(directory->names, (size_t)directory->count, sizeof(char *),
+              compare_directory_names);
+    }
+    return directory;
+}
+
+// 取下一条目名；已到末尾返回空字符串。名字由 Runtime 持有，调用方不要释放。
+const char *__tap_dir_next(void *handle) {
+    TapDirectory *directory = (TapDirectory *)handle;
+    if (!directory || directory->index >= directory->count) return "";
+    return directory->names[directory->index++];
+}
+
+// 句柄是否有效。tap 没有空指针字面量，有效性只能由 Runtime 判断。
+int32_t __tap_dir_is_open(void *handle) {
+    return handle != NULL ? 1 : 0;
+}
+
+// 关闭目录句柄并释放条目名；成功返回 0。
+int32_t __tap_dir_close(void *handle) {
+    if (!handle) return -1;
+    free_directory((TapDirectory *)handle, 1);
+    return 0;
+}
+
+// path 是不是目录；不存在或不是目录都返回 0。
+int32_t __tap_path_is_directory(const char *path) {
+    if (!path) return 0;
+#ifdef _WIN32
+    DWORD attributes = GetFileAttributesA(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES) return 0;
+    return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? 1 : 0;
+#else
+    struct stat info;
+    if (stat(path, &info) != 0) return 0;
+    return S_ISDIR(info.st_mode) ? 1 : 0;
+#endif
+}
+
+// 建符号链接：link_path 指向 target。成功返回 0。
+// Windows 上需要管理员权限或开启开发者模式，失败时调用方应回退到复制。
+int32_t __tap_symlink(const char *target, const char *link_path) {
+    if (!target || !link_path) return -1;
+#ifdef _WIN32
+    // Windows 的参数顺序和 POSIX 相反，目录链接还要额外标志。
+    DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    if (GetFileAttributesA(target) != INVALID_FILE_ATTRIBUTES &&
+        (GetFileAttributesA(target) & FILE_ATTRIBUTE_DIRECTORY)) {
+        flags |= SYMBOLIC_LINK_FLAG_DIRECTORY;
+    }
+    if (CreateSymbolicLinkA(link_path, target, flags)) return 0;
+    // 老系统不认 ALLOW_UNPRIVILEGED_CREATE，退回不带该标志再试一次。
+    return CreateSymbolicLinkA(link_path, target,
+               flags & ~SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) ? 0 : -1;
+#else
+    return symlink(target, link_path) == 0 ? 0 : -1;
+#endif
+}
+
+// 建目录（已存在算成功）。成功返回 0。
+int32_t __tap_make_directory(const char *path) {
+    if (!path) return -1;
+#ifdef _WIN32
+    if (_mkdir(path) == 0) return 0;
+#else
+    if (mkdir(path, 0755) == 0) return 0;
+#endif
+    return errno == EEXIST ? 0 : -1;
+}
+
+// 删除一个条目：文件用 remove，空目录也能删掉。成功返回 0。
+int32_t __tap_remove_entry(const char *path) {
+    if (!path) return -1;
+#ifdef _WIN32
+    if (RemoveDirectoryA(path)) return 0;
+#endif
+    return remove(path) == 0 ? 0 : -1;
 }
 
 // 打印错误信息并以状态 1 终止程序，用于调用方无法合理恢复的情况。

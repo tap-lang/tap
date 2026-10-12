@@ -1,0 +1,15 @@
+// TAP_MODULE_PATH 支持多目录：第二个根来自 fixtures-extra。
+import extra.lib;
+import modules.math;
+
+fn main(): i32 {
+    print("%d %d\n", lib.marker(), math.double(3));
+    return 0;
+}
+
+/** -- test
+- .stdout
+99 6
+- .exit
+0
+-- */

@@ -1,0 +1,17 @@
+// 包边界：搜索根下的第一段目录里有 package.toml 时，模块解析走它的 src/。
+// 搜索根是 fixtures，所以 import foo.lib 解析到 fixtures/foo/src/lib.tp。
+// 真实布局里搜索根是 <包根>/packages，第一段正好是包名。
+import foo.lib;
+import foo.internal;
+
+fn main(): i32 {
+    print("%d %d\n", lib.marker(), internal.inner());
+    return 0;
+}
+
+/** -- test
+- .stdout
+42 7
+- .exit
+0
+-- */

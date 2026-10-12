@@ -206,6 +206,12 @@ fn main(): i32 {
 | `std.fs` | `close(file): i32` | 关闭文件，成功返回 `0` |
 | `std.fs` | `remove(path): i32` | 删除文件，成功返回 `0` |
 | `std.fs` | `read_text(path): Result<string, string>` | 整个文件读成字符串，打不开返回 `Err` |
+| `std.fs` | `read_dir(path): Result<Vec<string>, string>` | 列出目录条目名，不含 `.` / `..`，**按名字排序**；打不开返回 `Err` |
+| `std.fs` | `is_dir(path): bool` | 路径是不是目录 |
+| `std.fs` | `open_dir` / `is_dir_open` / `next_entry` / `close_dir` | 目录遍历的流式版本 |
+| `std.fs` | `make_dir(path): i32` | 建目录（已存在算成功） |
+| `std.fs` | `symlink(target, link_path): i32` | 建符号链接；Windows 需开发者模式 |
+| `std.fs` | `remove_entry(path): i32` | 删除文件或空目录 |
 | `std.fs` | `write_text(path, data): i64` | 覆盖写入，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `append_text(path, data): i64` | 追加到末尾，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `exists(path): bool` | 能否以只读方式打开；不存在或无权限返回 `false` |
