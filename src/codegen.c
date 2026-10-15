@@ -790,8 +790,14 @@ static LLVMValueRef named_value_address(CodeGenContext *context, const char *nam
 }
 
 // 取函数名最后一段，模块函数内部名如 __tap_module_0.push 会得到 push。
+// 去掉模块前缀 `__tap_module_N.`，留下源语言里的函数名。
+//
+// **只剥第一个点，而且只剥模块前缀**。不能按「最后一个点」切：单态化会把类型实参的名字
+// 嵌进方法名，而类型实参现在也带模块前缀——`__tap_module_0.len$n___tap_module_2.Item`
+// 有两个点，按最后一个点切会得到 `Item`，方法名就匹配不上了（诊断里也会打错名字）。
 static const char *function_base_name(const char *name) {
-    const char *dot = strrchr(name, '.');
+    if (strncmp(name, "__tap_module_", 13) != 0) return name;
+    const char *dot = strchr(name, '.');
     return dot ? dot + 1 : name;
 }
 

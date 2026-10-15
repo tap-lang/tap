@@ -1,0 +1,27 @@
+// 类型名的三级查找有确定的优先级，这一条钉住第②级压过第③级。
+//
+// clash_a 和 clash_b 都导出 `pub struct Point`：
+//   - `import modules.clash_a as a;`    是命名空间导入 → 第③级（兜底）
+//   - `import modules.clash_b.Point;`   是单成员导入   → 第②级（明确引入）
+// 所以裸名 `Point` 解析到 clash_b 的那个，**不报歧义**。第③级只在①②级都没来源时
+// 才需要唯一（那种情况见 compile-fail/modules/ambiguous_pub_type.tp）。
+import modules.clash_a as a;
+import modules.clash_b.Point;
+import modules.clash_b as b;
+
+fn main(): i32 {
+    let p: Point = b.make();
+    print("%d\n", p.y);
+
+    // 命名空间限定照常可用，和裸名走的是两条路。
+    print("%d\n", a.make().x);
+    return 0;
+}
+
+/** -- test
+- .stdout
+2
+1
+- .exit
+0
+-- */

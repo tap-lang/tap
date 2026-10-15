@@ -1,0 +1,27 @@
+// 泛型结构体用**导入的结构体**做类型实参，再在它上面调方法。
+//
+// 回归点：单态化会把类型实参的名字嵌进方法名，而类型实参现在也带模块前缀——
+//     __tap_module_0.len$n___tap_module_2.Point
+// 于是方法名里有**两个点**。`function_base_name` 原先按最后一个点切，会切到 `Point`，
+// `method_name_matches` 就对不上，方法查找失败，最后误报成
+// 「method 'len' is only available on string values」。
+import std.vec as vec;
+import modules.clash_b as b;
+
+fn main(): i32 {
+    let items: Vec<Point> = vec.new();
+    let p: Point = b.make();
+    items = vec.push(items, p);
+
+    // 方法调用（名字里嵌了类型实参）和字段访问各来一次。
+    print("len=%u y=%d\n", items.len(), items.get(0).y);
+    vec.free(items);
+    return 0;
+}
+
+/** -- test
+- .stdout
+len=1 y=2
+- .exit
+0
+-- */

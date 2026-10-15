@@ -1,0 +1,28 @@
+// 两个模块各自导出 `pub struct Point`，同时导入并各自使用。
+//
+// 回归点：pub 类型以前保持裸名、占全局名字，两个包这么写会报 `duplicate struct 'Point'`。
+// 现在类型也改名成 `__tap_module_N.Point`，引用处按三级查找解析：
+//   ① 本模块自己的类型  ② 裸名导入（import m.T / import m.*）  ③ 命名空间导入的模块
+//
+// 两个模块都导出 Point，写裸名会有歧义（另有 compile-fail 用例钉住），所以这里靠
+// 推断定类型——这也说明「导入」本身没问题，只有真的写那个裸名才有问题。
+import modules.clash_a as a;
+import modules.clash_b as b;
+
+fn main(): i32 {
+    let pa = a.make();
+    let pb = b.make();
+    print("%d %d\n", pa.x, pb.y);
+
+    // clash_a 内部同时持有自己的 Point（第①级）和依赖 clash_b 的 Point（第③级）。
+    print("%d\n", a.b_y());
+    return 0;
+}
+
+/** -- test
+- .stdout
+1 2
+2
+- .exit
+0
+-- */

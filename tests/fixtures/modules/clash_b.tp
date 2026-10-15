@@ -1,0 +1,11 @@
+// 和 clash_a 里的 Point 同名，但两边都是 pub。
+//
+// 改名之前两个 pub 类型会撞在同一个全局名字上（`duplicate struct 'Point'`），
+// 第三方包只能靠给类型起全局唯一名活着。现在类型也带模块前缀，各归各的。
+pub struct Point {
+    y: i32,
+}
+
+pub fn make(): Point {
+    return Point { y: 2 };
+}

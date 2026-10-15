@@ -1,0 +1,19 @@
+// 这个模块**自己导出 Point，同时依赖另一个也导出 Point 的模块**。
+//
+// 这是第三方生态的基本形态，也是「命名空间导入不参与裸名重名检查」这条规则要保住的东西：
+// clash_b 的 Point 只是三级查找第③级的兜底，本模块自己的 Point（第①级）优先级更高，
+// 两者共存完全正常。要是把命名空间导入也算进重名检查，这里就会误报冲突。
+import clash_b;
+
+pub struct Point {
+    x: i32,
+}
+
+pub fn make(): Point {
+    return Point { x: 1 };
+}
+
+// 拿依赖里的那个 Point（走 clash_b 的命名空间限定）。
+pub fn b_y(): i32 {
+    return clash_b.make().y;
+}

@@ -57,25 +57,29 @@ error: 'priv_fn' is private to module 'std.net'
 
 ### 类型的可见性
 
-- **`pub` 类型保持裸名**：其他模块直接写类型名，不需要也不能写 `模块名.类型名`。
-- **非 `pub` 类型会改名成模块私有符号**，模块外部完全看不到。
+- **所有类型都带模块前缀**（`__tap_module_N.Name`），pub 与否都一样。
+- **`pub` 类型能从模块外引用**：写裸类型名（`Point`）或走名称空间导入，由三级查找解析
+  回来，见「类型名的解析」。
+- **非 `pub` 类型只在本模块内可见**，模块外部完全看不到。
 
-所以两个模块可以各自拥有同名的私有类型、互不干扰；而 `pub` 类型是全局共享的，
-两个模块不能定义同名的 `pub` 结构体或枚举。
+所以**两个模块可以各自拥有同名的类型，pub 的也行**——名字各带各的模块前缀，撞不到一起。
 
 ```text
 // modules/a.tp
-pub struct Point { x: i32 }      // 外部可以直接写 Point
+pub struct Point { x: i32 }      // 外部写 Point 就能引用
 struct Scratch { value: i32 }    // 只有 a 自己看得到
 
 // modules/b.tp
-struct Scratch { value: i32 }    // 和 a 的 Scratch 不冲突
+pub struct Point { y: i32 }      // 和 a 的 Point 不冲突
+struct Scratch { value: i32 }    // 和 a 的 Scratch 也不冲突
 ```
 
 ### 实现约定
 
 - 非 `pub` 的顶层**函数和常量**同样会改名成 `__tap_module_N.name`。这样它们既不导出、
   也不占用全局名字，其他模块不会因为重名而冲突。
+- **类型比它们更彻底：pub 与否一律改名**（`__tap_module_N.Name`）。pub 只决定「能不能从
+  模块外引用」，不决定名字长什么样。引用处靠三级查找解析，见「类型名的解析」。
 - `extern fn` 的符号名就是 C 符号名，加前缀会链接不到，所以它保持原名。代价是
   **模块里的 `extern` 声明会占住那个全局名字**：某个模块写了 `extern fn read(...)` 之后，
   导入它就不能再声明自己的 `read`，即使签名不同。要把它暴露出去，写 `pub extern fn`。
@@ -198,10 +202,38 @@ note: import the namespace form 'import modules.ambig;' and qualify the call, or
 
 ## 名称空间使用说明
 
-名称空间导入的 `pub` 常量和函数按 `别名.名字` 访问；`pub` 类型保持裸名直接写。没有
+名称空间导入的 `pub` 常量和函数按 `别名.名字` 访问；`pub` **类型名可以裸写**。没有
 `pub` 的符号是模块私有的，外部看不到。Prelude 函数和当前文件函数仍使用普通函数名调用；
-名称空间导入不引入裸名，所以未限定的 `math.square(...)` 之外的裸调用会按未定义函数报错
-（要裸名调用请用上一节的通配/单成员导入）。
+名称空间导入不引入裸的**函数和常量**，所以未限定的 `math.square(...)` 之外的裸调用会按
+未定义函数报错（要裸名调用请用上一节的通配/单成员导入）。
+
+**类型名是这里唯一的例外**：`import std.vec as vec;` 之后可以直接写裸名 `Vec<i32>`。
+类型名走三级查找（见下节），命名空间导入确实会把 pub 类型名带进裸名作用域——但它是
+**兜底**，优先级最低。
+
+## 类型名的解析
+
+`pub` 类型和函数、常量不一样：它**也带模块前缀**（`__tap_module_N.Point`），所以两个包
+各写 `pub struct Point` 不会撞车。引用处按固定的三级顺序把名字解析回来：
+
+1. **本模块自己声明的类型** —— pub 与否都在这一级
+2. **裸名导入明确引入的类型** —— `import m.T;` / `import m.*;`
+3. **命名空间导入的模块里唯一导出这个名字的那个** —— `import std.vec as vec;` 之后写
+   `Vec<i32>` 走的就是这一级
+
+第①②级是「明确来源」，第③级是**兜底**，由此得到两条规则：
+
+- **第①②级有来源时，第③级根本用不到，不构成冲突。** 一个包自己定义 `Point`、又依赖
+  另一个也定义 `Point` 的包，完全正常——这是第三方依赖的基本形态。
+- **第③级要求唯一。** 多个命名空间导入的模块都导出同一个类型名、而第①②级都没有来源时，
+  裸名没有确定答案，报歧义（把涉及的两个模块名都列出来）。这条**用到才报**：导入本身没
+  问题，不写那个裸名（例如靠 `let p = a.make();` 让推断定类型）就完全正常。
+
+第①②级之间、以及它们和本文件顶层定义之间的重名一律报错，和函数/常量的规则一致。
+
+**限定类型名（`a.Point`）目前还不支持**，所以歧义只能靠改名或避免写类型名来解决。
+用例见 [`pub_type_same_name.tp`](../tests/run-pass/modules/pub_type_same_name.tp) 和
+[`type_name_precedence.tp`](../tests/run-pass/modules/type_name_precedence.tp)。
 
 顶层常量在模块外通过名称空间访问（`net.AF_INET`），在声明它的模块内部可以直接写裸名
 （`AF_INET`）——导出时声明会被改写成内部唯一符号，模块内的引用也跟着改写。裸名改写只
@@ -396,8 +428,9 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 
 **命名空间与可见性**
 
-- `pub` 的顶层函数和常量按 `别名.名字` 访问；`pub` 类型保持**裸名**（不支持 `模块名.类型名`），
-  所以两个模块不能定义同名的 `pub` 结构体或枚举。
+- `pub` 的顶层函数和常量按 `别名.名字` 访问。`pub` **类型**也带模块前缀（和函数/常量一样
+  改名成 `__tap_module_N.Name`），引用处按三级查找解析（见「类型名的解析」）——所以两个
+  模块可以定义同名的 `pub` 结构体或枚举。限定类型名（`模块名.类型名`）还不支持。
 - 没有 `pub` 的顶层函数和常量会改名成 `__tap_module_N.name`，既不导出、也不占全局名字，
   模块之间不会因为重名而冲突。
 - `extern fn` 是例外：符号名必须和 C 符号一致，所以它保持原名，**会占住那个全局名字**。
@@ -411,9 +444,12 @@ note: rename one of them, or import the module as a namespace and qualify the ca
   （模块不能把导入的符号转出去）。
 - 成员名与模块文件重名时（`import a.b.c` 里 `a/b/c.tp` 和 `a/b.tp` 同时存在）报歧义错误，
   不静默偏向；这种重名下同名的那个**模块**没有导入语法，只能改名。
-- 裸名重名检查只覆盖「本文件顶层定义 + 其他通配/单成员导入」。Prelude（`print` / `exit` /
-  `panic` 等）是模块加载完之后才注入的，不在检查范围内：模块若有一个和 Prelude 同名的 `pub`
-  成员并被通配/单成员导入，裸名会**静默指向模块成员**而不是 Prelude。
+- 裸名重名检查覆盖「本文件顶层定义 + 其他通配/单成员导入」，**类型也算在内**。命名空间导入
+  不参与这个检查：它的 pub 类型名只是三级查找的兜底，本文件自己的定义和单成员/通配导入
+  优先级更高；兜底自己的歧义在**真正用到那个裸名**时才报。
+  Prelude（`print` / `exit` / `panic` 等）是模块加载完之后才注入的，不在检查范围内：模块若
+  有一个和 Prelude 同名的 `pub` 成员并被通配/单成员导入，裸名会**静默指向模块成员**而不是
+  Prelude。
 - 名称空间目前只能用于限定函数调用，不能作为值传递。
 - 入口文件不能把自身再次作为模块导入。
 
@@ -422,7 +458,8 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 - 模块符号被改名成 `__tap_module_N.name` 之后，部分诊断会把这个内部符号名直接打给用户，
   例如 `error: function '__tap_module_0.f' expects 1 arguments, but got 2`。非 `pub` 符号
   现在一律改名，所以这条更容易撞上。
-- 两个模块定义同名的 `pub` 类型时报 `duplicate struct 'P'`，不带位置信息；
+- 两个模块定义同名的 `pub` 类型**不再报错**（类型现在也带模块前缀）。裸类型名有歧义时报
+  `type name 'P' is exported by both 'a' and 'b'`，**不带位置信息**（`VarTypeNode` 没有行列）。
   `struct expression type mismatch` 同样没有位置信息（后者是通用问题，非模块特有）。
 - 访问模块私有的**常量**只报 `error: 'X' is private to module 'Y'`，没有位置信息；
   访问私有的**函数**带位置。
