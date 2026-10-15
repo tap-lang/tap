@@ -507,10 +507,13 @@ static StringMethodKind internal_string_method(const FunctionCallNode *call) {
 }
 
 // 标识符接收者沿用限定调用表示，同时返回点号前的变量名范围。
+//
+// 接收者本身可以带点：`conf.NAME.len()` 里 `conf.NAME` 是限定常量名，模块私有的还会
+// 变成 `__tap_module_0.NAME`。所以按**最后一个**点切分，不能假设只有一个点。
 static StringMethodKind named_string_method(
     const FunctionCallNode *call, const char **receiver_name, size_t *receiver_length) {
-    const char *dot = strchr(call->name, '.');
-    if (!dot || dot == call->name || strchr(dot + 1, '.')) return STRING_METHOD_NONE;
+    const char *dot = strrchr(call->name, '.');
+    if (!dot || dot == call->name) return STRING_METHOD_NONE;
 
     StringMethodKind method = STRING_METHOD_NONE;
     if (strcmp(dot + 1, "len") == 0) method = STRING_METHOD_LEN;
@@ -2082,10 +2085,39 @@ static LLVMValueRef generate_string_receiver(
     if (receiver_name) {
         Symbol *symbol = find_symbol_with_length(context, receiver_name, receiver_length);
         if (!symbol) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "undefined variable '%.*s'",
-                             (int)receiver_length, receiver_name);
-            exit(1);
+            // 全局常量不在局部符号表里，但它同样能当接收者：
+            //     const A: string = "alpha";
+            //     A.len()
+            // 所以查不到局部符号还要按名字找一遍全局常量，两者都没有才是真的未定义。
+            char *name = malloc(receiver_length + 1);
+            if (!name) {
+                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                exit(1);
+            }
+            memcpy(name, receiver_name, receiver_length);
+            name[receiver_length] = '\0';
+            VarDeclNode *constant = find_global_constant(context, name);
+            LLVMValueRef global = constant
+                ? LLVMGetNamedGlobal(context->module, name)
+                : NULL;
+            free(name);
+
+            if (!constant || !constant->type || !global) {
+                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                                 "undefined variable '%.*s'",
+                                 (int)receiver_length, receiver_name);
+                exit(1);
+            }
+            if (constant->type->is_array || constant->type->type != LITERAL_STRING) {
+                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                                 "method '%s' is only available on string values",
+                                 string_method_name(method));
+                exit(1);
+            }
+            *arguments_out = call->arguments;
+            return LLVMBuildLoad2(
+                context->builder, get_llvm_type(context, LITERAL_STRING),
+                global, "string_method_receiver");
         }
         if (symbol->array_type || symbol->type != LITERAL_STRING) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
@@ -3870,6 +3902,31 @@ static FunctionNode *find_user_main(ProgramNode *program) {
     return NULL;
 }
 
+// 字符串常量的初始化器。
+//
+// 具名全局的类型是 `i8*`，而全局初始化器只能是常量表达式——不能用
+// `LLVMBuildGlobalStringPtr`（那会生成一条指令，需要函数上下文）。所以这里手工
+// 落成两块：一个私有的字节数组全局，加一个指向它首元素的常量 GEP。
+static LLVMValueRef string_constant_initializer(
+    CodeGenContext *context, const char *text) {
+    LLVMContextRef llvm = context->context;
+    LLVMTypeRef byte_type = LLVMInt8TypeInContext(llvm);
+    size_t length = strlen(text);
+    LLVMTypeRef array_type = LLVMArrayType(byte_type, (uint64_t)length + 1);
+
+    // 匿名全局 + 私有链接：每个字符串常量各存一份，不参与符号解析，
+    // 也就不会和别的模块里的同名字符串撞上。
+    LLVMValueRef array = LLVMAddGlobal(context->module, array_type, ".str");
+    LLVMSetInitializer(array,
+        LLVMConstStringInContext(llvm, text, (unsigned)length, 0));
+    LLVMSetGlobalConstant(array, 1);
+    LLVMSetLinkage(array, LLVMPrivateLinkage);
+
+    LLVMValueRef zero = LLVMConstInt(LLVMInt32TypeInContext(llvm), 0, 0);
+    LLVMValueRef indices[2] = {zero, zero};
+    return LLVMConstGEP2(array_type, array, indices, 2);
+}
+
 // 将顶层常量的字面量初始化表达式转换为 LLVM 常量初始值。
 static LLVMValueRef constant_initializer(
     CodeGenContext *context, VarDeclNode *constant) {
@@ -3895,6 +3952,10 @@ static LLVMValueRef constant_initializer(
     }
     if (is_float_type(constant->type->type) && is_float_type(literal->literal_type)) {
         return LLVMConstReal(target_type, literal->value.float_value);
+    }
+    if (constant->type->type == LITERAL_STRING &&
+        literal->literal_type == LITERAL_STRING) {
+        return string_constant_initializer(context, literal->value.string_value);
     }
     fprintf(stderr, "error: global constant '%s' initializer type mismatch\n",
             constant->name); // 中文：全局常量初始化类型不匹配

@@ -63,7 +63,13 @@ let mask: i32 = ~flags;       // -13
 ```text
 const ANSWER: i32 = 42;
 const VALUES: [i32; 4] = [0; 4];
+const GREETING: string = "hello, tap";
 ```
+
+顶层常量在**模块外**按 `别名.名字` 访问（`conf.GREETING`），在声明它的模块内部直接写裸名。
+字符串常量是完整的一等值：能比较、能传参、能当字符串方法的接收者
+（`GREETING.len()`、`conf.GREETING.len()` 都行）。
+用例见 [`string_constants.tp`](../tests/run-pass/types/string_constants.tp)。
 
 ### 变量声明
 

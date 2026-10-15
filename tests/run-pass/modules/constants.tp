@@ -5,12 +5,15 @@ import modules.constants as c;
 
 fn main(): i32 {
     print("%d %d %d\n", c.SCALE, c.scaled(4), c.offset(4));
+    // 限定常量当值，以及当字符串方法的接收者（`c.LABEL.len()` 走的是整串点名字那条路）。
+    print("%s %u %s\n", c.LABEL, c.LABEL.len(), c.LABEL.slice(1, 3));
     return 0;
 }
 
 /** -- test
 - .stdout
 3 12 8
+tap 3 ap
 - .exit
 0
 -- */

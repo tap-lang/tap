@@ -1540,6 +1540,16 @@ static int rewrite_statement_list(
     return 0;
 }
 
+// 字符串内建方法名（`s.len()` / `s.byte_at()` / `s.slice()`）。
+//
+// 模块解析阶段必须认出它们：限定常量上的调用 `conf.NAME.len()` 会被 Parser 拼成一个
+// 整串点名字，按常规的「模块.函数」解析会报「module 'mods.conf' has no function
+// 'NAME.len'」，而它其实是「常量 NAME 上调 len()」。
+static int is_string_builtin_method(const char *name) {
+    return strcmp(name, "len") == 0 || strcmp(name, "byte_at") == 0 ||
+           strcmp(name, "slice") == 0;
+}
+
 static int rewrite_call(
     ProgramNode *program, FunctionCallNode *call,
     LoadedModule *current_module, ImportBinding *bindings) {
@@ -1579,6 +1589,43 @@ static int rewrite_call(
             return 0;
         }
         export = find_public_export(binding->module, dot + 1);
+
+        // `conf.NAME.len()`：最后一段是字符串内建、前面还有段时，`NAME.len` 不是模块
+        // 函数，而是「限定常量 NAME 上调 len()」。按常量引用的规则改写接收者，
+        // 方法名原样留给后端（codegen 的 named_string_method 按最后一个点切分）。
+        if (!export) {
+            char *last_dot = strrchr(call->name, '.');
+            if (last_dot != dot && is_string_builtin_method(last_dot + 1)) {
+                size_t receiver_length = (size_t)(last_dot - call->name);
+                char *receiver = malloc(receiver_length + 1);
+                if (!receiver) {
+                    free(alias);
+                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                    return 1;
+                }
+                memcpy(receiver, call->name, receiver_length);
+                receiver[receiver_length] = '\0';
+                char *resolved =
+                    resolve_exported_name(receiver, current_module, bindings);
+                free(receiver);
+                free(alias);
+                if (resolved) {
+                    size_t size = strlen(resolved) + strlen(last_dot) + 1;
+                    char *combined = malloc(size);
+                    if (!combined) {
+                        free(resolved);
+                        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                        return 1;
+                    }
+                    snprintf(combined, size, "%s%s", resolved, last_dot);
+                    free(resolved);
+                    free(call->name);
+                    call->name = combined;
+                }
+                return 0;
+            }
+        }
+
         if (!export) {
             // 区分「压根没有这个符号」和「有但不是 pub」：后者是可见性问题，
             // 直接说「是私有的」比说「不存在」有用得多。

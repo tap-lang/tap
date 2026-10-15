@@ -46,25 +46,6 @@
 
 ## 已知问题
 
-### 顶层 `const` 不能用字符串初始化
-
-```text
-const VERSION: string = "0.1.0";     // error: global constant 'VERSION' initializer type mismatch
-```
-
-对照实测：
-
-| 写法 | 结果 |
-|---|---|
-| 顶层 `const X: string = "..."` | ✗ `initializer type mismatch` |
-| **函数内** `const X: string = "..."` | ✓ 正常 |
-| 顶层 `const X: i32 = 3` / `f64` | ✓ 正常 |
-
-模块里的 `pub const` 同样失败（诊断会带上改名后的符号名，如
-`global constant '__tap_module_6.TEMPLATE_VERSION' ...`）。
-
-**临时绕法**：改成函数返回字符串，或把字面量内联。`tapm/src/init.tp` 里的版本号就是这么绕的。
-
 ### match 绑定遇到泛型结构体载荷时无法调用方法
 
 ```text
