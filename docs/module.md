@@ -258,6 +258,10 @@ tap run main.tp         # 文件模式：现有行为，完全不变
 - 按 `[package]` 的 `entry` 定位入口文件，按 `name` 命名构建产物
 - `<包根>/build` 目录由编译器自己创建
 
+**产物是永久的**：`tap run` 编译到 `<包根>/build/<name>`，跑完不会删掉它；
+`tap run -o <路径>` 同理——`-o` 指定的文件会保留。只有**没给 `-o` 的文件模式**
+才走临时文件并在运行后清理。
+
 编译器读 `entry` **只做极简扫描**，不引入通用 TOML 解析器：
 
 - 只在 `[package]` 段内查找 `entry`
@@ -267,6 +271,23 @@ tap run main.tp         # 文件模式：现有行为，完全不变
 
 包的目录布局约定（`package.toml` / `src/` / `packages/`）见 tapm 仓库的
 `docs/design.md`。
+
+### `tap init`：转发给 `tapm`
+
+```text
+tap init demo           # 等价于 tapm init demo
+```
+
+`init` 是包管理器的活，编译器**只转发**——参数原样透传、退出码原样返回，模板也只有一份
+（在 `tapm` 里）。放在参数解析之前拦截，所以 `init` 之后的参数不会被 tap 自己的选项规则
+干扰（项目名不该因为长得像选项就被拒）。
+
+**tapm 的查找顺序**：先看编译器自己旁边（安装布局下两者都在 `<prefix>/bin`），再按 `PATH`
+找。都找不到时报错并提示「装上 tapm 并放进 PATH，或直接跑 `tapm init`」——而不是把
+`spawn` 的失败原样抛给用户。
+
+**这条依赖是单向的、软的**：`tap init` 需要 tapm，但**构建路径不需要**——`tap build` /
+`tap run` 完全独立于 tapm，tapm 坏了也不影响构建自己的项目。
 
 对于 `std.*` 模块，编译器会先尝试 `TAP_STD_PATH`，并去掉模块名开头的
 `std.`。例如 `TAP_STD_PATH=/path/to/std` 时，`import std.math;` 会查找

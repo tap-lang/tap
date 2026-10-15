@@ -10,4 +10,8 @@ int compile_and_run(CodeGenContext *context, const char *exe_file,
                     int program_argc, char **program_argv, int static_link);
 int run_with_lli(CodeGenContext *context);
 
+// 把 `tap init ...` 转发给 tapm。forwarded_argv[0] 是 "init"，其后是原样透传的参数。
+// 返回 tapm 的退出码；找不到 tapm 时打印提示并返回 1。
+int run_tapm(const char *compiler_path, int forwarded_argc, char **forwarded_argv);
+
 #endif

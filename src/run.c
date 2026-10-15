@@ -8,9 +8,12 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
+#include <io.h>
 #include <process.h>
 #include <windows.h>
 #define RUN_PATH_MAX MAX_PATH
+#define PATH_LIST_SEPARATOR ';'
+#define TAPM_PROGRAM_NAME "tapm.exe"
 #else
 #include <limits.h>
 #include <spawn.h>
@@ -20,6 +23,8 @@
 #define PATH_MAX 4096
 #endif
 #define RUN_PATH_MAX PATH_MAX
+#define PATH_LIST_SEPARATOR ':'
+#define TAPM_PROGRAM_NAME "tapm"
 extern char **environ;
 #endif
 
@@ -373,6 +378,95 @@ static int run_process(char *const argv[]) {
 #endif
 }
 
+// path 是不是可直接执行的文件。
+static int is_executable_file(const char *path) {
+#ifdef _WIN32
+    return _access(path, 0) == 0;
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
+
+// 在 PATH 里找可执行文件；找到返回 1 并把完整路径写进 output。
+static int find_program_on_path(const char *name, char *output, size_t output_size) {
+    const char *path = getenv("PATH");
+    if (!path || path[0] == '\0') return 0;
+
+    const char *start = path;
+    for (;;) {
+        const char *end = strchr(start, PATH_LIST_SEPARATOR);
+        size_t length = end ? (size_t)(end - start) : strlen(start);
+        if (length > 0) {
+            char candidate[RUN_PATH_MAX];
+            int written = snprintf(
+                candidate, sizeof(candidate), "%.*s/%s", (int)length, start, name);
+            if (written > 0 && (size_t)written < sizeof(candidate) &&
+                is_executable_file(candidate)) {
+                snprintf(output, output_size, "%s", candidate);
+                return 1;
+            }
+        }
+        if (!end) return 0;
+        start = end + 1;
+    }
+}
+
+// 把 `tap init ...` 转发给 tapm。
+//
+// tap 自己不实现脚手架——那是包管理器的活，模板也只该有一份（在 tapm 里）。
+// 这里只做转发：参数原样透传、退出码原样返回，所以 `tap init demo` 和
+// `tapm init demo` 完全等价。
+//
+// tapm 是独立安装的二进制，没装是最可能的失败，所以提前把查找做完，好给出
+// 「装什么、放哪」这种能照着做的提示，而不是一句看不出所以然的 spawn 失败。
+int run_tapm(const char *compiler_path, int forwarded_argc, char **forwarded_argv) {
+    char program[RUN_PATH_MAX];
+    program[0] = '\0';
+
+    // 先看编译器自己旁边：安装布局下两个可执行文件都在 <prefix>/bin。
+    char directory[RUN_PATH_MAX];
+    directory[0] = '\0';
+    compiler_directory(compiler_path, directory, sizeof(directory));
+    if (directory[0]) {
+        char beside[RUN_PATH_MAX];
+        int written = snprintf(
+            beside, sizeof(beside), "%s/%s", directory, TAPM_PROGRAM_NAME);
+        if (written > 0 && (size_t)written < sizeof(beside) &&
+            is_executable_file(beside)) {
+            snprintf(program, sizeof(program), "%s", beside);
+        }
+    }
+
+    // 再看 PATH。
+    if (!program[0]) {
+        find_program_on_path(TAPM_PROGRAM_NAME, program, sizeof(program));
+    }
+
+    if (!program[0]) {
+        fprintf(stderr,
+            "error: cannot find `%s`; `tap init` is provided by the tapm package manager\n", // 中文：找不到 tapm
+            TAPM_PROGRAM_NAME);
+        fprintf(stderr,
+            "install tapm and put it on PATH, or run `tapm init` directly\n"); // 中文：装上 tapm 并放进 PATH
+        return 1;
+    }
+
+    char **argv = malloc(sizeof(char *) * ((size_t)forwarded_argc + 2));
+    if (!argv) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return 1;
+    }
+    argv[0] = program;
+    for (int i = 0; i < forwarded_argc; i++) {
+        argv[i + 1] = forwarded_argv[i];
+    }
+    argv[forwarded_argc + 1] = NULL;
+
+    int result = run_process(argv);
+    free(argv);
+    return result;
+}
+
 #if defined(__APPLE__)
 // 执行外部查询命令并读取首行输出。
 static int read_command_line(const char *command, char *output, size_t output_size) {
@@ -581,11 +675,8 @@ int compile_and_run(CodeGenContext *context, const char *exe_file,
         result = execute_file(run_file, program_argc, program_argv);
     }
 
-    if (exe_file && compile_result == 0 && remove(exe_file) != 0 && errno != ENOENT) {
-        fprintf(stderr, "failed to delete temporary executable: %s: %s\n", // 中文：删除临时可执行文件失败
-                exe_file, strerror(errno));
-        if (result == 0) result = 1;
-    }
+    // 不删除 exe_file：它是调用方明确要的产物——`-o` 指定的路径，或包模式下的
+    // `<包根>/build/<name>`。没给 exe_file 时产物在临时目录里，由下面统一清理。
     if (cleanup_temp_workspace(&workspace) != 0 && result == 0) result = 1;
     return result;
 }
