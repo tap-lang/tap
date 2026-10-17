@@ -52,31 +52,19 @@
 
 ## 已知问题
 
-### match 绑定遇到泛型结构体载荷时无法调用方法
+剩下的缺陷和设计缺口统一记在 [`bug.md`](bug.md)：
 
-```text
-enum Holder {
-    Item(Vec<i32>),
-    Empty,
-}
+- **B1~B5 已于 2026-10-17 修复**（结构体字面量字段类型 / 实参和 return 的标量类型 /
+  bool 隐式转换 / match 泛型载荷调方法 / 通配分支让编译器段错误）。
+- **D1~D3 仍待定**：整数除零、移位越界、有符号无符号混算——都是未定义行为，
+  要不要插入运行时检查或写进文档取决于语言定位。
 
-match (h) {
-    Holder.Item(inner) => { print("%llu\n", inner.len()); }   // 报错
-    ...
-}
-```
+### match 绑定泛型载荷（已修，2026-10-17）
 
-`inner.len()` 报 `method 'len' is only available on string values`。字段访问（`inner.x`）和
-非泛型结构体载荷（如 `StringBuilder`）都正常，函数参数形式（`fn f(v: Vec<i32>)` 里的
-`v.len()`）也正常。
+`process_statements` / `process_expression` 原先都没把分支的载荷绑定登记进泛型阶段的
+类型环境，`inner.len()` 找不到接收者类型，泛型方法 `len` 没有被特化，最后误报
+「method 'len' is only available on string values」。
 
-**原因**：泛型单态化阶段的两个语句遍历器（`materialize_statements` 和 `process_statements`）
-原先都没处理 `NODE_MATCH_STATEMENT`，match 臂体被整段跳过；补上遍历之后仍然失败，因为
-`process_statements` 没有把分支的载荷绑定登记进它自己的类型环境，`inner.len` 找不到接收者
-类型，泛型方法 `len` 就没有被特化成 `len$Vec$i32`，Codegen 的 `find_method_function` 因此
-匹配不上。
-
-**修复方向**：在 `process_statements` 的 match 分支里按「被匹配类型 → 枚举 → 成员载荷字段」
-登记绑定类型。难点在**执行时机**：`specialize_generics` 里结构体字段的类型实参要到后半程才
-解析，而 `process_statements` 跑在前半程，此时拿到的是模板结构体的字段类型（形如 `T`）而不是
-实例化后的类型。需要先解决这个顺序问题，否则登记进去的是错的类型。
+原以为难点是执行时机（字段类型实参要到后半程才解析），实际不需要——函数参数走的是同一条
+路。修法是两个 match 分支都先 `bind_match_payloads`，载荷类型取自降级后的内部结构体，
+泛型枚举再按 `type_arguments` 做替换。细节见 [`bug.md`](bug.md) 的 B4。

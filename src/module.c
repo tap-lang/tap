@@ -1383,6 +1383,10 @@ static int rewrite_expression(
 // 三级都不命中返回 NULL。
 static char *resolve_type_name(
     LoadedModule *module, ImportBinding *bindings, const char *name) {
+    // 通配分支（`_ => ...`）的 `arm->enum_name` 是 NULL，调用方会原样传进来。
+    // 不挡的话会一路走到 strcmp(export->name, NULL) 直接段错误。
+    if (!name) return NULL;
+
     ModuleExport *export = find_type_export(module, name);
     if (!export) export = find_bare_type_import(bindings, name);
     if (!export) export = find_namespace_type_import(bindings, name);

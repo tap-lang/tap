@@ -1,0 +1,23 @@
+// 结构体字面量的字段类型必须和初始化值匹配。
+//
+// 回归点：以前只校验「字段存在 / 不重复 / 都给了」，从不比较类型。宽度不符的值会按错误
+// 布局写进去，**静默冲掉相邻字段**——`P { x: "hello", y: 7 }` 把 8 字节的指针塞进 4 字节
+// 的 x，y 从 7 变成 1。
+//
+// `StructInitFieldNode` 没有行列信息，所以这条诊断不带位置。
+struct P {
+    x: i32,
+    y: i32,
+}
+
+fn main(): i32 {
+    let p: P = P { x: "hello", y: 7 };
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: struct 'P' field 'x' type mismatch
+- .exit
+1
+-- */

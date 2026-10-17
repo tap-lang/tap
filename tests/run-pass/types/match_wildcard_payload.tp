@@ -1,0 +1,44 @@
+// 通配分支 + 载荷枚举：编译器不能崩。
+//
+// 回归点（编译器段错误，2026-10-17 修）：`module.c` 的 `rewrite_statement_list` 对每个
+// match 分支都调 `resolve_type_name(..., arm->enum_name)`，而**通配分支的 `enum_name` 是
+// NULL**。旧代码在入口文件上侥幸安全（`module == NULL` 时 `find_type_export` 的循环不执行），
+// 加了「三级类型名查找」之后会去遍历导入绑定，一路走到 `strcmp(export->name, NULL)` → SEGV。
+//
+// 触发条件很窄：载荷类型必须来自**其他模块**（名字带 `__tap_module_N.` 前缀），
+// 因为那样 `resolve_type_name` 才会真的去查导入绑定。载荷是标量或本文件的结构体时不崩。
+import std.string_builder as sb;
+import std.vec as vec;
+
+enum FromModule {
+    Text(StringBuilder),
+    Empty,
+}
+
+enum FromGeneric {
+    Items(Vec<i32>),
+    Empty,
+}
+
+fn main(): i32 {
+    let a: FromModule = FromModule.Empty;
+    match (a) {
+        FromModule.Text(t) => { print("text\n"); }
+        _ => { print("module wildcard\n"); }
+    }
+
+    let b: FromGeneric = FromGeneric.Empty;
+    match (b) {
+        FromGeneric.Items(items) => { print("items %u\n", items.len()); }
+        _ => { print("generic wildcard\n"); }
+    }
+    return 0;
+}
+
+/** -- test
+- .stdout
+module wildcard
+generic wildcard
+- .exit
+0
+-- */

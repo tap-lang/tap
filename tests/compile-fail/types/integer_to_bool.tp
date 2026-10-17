@@ -1,0 +1,12 @@
+// 反方向也一样：整数不能隐式变成 bool。
+fn main(): i32 {
+    let flag: bool = 1;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: initializer type mismatch for 'flag'
+- .exit
+1
+-- */

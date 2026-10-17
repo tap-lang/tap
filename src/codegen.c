@@ -55,9 +55,13 @@ static int is_float_type(enum LiteralType type) {
 // bool 虽然按整数处理，但不参与隐式数值转换，避免 `let f: f64 = true;` 这类写法通过。
 static int scalar_types_compatible(enum LiteralType target, enum LiteralType source) {
     if (target == source) return 1;
+    // bool 只和 bool 兼容（上面那行已放行）。这一条必须排在整数/浮点判断**之前**：
+    // `is_integer_type` 把 LITERAL_BOOL 也算作整数，否则 `let x: i32 = true` 和
+    // `let b: bool = 1` 都会溜过去。
+    if (target == LITERAL_BOOL || source == LITERAL_BOOL) return 0;
     if (is_integer_type(target) && is_integer_type(source)) return 1;
     if (is_float_type(target) && is_float_type(source)) return 1;
-    if (is_float_type(target) && is_integer_type(source) && source != LITERAL_BOOL) return 1;
+    if (is_float_type(target) && is_integer_type(source)) return 1;
     return 0;
 }
 
@@ -1454,14 +1458,39 @@ static StructInitFieldNode *find_struct_init_field(
     return NULL;
 }
 
-// 校验结构体字面量字段是否完整、无重复且无未知字段。
+// 字段类型是不是本结构体的泛型类型参数（模板里的 `T`）。
+//
+// 代码生成阶段拿到的本该是特化后的具体类型，这里只是兜底：真拿 `T` 去和实际值比较会
+// 一律不等，把合法的泛型结构体字面量误判成类型不匹配。
+static int is_generic_type_parameter(
+    const StructNode *struct_node, const VarTypeNode *type) {
+    if (!struct_node || !type || !type->struct_name) return 0;
+    for (ASTNode *node = struct_node->type_params; node; node = node->next) {
+        if (strcmp(((IdentifierNode *)node)->name, type->struct_name) == 0) return 1;
+    }
+    return 0;
+}
+
+// 校验结构体字面量字段是否完整、无重复、无未知字段，以及**初始化值的类型**。
 static void validate_struct_literal_fields(
     CodeGenContext *context, StructNode *struct_node, StructLiteralNode *literal) {
     for (ASTNode *init_node = literal->fields; init_node; init_node = init_node->next) {
         StructInitFieldNode *init = (StructInitFieldNode *)init_node;
-        if (!find_struct_field(struct_node, init->name, NULL)) {
+        StructFieldNode *field = find_struct_field(struct_node, init->name, NULL);
+        if (!field) {
             fprintf(stderr, "error: struct '%s' has no field '%s'\n",
                     struct_node->name, init->name); // 中文：结构体没有该字段
+            exit(1);
+        }
+        // 初始化值必须和字段类型匹配。不查的话宽度不符的值会按错误布局写进去，**静默冲掉
+        // 相邻字段**：`struct P { x: i32, y: i32 }` 写 `P { x: "hello", y: 7 }`，
+        // 8 字节的指针塞进 4 字节的 x，把 y 从 7 变成 1。
+        // `StructInitFieldNode` / `StructLiteralNode` 都没有行列信息，所以这条诊断和
+        // 上面几条一样不带位置。
+        if (field->field_type && !is_generic_type_parameter(struct_node, field->field_type) &&
+            !expression_assignable_to(context, init->expression, field->field_type)) {
+            fprintf(stderr, "error: struct '%s' field '%s' type mismatch\n",
+                    struct_node->name, init->name); // 中文：结构体字段类型不匹配
             exit(1);
         }
         for (ASTNode *other = init_node->next; other; other = other->next) {
@@ -2520,8 +2549,10 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         int erased_pointer_argument =
             is_runtime_memory_pointer_argument(call, i) &&
             param_type && param_type->is_pointer;
+        // 一律校验，不再区分标量/非标量。以前这里带着「只查 enum/struct/pointer」的限定，
+        // 标量实参（`f("x")` 传给 i32 参数）被整段跳过，最后崩成 LLVM 的
+        // "Call parameter type does not match function signature"，连位置都没有。
         if (!erased_pointer_argument && param_type &&
-            (param_type->enum_name || param_type->struct_name || param_type->is_pointer) &&
             !expression_assignable_to(context, argument, param_type)) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                              "function '%s' argument %u type mismatch",
@@ -3736,12 +3767,15 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
-                if (context->current_return_var_type &&
-                    (context->current_return_var_type->enum_name ||
-                     context->current_return_var_type->struct_name ||
-                     context->current_return_var_type->is_pointer) &&
-                    !expression_assignable_to(context, return_node->expression,
-                                              context->current_return_var_type)) {
+                // 标量返回类型同样要校验。以前这里只查 enum/struct/pointer，
+                // `fn g(): i32 { return "x"; }` 被跳过，最后崩成 LLVM 的
+                // "Function return type does not match operand type of return inst"。
+                // 数组必须排除：它走 generate_expression_for_type 里自己的
+                // "array return type mismatch"，而 expression_assignable_to 对数组目标
+                // 恒返回 0（定长数组是允许返回的）。
+                const VarTypeNode *return_type = context->current_return_var_type;
+                if (return_type && !return_type->is_array &&
+                    !expression_assignable_to(context, return_node->expression, return_type)) {
                     fprintf(stderr, "error: return type mismatch\n"); // 中文：返回值类型不匹配
                     exit(1);
                 }

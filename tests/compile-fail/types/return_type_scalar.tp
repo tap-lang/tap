@@ -1,0 +1,20 @@
+// return 的标量类型也要校验。
+//
+// 回归点：和实参那处同一个形状的「只查非标量」条件，标量返回被跳过，最后崩成
+//   LLVM IR verification failed: Function return type does not match operand type of return inst!
+//
+// 定长数组要排除：它走 generate_expression_for_type 里自己的 "array return type mismatch"。
+fn f(): i32 {
+    return "x";
+}
+
+fn main(): i32 {
+    return f();
+}
+
+/** -- test
+- .stderr
+error: return type mismatch
+- .exit
+1
+-- */

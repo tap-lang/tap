@@ -1,0 +1,40 @@
+// 泛型枚举的载荷 + match **表达式**形式。
+//
+// 两个回归点：
+// 1. 泛型枚举（`Result<T, E>`）的载荷字段类型在降级后的内部结构体上是**类型参数**
+//    （`T`/`E`），必须按被匹配值的类型实参替换成具体类型，否则登记进去的仍是 `T`，
+//    分支值里照样解析不出接收者类型。
+// 2. match 作表达式时走的是 `process_expression` 的另一条路径（不是 process_statements），
+//    那里也要登记载荷绑定。
+import std.vec as vec;
+
+fn payload_len(items: Result<Vec<i32>, string>, fallback: u32): u32 {
+    let n: u32 = match (items) {
+        Result.Ok(inner) => inner.len(),
+        Result.Err(msg) => fallback,
+    };
+    return n;
+}
+
+fn main(): i32 {
+    let v: Vec<i32> = vec.new();
+    v = vec.push(v, 1);
+    v = vec.push(v, 2);
+    v = vec.push(v, 3);
+
+    let ok: Result<Vec<i32>, string> = Result<Vec<i32>, string>.Ok(v);
+    print("ok=%u\n", payload_len(ok, 0));
+
+    let bad: Result<Vec<i32>, string> = Result<Vec<i32>, string>.Err("boom");
+    print("bad=%u\n", payload_len(bad, 99));
+    vec.free(v);
+    return 0;
+}
+
+/** -- test
+- .stdout
+ok=3
+bad=99
+- .exit
+0
+-- */

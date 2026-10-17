@@ -1,0 +1,20 @@
+// 函数实参的标量类型也要校验。
+//
+// 回归点：检查条件原先带着「只查 enum/struct/pointer」的限定，标量实参被整段跳过，
+// 最后由 LLVM 的 verifier 兜底，打出一段没有位置的 IR 给用户：
+//   LLVM IR verification failed: Call parameter type does not match function signature!
+fn f(a: i32): i32 {
+    return a;
+}
+
+fn main(): i32 {
+    return f("x");
+}
+
+/** -- test
+- .stderr
+error: function 'f' argument 1 type mismatch
+--> tests/compile-fail/types/call_argument_type.tp:11:12
+- .exit
+1
+-- */

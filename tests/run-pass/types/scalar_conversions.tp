@@ -1,0 +1,44 @@
+// 标量隐式转换的「允许清单」。
+//
+// 和 compile-fail 的 bool_to_integer / integer_to_bool / float_to_bool / float_to_integer
+// 是一对：那几条钉住不允许的，这条钉住允许的——改 `scalar_types_compatible` 时两边都要跑。
+//
+// 规则（见 docs/data-types.md）：
+//   - 整数之间互相兼容（拓宽、收窄、有无符号都行）
+//   - 浮点之间互相兼容
+//   - 整数可以变浮点，反方向不行
+//   - bool 只和 bool 兼容
+fn takes_f64(v: f64): f64 {
+    return v;
+}
+
+fn gives_f64(): f64 {
+    return 2;
+}
+
+fn main(): i32 {
+    let widened: i64 = 1;          // 整数拓宽
+    let narrowed: u8 = 200;        // 整数收窄
+    let from_int: f64 = 1;         // int -> float
+    let f32_literal: f32 = 1.5;    // 浮点字面量
+    let f32_to_f64: f64 = 1.5;     // f32 -> f64
+    let same_bool: bool = true;    // bool -> bool
+    let same_string: string = "x";
+    let unsigned_to_signed: i32 = narrowed;
+
+    // 实参和返回值这两条路径同样要放行 int -> float。
+    let argument: f64 = takes_f64(3);
+    let returned: f64 = gives_f64();
+
+    print("%lld %u %f %f %f %d %s %d %f %f\n",
+          widened, narrowed, from_int, f32_literal, f32_to_f64,
+          same_bool, same_string, unsigned_to_signed, argument, returned);
+    return 0;
+}
+
+/** -- test
+- .stdout
+1 200 1.000000 1.500000 1.500000 1 x 200 3.000000 2.000000
+- .exit
+0
+-- */

@@ -1,0 +1,44 @@
+// match 分支绑定泛型载荷后，要在分支体里能调载荷的方法。
+//
+// 回归点：`process_statements` / `process_expression` 的 match 分支原先只递归分支体，
+// **没把载荷绑定登记进泛型阶段的类型环境**。于是 `inner.len()` 找不到接收者类型，
+// 泛型方法 `len` 不会被特化，Codegen 的 find_method_function 匹配不上，最后误报成
+// 「method 'len' is only available on string values」。
+//
+// 两条分支体都要覆盖：单载荷（`Item(inner)`）和多载荷（`Pair(items, n)`）。
+import std.vec as vec;
+
+enum Holder {
+    Item(Vec<i32>),
+    Pair(Vec<i32>, i32),
+    Empty,
+}
+
+fn describe(h: Holder) {
+    match (h) {
+        Holder.Item(inner) => { print("item len=%u\n", inner.len()); }
+        Holder.Pair(items, n) => { print("pair %u %d\n", items.len(), n); }
+        Holder.Empty => { print("empty\n"); }
+    }
+}
+
+fn main(): i32 {
+    let v: Vec<i32> = vec.new();
+    v = vec.push(v, 7);
+    v = vec.push(v, 8);
+
+    describe(Holder.Item(v));
+    describe(Holder.Pair(v, 9));
+    describe(Holder.Empty);
+    vec.free(v);
+    return 0;
+}
+
+/** -- test
+- .stdout
+item len=2
+pair 2 9
+empty
+- .exit
+0
+-- */

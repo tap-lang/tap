@@ -1007,6 +1007,11 @@ static VarTypeNode *process_expression(GenericContext *context,
                                        ASTNode *expression,
                                        const VarTypeNode *expected);
 
+// 把 match 分支的载荷绑定登记进类型环境。定义在 process_statements 附近，
+// 但 match 的**表达式**形式在 process_expression 里处理，所以要先声明。
+static void bind_match_payloads(
+    GenericContext *context, const VarTypeNode *matched, MatchArmNode *arm);
+
 // 报告带调用位置的泛型错误并终止编译。
 static void generic_call_error(FunctionCallNode *call, const char *message,
                                const char *detail) {
@@ -1747,12 +1752,15 @@ static VarTypeNode *process_expression(GenericContext *context,
             MatchStatementNode *node = (MatchStatementNode *)expression;
             VarTypeNode *matched = process_expression(
                 context, node->expression, NULL);
-            free_ast((ASTNode *)matched);
             for (ASTNode *arm = node->arms; arm; arm = arm->next) {
+                MatchArmNode *arm_node = (MatchArmNode *)arm;
+                // 和语句形式一样：**先**登记载荷绑定，分支值里才能解析出接收者类型。
+                bind_match_payloads(context, matched, arm_node);
                 VarTypeNode *arm_value = process_expression(
-                    context, ((MatchArmNode *)arm)->value, NULL);
+                    context, arm_node->value, NULL);
                 free_ast((ASTNode *)arm_value);
             }
+            free_ast((ASTNode *)matched);
             return expected ? clone_type(expected) : NULL;
         }
         case NODE_REFERENCE: {
@@ -1818,6 +1826,94 @@ static VarTypeNode *process_expression(GenericContext *context,
 }
 
 // 处理语句链中的泛型调用并维护局部类型环境。
+// 按名字在枚举里找成员。
+static EnumVariantNode *find_variant(EnumNode *enum_node, const char *name) {
+    for (ASTNode *node = enum_node ? enum_node->variants : NULL;
+         node; node = node->next) {
+        if (strcmp(((EnumVariantNode *)node)->name, name) == 0) {
+            return (EnumVariantNode *)node;
+        }
+    }
+    return NULL;
+}
+
+// 按下标取结构体字段。
+static StructFieldNode *struct_field_at(StructNode *structure, unsigned index) {
+    unsigned current = 0;
+    for (ASTNode *node = structure ? structure->fields : NULL;
+         node; node = node->next, current++) {
+        if (current == index) return (StructFieldNode *)node;
+    }
+    return NULL;
+}
+
+// 把 match 分支的载荷绑定（`Holder.Item(inner)` 里的 inner）登记进类型环境。
+//
+// 不登记的话，分支体里的 `inner.len()` 找不到接收者类型，泛型方法 `len` 不会被特化，
+// Codegen 的 find_method_function 就匹配不上，最后误报成
+// 「method 'len' is only available on string values」。
+//
+// 载荷类型取自**降级后的内部结构体**：变体首个载荷字段的下标是 variant->field_index，
+// 第 offset 个绑定对应 field_index + offset（和 Codegen 的绑定逻辑一致）。
+//
+// 这里拿到的是**尚未 materialize** 的字段类型（process_statements 跑在 specialize_generics
+// 的第一阶段，结构体字段要到第二阶段才 materialize）。这是可行的：函数参数走的是同一条
+// 路——process_function 登记的也是未 materialize 的 param_types，而
+// `fn f(v: Vec<i32>) { v.len(); }` 一直是正常的。
+static void bind_match_payloads(
+    GenericContext *context, const VarTypeNode *matched, MatchArmNode *arm) {
+    if (!matched) return;
+    if (!arm->variant_name || !arm->bindings) return; // 通配分支没有绑定
+
+    // 被匹配值的类型有两种记法：泛型阶段按**枚举**名记（`enum_name = "Holder"`），
+    // Codegen 阶段按**降级后的结构体**名记（`struct_name`）。两种都要认，否则
+    // 这里会静默 return，绑定登记不上，症状和没修一样。
+    EnumNode *enum_node = NULL;
+    StructNode *structure = NULL;
+    if (matched->enum_name) {
+        enum_node = find_enum(context->program, matched->enum_name);
+        structure = find_struct(context->program, matched->enum_name);
+    } else if (matched->struct_name) {
+        structure = find_struct(context->program, matched->struct_name);
+        if (structure && structure->is_tagged_enum) {
+            const char *enum_name = structure->tagged_enum_name
+                ? structure->tagged_enum_name : structure->name;
+            enum_node = find_enum(context->program, enum_name);
+        }
+    }
+    if (!enum_node || !structure) return;
+
+    EnumVariantNode *variant = find_variant(enum_node, arm->variant_name);
+    if (!variant) return;
+
+    // 泛型枚举（`Result<Vec<i32>, string>`）的载荷字段类型是**类型参数**（`T`/`E`），
+    // 直接登记进去等于登记了个 `T`，分支体里照样解析不出接收者类型。必须按被匹配值的
+    // 类型实参替换成具体类型。非泛型枚举时 bindings 为空，substitute_type 就是 clone。
+    TypeBinding *type_bindings = NULL;
+    ASTNode *parameter = enum_node->type_params;
+    ASTNode *argument = matched->type_arguments;
+    while (parameter && argument) {
+        bind_type(&type_bindings, ((IdentifierNode *)parameter)->name,
+                  (VarTypeNode *)argument);
+        parameter = parameter->next;
+        argument = argument->next;
+    }
+    FunctionNode substitution_scope = {0};
+    substitution_scope.type_params = enum_node->type_params;
+
+    unsigned offset = 0;
+    for (ASTNode *binding = arm->bindings; binding; binding = binding->next, offset++) {
+        StructFieldNode *field =
+            struct_field_at(structure, variant->field_index + offset);
+        if (!field) break;
+        VarTypeNode *payload_type = substitute_type(
+            &substitution_scope, field->field_type, type_bindings);
+        add_symbol(context, ((IdentifierNode *)binding)->name, payload_type);
+        free_ast((ASTNode *)payload_type);
+    }
+    free_bindings(type_bindings);
+}
+
 static void process_statements(GenericContext *context, ASTNode *statement,
                                const VarTypeNode *return_type) {
     for (; statement; statement = statement->next) {
@@ -1882,18 +1978,21 @@ static void process_statements(GenericContext *context, ASTNode *statement,
             case NODE_MATCH_STATEMENT: {
                 // 分支体是函数体的一部分，泛型方法调用同样需要在这里特化。
                 MatchStatementNode *match_node = (MatchStatementNode *)statement;
-                VarTypeNode *ignored = process_expression(
+                VarTypeNode *matched = process_expression(
                     context, match_node->expression, NULL);
-                free_ast((ASTNode *)ignored);
                 for (ASTNode *arm = match_node->arms; arm; arm = arm->next) {
-                    process_statements(
-                        context, ((MatchArmNode *)arm)->body, return_type);
+                    MatchArmNode *arm_node = (MatchArmNode *)arm;
+                    // **先**登记载荷绑定再处理分支体，顺序不能反：分支体里的
+                    // `inner.len()` 要靠这个类型才能找到并特化泛型方法。
+                    bind_match_payloads(context, matched, arm_node);
+                    process_statements(context, arm_node->body, return_type);
                     // match 作表达式时分支值在 value 里：里面的泛型调用同样要特化，
                     // 漏了会让 Codegen 找不到那个函数（报 struct expression type mismatch）。
                     VarTypeNode *arm_value_type = process_expression(
-                        context, ((MatchArmNode *)arm)->value, NULL);
+                        context, arm_node->value, NULL);
                     free_ast((ASTNode *)arm_value_type);
                 }
+                free_ast((ASTNode *)matched);
                 break;
             }
             default:
