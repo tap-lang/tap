@@ -1,0 +1,17 @@
+// 取模零和除零同样处理，但消息分开报，便于定位。
+fn modulo(a: i32, b: i32): i32 {
+    return a % b;
+}
+
+fn main(): i32 {
+    let zero: i32 = 0;
+    print("%d\n", modulo(7, zero));
+    return 0;
+}
+
+/** -- test
+- .stdout
+Integer modulo by zero
+- .exit
+1
+-- */

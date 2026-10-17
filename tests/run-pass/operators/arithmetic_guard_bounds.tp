@@ -1,0 +1,54 @@
+// 除零 / 移位越界的运行时检查，**边界内**必须放行。
+//
+// 和 tests/run-fail/arithmetic/ 下那几条是一对：那边钉住「越界要报错」，这边钉住
+// 「刚好合法不能误报」。守卫最容易被 off-by-one 写错，尤其是：
+//   - 移位量 = 位宽 - 1（31）合法，= 位宽（32）非法
+//   - 负数移位量按无符号比较会变成巨大值，要挡住
+//   - 无符号除法只需查零，不该套 MIN / -1 的逻辑
+fn divide(a: i32, b: i32): i32 {
+    return a / b;
+}
+
+fn modulo(a: i32, b: i32): i32 {
+    return a % b;
+}
+
+fn shift_left(a: i32, b: i32): i32 {
+    return a << b;
+}
+
+fn shift_right(a: i32, b: i32): i32 {
+    return a >> b;
+}
+
+fn unsigned_divide(a: u32, b: u32): u32 {
+    return a / b;
+}
+
+fn main(): i32 {
+    let one: i32 = 1;
+    let last_valid: i32 = 31;
+    let eight: u32 = 8;
+
+    // 移位：位宽 - 1 是合法上界
+    print("shift31=%d\n", shift_left(one, last_valid));
+    print("shr=%d %d\n", shift_right(-8, one), shift_right(8, one));
+
+    // 除法：负数、零被除数、无符号都正常
+    print("div=%d %d %d\n", divide(7, 2), divide(-7, 2), divide(0, 5));
+    print("udiv=%u\n", unsigned_divide(100, eight));
+    print("mod=%d %d\n", modulo(7, 3), modulo(-7, 3));
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+shift31=-2147483648
+shr=-4 4
+div=3 -3 0
+udiv=12
+mod=1 -1
+- .exit
+0
+-- */

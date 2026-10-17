@@ -1965,6 +1965,99 @@ static LLVMValueRef generate_reference(
     exit(1);
 }
 
+// 插入一个运行时守卫：condition 为假时打印 format 并退出。
+//
+// 整数除零、有符号 MIN / -1、移位量越界在 LLVM 里都是**未定义行为**：arm64 上 `1 / 0`
+// 返回 0、`1 << 32` 返回 1，x86 上除零触发 SIGFPE；常量折叠时还可能折出完全不同的值
+// （`let x: i32 = 1; x << 32` 会折成 644870）。同一份程序的行为取决于架构和优化方式，
+// 这不能接受，所以这里插检查 —— 和数组越界、字符串越界同一套处理。
+//
+// 真正的运算只在 pass 块里生成，失败块直接 exit，不会执行到那条未定义指令。
+// `argument` 为 NULL 时 `argument_count` 传 0。
+static void emit_integer_guard(
+    CodeGenContext *context, LLVMValueRef condition, const char *format,
+    LLVMValueRef argument, unsigned argument_count) {
+    LLVMValueRef function =
+        LLVMGetBasicBlockParent(LLVMGetInsertBlock(context->builder));
+    LLVMBasicBlockRef pass_block = LLVMAppendBasicBlockInContext(
+        context->context, function, "int_guard_pass");
+    LLVMBasicBlockRef fail_block = LLVMAppendBasicBlockInContext(
+        context->context, function, "int_guard_fail");
+    LLVMBuildCondBr(context->builder, condition, pass_block, fail_block);
+
+    LLVMPositionBuilderAtEnd(context->builder, fail_block);
+    LLVMValueRef printf_arguments[2] = {
+        LLVMBuildGlobalStringPtr(context->builder, format, "int_guard_format"),
+        argument
+    };
+    LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
+                   printf_arguments, argument_count + 1, "int_guard_printf");
+    LLVMValueRef exit_argument =
+        LLVMConstInt(LLVMInt32TypeInContext(context->context), 1, 0);
+    LLVMBuildCall2(context->builder, context->exit_type, context->exit_func,
+                   &exit_argument, 1, "");
+    LLVMBuildUnreachable(context->builder);
+
+    LLVMPositionBuilderAtEnd(context->builder, pass_block);
+}
+
+// 除法和取模的守卫：除数不能是 0；有符号还要挡住 MIN / -1（同样 UB，x86 上 SIGFPE、
+// arm64 上回绕成 MIN）。分两次检查，除零优先报 —— 它是更常见的错误。
+static void guard_division(
+    CodeGenContext *context, LLVMValueRef left, LLVMValueRef right,
+    enum LiteralType operand_type, int is_modulo) {
+    LLVMTypeRef type = get_llvm_type(context, operand_type);
+    LLVMValueRef zero = LLVMConstInt(type, 0, 0);
+    LLVMValueRef divisor_nonzero =
+        LLVMBuildICmp(context->builder, LLVMIntNE, right, zero, "divisor_nonzero");
+
+    emit_integer_guard(context, divisor_nonzero,
+        is_modulo ? "Integer modulo by zero\n" : "Division by zero\n", // 中文：除数为零
+        NULL, 0);
+
+    if (is_unsigned_type(operand_type)) return;
+
+    unsigned bits = integer_type_bits(operand_type);
+    // INT_MIN 按位构造。LLVM 21 的 C API 没有 LLVMConstShl，用
+    // LLVMConstIntOfArbitraryPrecision 直接给「最高位是 1」的字面量，i128 也能覆盖。
+    uint64_t min_words[2] = {0, 0};
+    unsigned min_word = (bits - 1) / 64;
+    min_words[min_word] = 1ULL << ((bits - 1) % 64);
+    LLVMValueRef min_value =
+        LLVMConstIntOfArbitraryPrecision(type, min_word + 1, min_words);
+    LLVMValueRef minus_one = LLVMConstInt(type, ~0ULL, 1);
+    LLVMValueRef left_is_min = LLVMBuildICmp(
+        context->builder, LLVMIntEQ, left, min_value, "dividend_is_min");
+    LLVMValueRef right_is_minus_one = LLVMBuildICmp(
+        context->builder, LLVMIntEQ, right, minus_one, "divisor_is_minus_one");
+    LLVMValueRef no_overflow = LLVMBuildNot(
+        context->builder,
+        LLVMBuildAnd(context->builder, left_is_min, right_is_minus_one,
+                     "division_overflow"),
+        "division_no_overflow");
+
+    emit_integer_guard(context, no_overflow,
+        is_modulo ? "Integer overflow in modulo\n" : "Integer overflow in division\n",
+        NULL, 0);
+}
+
+// 移位的守卫：移位量必须小于操作数位宽。按**无符号**比较，负的移位量会变成巨大值，
+// 一起被挡住。位宽取求值宽度（窄类型不改变求值宽度，见 docs/data-types.md）。
+static void guard_shift(
+    CodeGenContext *context, LLVMValueRef right,
+    enum LiteralType operand_type, int is_left) {
+    LLVMTypeRef type = get_llvm_type(context, operand_type);
+    unsigned bits = integer_type_bits(operand_type);
+    LLVMValueRef in_range = LLVMBuildICmp(
+        context->builder, LLVMIntULT, right, LLVMConstInt(type, bits, 0),
+        "shift_in_range");
+
+    emit_integer_guard(context, in_range,
+        is_left ? "Shift amount out of range in '<<': amount=%lld\n" // 中文：移位量超出位宽
+                : "Shift amount out of range in '>>': amount=%lld\n",
+        cast_integer(context, right, operand_type, LITERAL_I64), 1);
+}
+
 // 位运算只对整数有意义，浮点操作数要在分派处就拦下来，别落到通用报错。
 static int is_bitwise_operator(enum BinaryOpType op) {
     return op == OP_BITWISE_AND || op == OP_BITWISE_OR || op == OP_BITWISE_XOR ||
@@ -1982,10 +2075,12 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
         case OP_SUBTRACT: return LLVMBuildSub(context->builder, left, right, "sub_result");
         case OP_MULTIPLY: return LLVMBuildMul(context->builder, left, right, "mul_result");
         case OP_DIVIDE:
+            guard_division(context, left, right, operand_type, 0);
             return is_unsigned_type(operand_type)
                 ? LLVMBuildUDiv(context->builder, left, right, "udiv_result")
                 : LLVMBuildSDiv(context->builder, left, right, "sdiv_result");
         case OP_MODULO:
+            guard_division(context, left, right, operand_type, 1);
             return is_unsigned_type(operand_type)
                 ? LLVMBuildURem(context->builder, left, right, "urem_result")
                 : LLVMBuildSRem(context->builder, left, right, "srem_result");
@@ -1996,9 +2091,11 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
         case OP_BITWISE_XOR:
             return LLVMBuildXor(context->builder, left, right, "xor_result");
         case OP_SHIFT_LEFT:
+            guard_shift(context, right, operand_type, 1);
             return LLVMBuildShl(context->builder, left, right, "shl_result");
         case OP_SHIFT_RIGHT:
             // 右移分算术和逻辑：有符号补符号位，无符号补零。
+            guard_shift(context, right, operand_type, 0);
             return is_unsigned_type(operand_type)
                 ? LLVMBuildLShr(context->builder, left, right, "lshr_result")
                 : LLVMBuildAShr(context->builder, left, right, "ashr_result");

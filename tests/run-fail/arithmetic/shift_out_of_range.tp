@@ -1,0 +1,21 @@
+// 移位量必须小于位宽（这里是 i32 的 32）。负的移位量按无符号比较会变成巨大值，
+// 一起被挡住。
+//
+// 回归点：`1 << 32` 以前在常量折叠下折出 644870 这种垃圾值、运行时走硬件又得到 1，
+// 同一表达式两种结果。现在统一报错。
+fn shift(a: i32, b: i32): i32 {
+    return a << b;
+}
+
+fn main(): i32 {
+    let amount: i32 = 32;
+    print("%d\n", shift(1, amount));
+    return 0;
+}
+
+/** -- test
+- .stdout
+Shift amount out of range in '<<': amount=32
+- .exit
+1
+-- */

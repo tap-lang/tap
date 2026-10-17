@@ -1,0 +1,19 @@
+// `MIN / -1` 也是未定义行为（x86 上 SIGFPE，arm64 上回绕成 MIN），一起挡住。
+// 注意 -2147483648 不能直接写成字面量（会先解析成正数再取负），用减法构造。
+fn divide(a: i32, b: i32): i32 {
+    return a / b;
+}
+
+fn main(): i32 {
+    let smallest: i32 = -2147483647 - 1;
+    let minus_one: i32 = -1;
+    print("%d\n", divide(smallest, minus_one));
+    return 0;
+}
+
+/** -- test
+- .stdout
+Integer overflow in division
+- .exit
+1
+-- */

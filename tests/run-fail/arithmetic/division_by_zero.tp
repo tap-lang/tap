@@ -1,0 +1,20 @@
+// 整数除零是未定义行为：arm64 上返回 0、x86 上 SIGFPE。现在插运行时检查，直接报错退出
+// （和数组越界同一套处理）。
+//
+// 用参数挡住常量折叠，确保走的是运行时那条路。
+fn divide(a: i32, b: i32): i32 {
+    return a / b;
+}
+
+fn main(): i32 {
+    let zero: i32 = 0;
+    print("%d\n", divide(1, zero));
+    return 0;
+}
+
+/** -- test
+- .stdout
+Division by zero
+- .exit
+1
+-- */
