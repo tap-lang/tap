@@ -103,13 +103,35 @@ static enum LiteralType integer_type_for(unsigned bits, int is_unsigned) {
     return is_unsigned ? LITERAL_U128 : LITERAL_I128;
 }
 
-// 计算两个整数操作数共同提升后的整数类型。
+// 计算两个整数操作数共同提升后的整数类型 —— 按 **C 的 usual arithmetic conversions**。
+//
+// tap 不做 C 的整型提升（窄类型就按窄宽度求值，见 docs/data-types.md 的「运算宽度」），
+// 所以这里只处理「位宽对齐 + 有无符号」这一步：
+//
+//   - 同号：取位宽较大的那个。
+//   - 一 signed 一 unsigned：
+//       · unsigned 的位宽 >= signed 的位宽 → 结果 unsigned（C 里比的是「秩」，
+//         这里位宽和秩一致）
+//       · 否则（signed 更宽）→ 结果 signed —— 更宽的 signed 一定能表示更窄 unsigned
+//         的全部值，C 就是这么定的
+//
+// 所以 `i64 / u32` 是 **signed** 除法（i64 装得下全部 u32），而 `i32 / u32` 是 unsigned
+// （同宽，unsigned 胜）。早先的实现是「只要有一边 unsigned 就 unsigned」，比 C 激进：
+// `i64 / u32`、`i32 / u8` 都会被当成无符号，负数会被重新解释成巨大值。
 static enum LiteralType common_integer_type(enum LiteralType left, enum LiteralType right) {
     unsigned left_bits = integer_type_bits(left);
     unsigned right_bits = integer_type_bits(right);
     unsigned bits = left_bits > right_bits ? left_bits : right_bits;
-    int use_unsigned = is_unsigned_type(left) || is_unsigned_type(right);
-    return integer_type_for(bits, use_unsigned);
+
+    int left_unsigned = is_unsigned_type(left);
+    int right_unsigned = is_unsigned_type(right);
+    if (left_unsigned == right_unsigned) {
+        return integer_type_for(bits, left_unsigned);
+    }
+
+    unsigned unsigned_bits = left_unsigned ? left_bits : right_bits;
+    unsigned signed_bits = left_unsigned ? right_bits : left_bits;
+    return integer_type_for(bits, unsigned_bits >= signed_bits);
 }
 
 // 将源语言标量类型降低为 LLVM 类型。
