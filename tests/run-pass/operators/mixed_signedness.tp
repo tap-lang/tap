@@ -1,0 +1,42 @@
+// 有符号 / 无符号混算按 **C 的 usual arithmetic conversions**。
+//
+// 规则：同号取位宽较大的；混号时 **unsigned 位宽 >= signed 位宽** 才用 unsigned，
+// 否则 signed 更宽、一定能表示更窄 unsigned 的全部值，用 signed。
+//
+// tap 不做 C 的整型提升（窄类型按窄宽度求值，见 docs/data-types.md 的「运算宽度」），
+// 所以只对齐「位宽 + 有无符号」这一步。
+//
+// 回归点：早先的实现是「只要有一边 unsigned 就 unsigned」，比 C 激进——
+// `i64 / u32` 和 `i32 / u8` 都会被当成无符号，负数被重新解释成巨大值
+// （`-8 / 2` 得到 9223372036854775804 / 2147483644）。
+fn divide_i64_u32(a: i64, b: u32): i64 { return a / b; }    // i64 更宽 → signed
+fn divide_i32_u8(a: i32, b: u8): i32 { return a / b; }      // i32 更宽 → signed
+fn divide_i32_u32(a: i32, b: u32): i32 { return a / b; }    // 同宽 → unsigned
+fn divide_i128_u64(a: i128, b: u64): i128 { return a / b; } // i128 更宽 → signed
+fn divide_u64_i32(a: u64, b: i32): u64 { return a / b; }    // u64 更宽 → unsigned
+
+fn less_i64_u32(a: i64, b: u32): bool { return a < b; }     // signed 比较
+fn less_i32_u32(a: i32, b: u32): bool { return a < b; }     // unsigned 比较
+
+fn main(): i32 {
+    // signed 胜：负数保持负数
+    print("%lld %d %lld\n",
+          divide_i64_u32(-8, 2), divide_i32_u8(-8, 2), divide_i128_u64(-10, 2));
+
+    // unsigned 胜：负数被重新解释成巨大值
+    print("%d %llu\n", divide_i32_u32(-8, 2), divide_u64_i32(100, 2));
+
+    // 比较走同一套规则：i64 更宽按 signed（-1 < 2 为真），
+    // i32/u32 同宽按 unsigned（-1 变成 4294967295，为假）
+    print("%d %d\n", less_i64_u32(-1, 2), less_i32_u32(-1, 2));
+    return 0;
+}
+
+/** -- test
+- .stdout
+-4 -4 -5
+2147483644 50
+1 0
+- .exit
+0
+-- */
