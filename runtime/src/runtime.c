@@ -518,18 +518,35 @@ int32_t __tap_pclose(void *stream) {
 
 // 从一个已打开的流读取最多 count 字节，返回 Runtime 管理的字符串。
 // 和 __tap_file_read 的区别：不做 open_files 表登记校验，因为 popen 返回的
-// FILE* 没进过表；直接对传入的句柄做 fread，管道读取专用。读取失败或到
-// 末尾时返回空串。
+// FILE* 没进过表；POSIX/Cygwin 直接对底层描述符做一次 read，Windows 用 fread，
+// 管道读取专用。读取失败或到末尾时返回空串。
 const char *__tap_stream_read(void *stream, uint64_t count) {
     FILE *file = (FILE *)stream;
     if (!file) return __tap_bytes_to_string((const uint8_t *)"", 0);
+
+    // fread() is allowed to wait until all requested elements are available.
+    // That behavior is particularly troublesome for Cygwin pipes: a command
+    // that has produced a short line can leave a large fread request waiting
+    // for EOF. Use the descriptor directly on POSIX platforms so this API
+    // really means "read once" and returns whatever the pipe currently gives
+    // us. The stream has not been touched through stdio yet, so mixing the
+    // descriptor read with pclose/fclose is safe here.
 
     uint8_t *buffer = malloc((size_t)count + 1);
     if (!buffer) {
         fprintf(stderr, "failed to allocate read buffer\n");
         exit(1);
     }
-    size_t received = fread(buffer, 1, (size_t)count, file);
+    size_t received = 0;
+#ifdef _WIN32
+    received = fread(buffer, 1, (size_t)count, file);
+#else
+    int descriptor = fileno(file);
+    if (descriptor >= 0) {
+        ssize_t result = read(descriptor, buffer, (size_t)count);
+        if (result > 0) received = (size_t)result;
+    }
+#endif
     const char *result = __tap_bytes_to_string(buffer, received);
     free(buffer);
     return result;

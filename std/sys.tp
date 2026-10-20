@@ -66,15 +66,23 @@ pub fn read_stream(stream: *i8, count: uint): string {
     return __tap_stream_read(stream, count);
 }
 
-// 跑一条命令并取回它的标准输出（popen "r" + 读 + pclose 的便捷封装）。
+// 跑一条命令并取回它的标准输出（popen "r" + 循环 read_stream + pclose 的便捷封装）。
 // 命令失败或无法启动返回空串；需要区分失败原因时改用 popen / read_stream / pclose。
-// 单次最多读 1 MiB，超出部分截断。
+// 最多读 1 MiB，超出部分截断。
 pub fn capture(command: string): string {
     let stream: *i8 = __tap_popen(command, "r");
     if (__tap_ptr_is_null(stream) != 0) {
         return "";
     }
-    let out: string = __tap_stream_read(stream, 1048576);
+    let out: string = "";
+    while (out.len() < 1048576) {
+        let remaining: uint = 1048576 - out.len();
+        let chunk: string = __tap_stream_read(stream, remaining);
+        if (chunk.len() == 0) {
+            break;
+        }
+        out = out + chunk;
+    }
     __tap_pclose(stream);
     return out;
 }

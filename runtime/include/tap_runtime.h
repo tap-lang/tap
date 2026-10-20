@@ -114,8 +114,9 @@ TAP_RUNTIME_API int32_t __tap_system(const char *command);
 TAP_RUNTIME_API void *__tap_popen(const char *command, const char *mode);
 // 关闭管道并等待子进程，返回 wait status（语义同 __tap_system）。
 TAP_RUNTIME_API int32_t __tap_pclose(void *stream);
-// 从一个已打开的流（popen 返回的管道）读取最多 count 字节；不做 slot 表登记，
-// 直接对 FILE* 做 fread。空句柄、读失败或到末尾时返回空串。
+// 从一个已打开的流（popen 返回的管道）读取最多 count 字节；不做 slot 表登记。
+// POSIX/Cygwin 直接对底层描述符做一次 read，Windows 使用 fread；空句柄、读失败
+// 或到末尾时返回空串。
 TAP_RUNTIME_API const char *__tap_stream_read(void *stream, uint64_t count);
 // 句柄是否为空指针：NULL 返回 1，否则 0。popen 失败时用来判断。
 TAP_RUNTIME_API int32_t __tap_ptr_is_null(void *pointer);
