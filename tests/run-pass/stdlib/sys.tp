@@ -1,0 +1,38 @@
+// std.sys 的 system / popen / pclose：执行命令、读取管道输出并等待子进程。
+import std.sys as sys;
+
+fn main(): i32 {
+    let status: i32 = sys.system("exit 7");
+    print("system_code=%d\n", sys.exit_code(status));
+    print("system_signaled=%d\n", sys.was_signaled(status));
+
+    // system 的返回值是 shell 的 wait status，成功时为 0。
+    print("system=%d\n", sys.system("echo tap-system"));
+
+    // popen 返回不透明句柄，读取必须使用 std.sys.read_stream。
+    let pipe: *i8 = sys.popen("echo tap-pipe", "r");
+    print("open=%d\n", sys.is_open(pipe));
+    print("pipe=%s", sys.read_stream(pipe, 64));
+    let pipe_status: i32 = sys.pclose(pipe);
+    print("close=%d\n", pipe_status);
+    print("pipe_code=%d\n", sys.exit_code(pipe_status));
+
+    // capture 是 popen("r") + read_stream + pclose 的便捷封装。
+    print("capture=%s", sys.capture("echo tap-capture"));
+    return 0;
+}
+
+/** -- test
+- .stdout
+tap-system
+system_code=7
+system_signaled=0
+system=0
+open=1
+pipe=tap-pipe
+close=0
+pipe_code=0
+capture=tap-capture
+- .exit
+0
+-- */

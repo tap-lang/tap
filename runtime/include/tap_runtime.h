@@ -96,6 +96,31 @@ TAP_RUNTIME_API int32_t __tap_panic(const char *message);
 // 以指定状态码终止程序；不会返回。走 libc 的 exit，标准库缓冲区会被刷新。
 TAP_RUNTIME_API int32_t __tap_exit(int32_t code);
 
+// ---- 进程 / 子命令 ----
+//
+// 薄包装 libc 的 system / popen / pclose。句柄是 FILE*（跨模块用 void* 表示）。
+// 注意：popen 返回的 FILE* **没有**登记进 open_files 表，所以 __tap_file_read
+// 读不到内容——它按 slot 表校验句柄。读管道输出用下面的 __tap_stream_read，
+// 它不做登记、直接对传入的 FILE* 做 fread。
+
+// 运行一条 shell 命令，返回 wait status：0 表示命令成功退出，非 0 表示命令不存在、
+// 非零退出或被信号打断。判断「成不成功」用 `status != 0`。
+// （POSIX 下是被 << 8 编码过的 wait status，Windows 下是直接退出码。）
+TAP_RUNTIME_API int32_t __tap_system(const char *command);
+// 打开管道，返回不透明句柄（只读 "r" / 只写 "w"）；失败返回 NULL。
+TAP_RUNTIME_API void *__tap_popen(const char *command, const char *mode);
+// 关闭管道并等待子进程，返回 wait status（语义同 __tap_system）。
+TAP_RUNTIME_API int32_t __tap_pclose(void *stream);
+// 从一个已打开的流（popen 返回的管道）读取最多 count 字节；不做 slot 表登记，
+// 直接对 FILE* 做 fread。空句柄、读失败或到末尾时返回空串。
+TAP_RUNTIME_API const char *__tap_stream_read(void *stream, uint64_t count);
+// 句柄是否为空指针：NULL 返回 1，否则 0。popen 失败时用来判断。
+TAP_RUNTIME_API int32_t __tap_ptr_is_null(void *pointer);
+// 把 system / pclose 的状态码转换为进程退出码；进程被信号终止或状态无效时返回 -1。
+TAP_RUNTIME_API int32_t __tap_process_exit_code(int32_t status);
+// 判断进程是否被信号终止；Windows 或状态无效时返回 0。
+TAP_RUNTIME_API int32_t __tap_process_was_signaled(int32_t status);
+
 // 浮点幂，指数可为小数或负数；底层是 C 库的 pow（需要 libm）。
 TAP_RUNTIME_API double __tap_pow_f64(double base, double exponent);
 

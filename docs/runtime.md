@@ -160,6 +160,25 @@ libc 的 `exit`**，因为那会占住 LLVM 模块里的 `exit` 符号，和 Pre
 当前打开的句柄（上限 64，超出时 `open` 失败），把已关闭的句柄判定为无效，于是误用只会得到
 空结果或 `-1`，而不是崩溃。
 
+## 进程与管道 ABI
+
+`std.sys` 将执行 shell 命令和 C 的 `popen` 管道封装为 tap API：
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_system(command): i32` | 通过 shell 执行命令；成功返回 `0`，否则返回非零 wait status |
+| `__tap_popen(command, mode): *void` | 打开命令管道；`mode` 通常为 `"r"` 或 `"w"`，失败返回 `NULL` |
+| `__tap_stream_read(stream, count): string` | 从管道读取最多 `count` 字节；到末尾或失败返回空字符串 |
+| `__tap_pclose(stream): i32` | 关闭管道并等待子进程，返回 wait status |
+| `__tap_ptr_is_null(pointer): i32` | `NULL` 返回 `1`，非空返回 `0` |
+| `__tap_process_exit_code(status): i32` | 提取退出码；被信号终止或状态无效时返回 `-1` |
+| `__tap_process_was_signaled(status): i32` | 被信号终止返回 `1`，否则返回 `0` |
+
+管道句柄是不透明的 `*i8`，不能交给 `std.fs` 的文件 API；必须用 `std.sys.read_stream` 读取，
+并在使用完毕后调用 `std.sys.pclose`。POSIX 使用 `popen` / `pclose`，Windows 使用 `_popen` /
+`_pclose`，平台差异隐藏在 Runtime 中。`capture` 是读取标准输出的一次性便捷封装，最多读取
+1 MiB。
+
 ## 套接字 ABI
 
 `std.net` 的 TCP 套接字底层是以下 Runtime ABI：

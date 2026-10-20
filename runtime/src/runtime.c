@@ -21,6 +21,7 @@
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 #endif
@@ -460,6 +461,88 @@ int32_t __tap_file_eof(void *handle) {
 int32_t __tap_file_remove(const char *path) {
     if (!path) return -1;
     return remove(path) == 0 ? 0 : -1;
+}
+
+// popen / pclose 在严格 POSIX 模式下（glibc 不设 _POSIX_C_SOURCE 时）不会通过 <stdio.h>
+// 暴露。Windows 使用带下划线的 CRT 名称；统一映射到下面的 Runtime 实现，避免把平台
+// 差异泄露给 tap 标准库。
+#ifdef _WIN32
+#define TAP_POPEN _popen
+#define TAP_PCLOSE _pclose
+#else
+// 直接声明一次即可覆盖严格的 feature-test 宏组合；和 libc 的声明保持相同签名，
+// 不需要为了暴露这两个 POSIX/XSI 符号而修改全局宏。
+extern FILE *popen(const char *command, const char *mode);
+extern int pclose(FILE *stream);
+#define TAP_POPEN popen
+#define TAP_PCLOSE pclose
+#endif
+
+// 运行一条 shell 命令，返回 wait status。0 表示命令成功退出；非 0 表示命令不存在、
+// 非零退出或被信号打断。调用方判断「成不成功」用 `status != 0`。
+// （POSIX 下是被 << 8 编码过的 wait status，Windows 下是直接退出码。）
+int32_t __tap_system(const char *command) {
+    if (!command) return -1;
+    return (int32_t)system(command);
+}
+
+// 打开管道，返回不透明句柄（只读 "r" / 只写 "w"）；失败返回 NULL。
+void *__tap_popen(const char *command, const char *mode) {
+    if (!command || !mode) return NULL;
+    return TAP_POPEN(command, mode);
+}
+
+// 关闭管道并等待子进程，返回 wait status（语义同 __tap_system）。
+int32_t __tap_pclose(void *stream) {
+    if (!stream) return -1;
+    return (int32_t)TAP_PCLOSE((FILE *)stream);
+}
+
+// 从一个已打开的流读取最多 count 字节，返回 Runtime 管理的字符串。
+// 和 __tap_file_read 的区别：不做 open_files 表登记校验，因为 popen 返回的
+// FILE* 没进过表；直接对传入的句柄做 fread，管道读取专用。读取失败或到
+// 末尾时返回空串。
+const char *__tap_stream_read(void *stream, uint64_t count) {
+    FILE *file = (FILE *)stream;
+    if (!file) return __tap_bytes_to_string((const uint8_t *)"", 0);
+
+    uint8_t *buffer = malloc((size_t)count + 1);
+    if (!buffer) {
+        fprintf(stderr, "failed to allocate read buffer\n");
+        exit(1);
+    }
+    size_t received = fread(buffer, 1, (size_t)count, file);
+    const char *result = __tap_bytes_to_string(buffer, received);
+    free(buffer);
+    return result;
+}
+
+// 句柄是否为空指针：NULL 返回 1，否则 0。popen 失败时调用方用它判断。
+int32_t __tap_ptr_is_null(void *pointer) {
+    return pointer == NULL ? 1 : 0;
+}
+
+// 把 system / pclose 返回的状态码转换成跨平台的退出码。
+// POSIX 状态码由 wait macros 解码；Windows 的 _pclose 直接返回退出码。
+int32_t __tap_process_exit_code(int32_t status) {
+    if (status < 0) return -1;
+#ifdef _WIN32
+    return status;
+#else
+    if (!WIFEXITED(status)) return -1;
+    return (int32_t)WEXITSTATUS(status);
+#endif
+}
+
+// 判断子进程是否因信号终止。system / pclose 失败时返回 0，退出码由上面的函数返回 -1。
+int32_t __tap_process_was_signaled(int32_t status) {
+    if (status < 0) return 0;
+#ifdef _WIN32
+    (void)status;
+    return 0;
+#else
+    return WIFSIGNALED(status) ? 1 : 0;
+#endif
 }
 
 // 浮点幂：base 的 exponent 次方。指数可以是小数或负数，靠 C 库的 pow 实现

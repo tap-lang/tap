@@ -230,6 +230,14 @@ fn main(): i32 {
 | `std.net` | `close_socket(socket): Socket` | 关闭并返回失效句柄，用法是 `socket = close_socket(socket)` |
 | `std.net` | `is_open(socket): bool` | 句柄是否有效；创建失败或关闭后返回 `false` |
 | `std.net` | `AF_INET` / `SOCK_STREAM` / `ADDRESS_LENGTH` | 地址族、套接字类型常量和 `sockaddr_in` 长度 |
+| `std.sys` | `system(command: string): i32` | 通过 shell 执行命令；成功返回 `0`，否则返回非零 wait status |
+| `std.sys` | `popen(command, mode): *i8` | 打开命令管道；`mode` 使用 `"r"` 或 `"w"`，失败返回空指针 |
+| `std.sys` | `read_stream(stream, count): string` | 从 `popen` 管道读取最多 `count` 字节；到末尾返回空字符串 |
+| `std.sys` | `pclose(stream): i32` | 关闭管道并等待子进程，返回 wait status |
+| `std.sys` | `exit_code(status): i32` | 从 `system` / `pclose` 状态中取退出码；被信号终止或状态无效时返回 `-1` |
+| `std.sys` | `was_signaled(status): bool` | 判断进程是否被信号终止；Windows 始终返回 `false` |
+| `std.sys` | `is_open(stream): bool` | 判断管道句柄是否为非空指针 |
+| `std.sys` | `capture(command): string` | 执行命令并捕获标准输出；单次最多读取 1 MiB |
 
 `std.random` 示例：
 
