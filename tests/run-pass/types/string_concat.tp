@@ -1,0 +1,28 @@
+// 字符串 + 运算：按字节拼接，结果仍然是 Runtime 管理的 string。
+
+fn join(left: string, right: string): string {
+    return left + right;
+}
+
+fn main(): i32 {
+    let hello: string = "Hello, ";
+    let name = "tap";
+    let greeting: string = hello + name + "!";
+    let inferred = "拼" + "接";
+
+    print("%s\n", greeting);
+    print("%s\n", join("a", "b"));
+    print("%s\n", inferred);
+    print("%s\n", "left" + "" + "right");
+    return 0;
+}
+
+/** -- test
+- .stdout
+Hello, tap!
+ab
+拼接
+leftright
+- .exit
+0
+-- */

@@ -1,0 +1,11 @@
+fn main(): i32 {
+    let invalid = "tap" + 1;
+    return 0;
+}
+
+/** -- test
+- .stderr
+string operations require two string values
+- .exit
+1
+-- */
