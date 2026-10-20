@@ -528,9 +528,12 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
         return 1;
     }
     const char *linker = "clang-cl";
+    // clang-cl 默认按 MSVC 目标链接，不会自动加入 compiler-rt 的 builtins。i128 的
+    // 除法/取模会生成 __divti3/__modti3，显式选择 compiler-rt 才能让这些符号在 Windows
+    // LLVM 安装中被解析；否则普通的 i128 测试会在最终链接阶段失败。
     // ws2_32.lib 提供 Runtime 里 winsock 的符号（WSAStartup / socket / closesocket 等）。
     char *const argv[] = {
-        (char *)linker, "/nologo", "/MT", (char *)object_file,
+        (char *)linker, "/nologo", "/MT", "/clang:-rtlib=compiler-rt", (char *)object_file,
         runtime_static_path, output_option, (char *)"ws2_32.lib", NULL
     };
     (void)static_link;
