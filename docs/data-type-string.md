@@ -1,7 +1,7 @@
 # 字符串
 
 本文档描述 tap 当前已经实现的 `string` 类型，包括字符串字面量、变量、函数传递、
-字节访问、切片、内容比较、输出和字符串数组。尚未实现的能力集中列在
+字节访问、切片、内容比较、拼接、输出和字符串数组。尚未实现的能力集中列在
 [当前限制](#当前限制)中。
 
 ## 字符串字面量
@@ -178,9 +178,23 @@ assert(result == 0, "result must be zero");
 ## 与标准库的关系
 
 `string` 是内建语言类型，无需导入模块即可使用。`.len()`、`.byte_at()` 和 `.slice()`
-都是内建方法，不属于标准库函数。当前标准库尚未提供字符串拼接、查找或数值转换函数；
-语言层面的字符串支持不依赖这些标准库 API。标准库的现状见
+都是内建方法，不属于标准库函数。字符串 `+` 同样是语言内建运算，不需要导入标准库；
+当前标准库尚未提供字符串查找 API，数值转换由 `std.parse` 提供。标准库的现状见
 [标准库文档](std.md#current-limits)。
+
+## 字符串拼接
+
+两个 `string` 可以使用 `+` 按 UTF-8 字节拼接，结果仍然是 `string`：
+
+```text
+let greeting: string = "Hello, " + "tap!";
+let name: string = "tap";
+let message: string = "Hello, " + name + "!";
+```
+
+`+` 要求两边都是 `string`，不负责数值转字符串；需要把数字格式化后再拼接时，先使用
+`std.parse.format_i64` / `format_f64`，或者使用 `std.string_builder`。拼接结果由 Runtime
+统一管理，程序退出时释放。
 
 ## 字符串数组
 
@@ -249,7 +263,7 @@ fn main(): i32 {
 
 当前语言和标准库尚未提供以下字符串能力：
 
-- `+` 字符串拼接与插值；逐步构建字符串可使用 `std.string_builder`。
+- 字符串插值；逐步构建字符串可使用 `std.string_builder`。
 - Unicode 字符数量查询、码点下标和码点切片。
 - 可变字符串及字符替换。
 - 显式释放单个动态字符串的 API。
@@ -267,6 +281,8 @@ fn main(): i32 {
   返回类型、空字符串、UTF-8 字符串和不同形式的接收者。
 - [`tests/run-pass/types/string_methods.tp`](../tests/run-pass/types/string_methods.tp)：字节访问、
   切片、UTF-8 偏移和六种内容比较运算符。
+- [`tests/run-pass/types/string_concat.tp`](../tests/run-pass/types/string_concat.tp)：字符串 `+`
+  拼接、链式拼接、空字符串、Unicode 字符串和函数参数/返回值。
 
 可以只运行这些测试：
 
@@ -275,4 +291,5 @@ TEST_FILTER=types/strings.tp sh tests/run-tests.sh build/tap
 TEST_FILTER=types/string_arrays.tp sh tests/run-tests.sh build/tap
 TEST_FILTER=types/string_length.tp sh tests/run-tests.sh build/tap
 TEST_FILTER=types/string_methods.tp sh tests/run-tests.sh build/tap
+TEST_FILTER=types/string_concat.tp sh tests/run-tests.sh build/tap
 ```

@@ -41,7 +41,7 @@ tap <probe>.tp -o out && ./out
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
-| 字符串 | ✅ | `len` / `byte_at` / `slice` / 内容比较（`==` `!=`） |
+| 字符串 | ✅ | `len` / `byte_at` / `slice` / 内容比较 / `+` 拼接 |
 | StringBuilder | ✅ | `std.string_builder`，逐段拼接 |
 | Vec\<T\> | ✅ | `std.vec`，含 `Vec<Vec<i32>>` 嵌套实例化 |
 | ByteVec | ✅ | `std.byte_vec`，字节缓冲 |
@@ -150,7 +150,7 @@ visitor、回调、分派表只能靠 `switch` 硬编码。
 | 缺口 | 报错 | 绕法 |
 |---|---|---|
 | `float` → `int` | `initializer type mismatch` | 加个 Runtime 转换函数 |
-| 字符串 `+` 拼接 | `strings only support comparison operators` | StringBuilder |
+| 字符串插值 | — | `+` 拼接或 `StringBuilder` |
 | `main` 不能返回结构体 | — | 收口到辅助函数（`docs/TODO.md` 已记） |
 | 结构体字段是数组时字面量初始化 | `expression does not produce an array value` | 先建局部数组再赋值 |
 | 结构体数组元素取字段 | 方法错误 | 先取出元素再访问字段 |

@@ -38,6 +38,9 @@ TAP_RUNTIME_API const char *__tap_string_slice(
     const char *value, int64_t start, int64_t end);
 // 按 UTF-8 编码字节序比较两个字符串。
 TAP_RUNTIME_API int32_t __tap_string_compare(const char *left, const char *right);
+// 拼接两个字符串；结果由 Runtime 持有到进程退出。
+TAP_RUNTIME_API const char *__tap_string_concat(
+    const char *left, const char *right);
 // 把字符串的指定字节数复制到调用方提供的缓冲区；调用方保证两端空间足够。
 TAP_RUNTIME_API int32_t __tap_string_copy_bytes(
     const char *value, uint8_t *destination, size_t length);

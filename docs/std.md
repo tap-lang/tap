@@ -722,9 +722,8 @@ Runtime 的 C ABI 声明位于
 ## Current Limits
 
 - 大部分标准库函数仍只覆盖 `i32` 相关能力；`std.parse` 使用 `i64` 和 `f64`。
-- `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()` 和内容比较，动态构建可使用
-  `std.string_builder`，字符串与数值互转可使用 `std.parse`；尚无 `+` 拼接、查找和
-  Unicode 码点级 API。
+- `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()`、内容比较和 `+` 拼接，动态构建可使用
+  `std.string_builder`，字符串与数值互转可使用 `std.parse`；尚无查找和 Unicode 码点级 API。
 - `std.parse` 只解析十进制，不识别十六进制、下划线分隔符或 `inf` / `nan`。
 - `format_f64` 通过 Runtime 调用 C 库的十进制转换（`__tap_format_f64`），是 `std.parse`
   里唯一不纯 tap 的函数：精确的十进制展开需要大整数算法。

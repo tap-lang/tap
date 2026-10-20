@@ -1371,6 +1371,10 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             }
             enum LiteralType left_type = expression_type(context, binary->left);
             enum LiteralType right_type = expression_type(context, binary->right);
+            if (binary->op_type == OP_ADD &&
+                left_type == LITERAL_STRING && right_type == LITERAL_STRING) {
+                return LITERAL_STRING;
+            }
             if (is_float_type(left_type) || is_float_type(right_type)) {
                 return common_float_type(left_type, right_type);
             }
@@ -1596,6 +1600,15 @@ static LLVMValueRef generate_expression_as(CodeGenContext *context, ASTNode *exp
     if (expression && expression->type == NODE_BINARY_OP && is_integer_type(target)) {
         BinaryOpNode *binary = (BinaryOpNode *)expression;
         if (binary->op_type >= OP_ADD && binary->op_type <= OP_MODULO) {
+            enum LiteralType left_operand = expression_type(context, binary->left);
+            enum LiteralType right_operand = expression_type(context, binary->right);
+            // Do not send string (or other non-integer) arithmetic through the integer
+            // fast path. Besides producing invalid pointer arithmetic for `string + int`,
+            // that path would bypass the operator-specific diagnostic in generate_expression.
+            if (!is_integer_type(left_operand) || !is_integer_type(right_operand)) {
+                enum LiteralType source = expression_type(context, expression);
+                return cast_value(context, generate_expression(context, expression), source, target);
+            }
             // 窄目标类型不能改变表达式本身的求值宽度：先把表达式按它自己的自然类型求值，
             // 再截断到目标类型。只有目标更宽时才直接用目标类型，这样 i128 这类宽字面量
             // 仍能在宽类型下参与运算而不丢失精度。
@@ -2377,6 +2390,23 @@ static LLVMValueRef generate_string_comparison(
         context->builder, predicate, result, zero, "string_compare_result");
 }
 
+// 生成字符串拼接。结果由 Runtime 统一持有，和 string.slice / ByteVec.to_string 一样，
+// 不需要 tap 侧手动释放。
+static LLVMValueRef generate_string_concat(
+    CodeGenContext *context, BinaryOpNode *binary) {
+    LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
+    LLVMTypeRef parameter_types[2] = {string_type, string_type};
+    LLVMValueRef function = runtime_string_function(
+        context, "__tap_string_concat", string_type, parameter_types, 2);
+    LLVMValueRef arguments[2] = {
+        generate_expression(context, binary->left),
+        generate_expression(context, binary->right)
+    };
+    return LLVMBuildCall2(
+        context->builder, LLVMGlobalGetValueType(function), function,
+        arguments, 2, "string_concat");
+}
+
 static LLVMValueRef generate_string_integer_argument(
     CodeGenContext *context, FunctionCallNode *call, ASTNode *argument,
     unsigned argument_index) {
@@ -2853,7 +2883,16 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             enum LiteralType right_type = expression_type(context, binary->right);
             if (left_type == LITERAL_STRING || right_type == LITERAL_STRING) {
                 if (left_type != LITERAL_STRING || right_type != LITERAL_STRING) {
-                    fprintf(stderr, "error: string comparison requires two string values\n");
+                    fprintf(stderr, "error: string operations require two string values\n");
+                    exit(1);
+                }
+                if (binary->op_type == OP_ADD) {
+                    return generate_string_concat(context, binary);
+                }
+                if (binary->op_type < OP_EQUAL ||
+                    binary->op_type > OP_GREATER_THAN_OR_EQUAL) {
+                    fprintf(stderr,
+                            "error: strings only support concatenation and comparison operators\n");
                     exit(1);
                 }
                 return generate_string_comparison(context, binary);

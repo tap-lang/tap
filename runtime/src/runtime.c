@@ -235,6 +235,24 @@ int32_t __tap_string_compare(const char *left, const char *right) {
     return result < 0 ? -1 : result > 0 ? 1 : 0;
 }
 
+// 拼接两个以 NUL 结尾的字符串；结果由 Runtime 持有到进程退出。
+const char *__tap_string_concat(const char *left, const char *right) {
+    size_t left_length = strlen(left);
+    size_t right_length = strlen(right);
+    if (left_length > SIZE_MAX - 1 ||
+        right_length > SIZE_MAX - 1 - left_length) {
+        fprintf(stderr, "string concatenation is too long\n");
+        exit(1);
+    }
+
+    size_t length = left_length + right_length;
+    char *result = allocate_owned_string(length);
+    memcpy(result, left, left_length);
+    memcpy(result + left_length, right, right_length);
+    result[length] = '\0';
+    return result;
+}
+
 // ByteVec.extend 的批量复制入口；调用方保证源长度和目标容量均足够。
 int32_t __tap_string_copy_bytes(
     const char *value, uint8_t *destination, size_t length) {
