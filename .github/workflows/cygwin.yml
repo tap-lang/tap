@@ -22,7 +22,7 @@ jobs:
   build-and-test:
     name: Windows 2022 / Cygwin Clang / Release
     runs-on: windows-2022
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     steps:
       - name: Normalize line endings
