@@ -3493,6 +3493,118 @@ static void validate_match_statement(
     }
 }
 
+// 判断语句链是否在所有可达路径上结束于 return。
+// 这里只做控制流形状分析，不尝试推断条件恒真、循环是否会执行等运行时事实：
+// 普通 if 没有 else、以及 for/while 都不能满足「函数一定返回」的要求。
+static int statement_list_definitely_returns(ASTNode *statement);
+
+// 判断语句链中是否出现了 return。这个检查和“所有路径都返回”的检查不同：
+// 对于没有显式返回类型的函数，只要任意嵌套代码块里写了 return，就应该报错。
+static int statement_list_contains_return(ASTNode *statement);
+
+static int statement_contains_return(ASTNode *statement) {
+    if (!statement) return 0;
+
+    switch (statement->type) {
+        case NODE_RETURN:
+            return 1;
+        case NODE_IF_STATEMENT: {
+            IfStatementNode *if_node = (IfStatementNode *)statement;
+            return statement_list_contains_return(if_node->consequence) ||
+                   statement_list_contains_return(if_node->alternative);
+        }
+        case NODE_FOR_STATEMENT: {
+            ForStatementNode *for_node = (ForStatementNode *)statement;
+            return statement_list_contains_return(for_node->initializer) ||
+                   statement_list_contains_return(for_node->update) ||
+                   statement_list_contains_return(for_node->body);
+        }
+        case NODE_MATCH_STATEMENT: {
+            MatchStatementNode *match_node = (MatchStatementNode *)statement;
+            for (ASTNode *node = match_node->arms; node; node = node->next) {
+                MatchArmNode *arm = (MatchArmNode *)node;
+                if (statement_list_contains_return(arm->body)) return 1;
+            }
+            return 0;
+        }
+        default:
+            return 0;
+    }
+}
+
+static int statement_list_contains_return(ASTNode *statement) {
+    for (; statement; statement = statement->next) {
+        if (statement_contains_return(statement)) return 1;
+    }
+    return 0;
+}
+
+static int statement_definitely_returns(ASTNode *statement) {
+    if (!statement) return 0;
+
+    switch (statement->type) {
+        case NODE_RETURN:
+            return 1;
+        case NODE_IF_STATEMENT: {
+            IfStatementNode *if_node = (IfStatementNode *)statement;
+            return if_node->alternative != NULL &&
+                   statement_list_definitely_returns(if_node->consequence) &&
+                   statement_list_definitely_returns(if_node->alternative);
+        }
+        case NODE_MATCH_STATEMENT: {
+            MatchStatementNode *match_node = (MatchStatementNode *)statement;
+            if (!match_node->arms) return 0;
+            for (ASTNode *node = match_node->arms; node; node = node->next) {
+                MatchArmNode *arm = (MatchArmNode *)node;
+                // 表达式形式的 arm 没有语句体，不能作为语句的 return 终点。
+                if (!arm->body || !statement_list_definitely_returns(arm->body)) {
+                    return 0;
+                }
+            }
+            return 1;
+        }
+        case NODE_FUNCTION_CALL: {
+            // Prelude 的 panic/exit 都不会返回；把它们视为控制流终点，允许
+            // `fn unwrap<T>(): T` 这类函数在失败分支调用 panic 后结束。
+            FunctionCallNode *call = (FunctionCallNode *)statement;
+            return strcmp(call->name, "panic") == 0 ||
+                   strcmp(call->name, "exit") == 0;
+        }
+        default:
+            return 0;
+    }
+}
+
+static int statement_list_definitely_returns(ASTNode *statement) {
+    for (; statement; statement = statement->next) {
+        if (statement_definitely_returns(statement)) return 1;
+    }
+    return 0;
+}
+
+// 有显式返回类型的普通函数必须在所有路径返回值。未写 `: T` 的函数保留旧语义：
+// 返回类型默认为 i32，函数末尾隐式返回 0，兼容 `fn main() { ... }` 这类写法。
+static void validate_function_returns(FunctionNode *function) {
+    if (!function || function->is_extern || !function->return_type) return;
+    if (statement_list_definitely_returns(function->body)) return;
+
+    print_diagnostic(stderr, "error", function->filename, function->line, function->column,
+                     "function '%s' may exit without returning a value", function->name);
+    exit(1);
+}
+
+// 未声明返回类型的函数是无返回值函数；保留其旧的隐式 i32 ABI，只禁止返回值语句。
+// 这样 `fn main() { print("hello"); }` 仍然兼容，而误写 `return value;` 会在语义阶段
+// 明确报错，不再被当作隐式 i32 返回值接受。
+static void validate_implicit_return(FunctionNode *function) {
+    if (!function || function->is_extern || function->return_type) return;
+    if (!statement_list_contains_return(function->body)) return;
+
+    print_diagnostic(stderr, "error", function->filename, function->line, function->column,
+                     "function '%s' does not declare a return type", function->name);
+    exit(1);
+}
+
 // 生成 match 语句：按判别标签分派到各分支，并把该分支的载荷绑定到局部变量。
 static void generate_match_statement(
     CodeGenContext *context, MatchStatementNode *match_node) {
@@ -4308,6 +4420,8 @@ static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
         validate_var_type(context, function->return_type);
+        validate_function_returns(function);
+        validate_implicit_return(function);
         for (ASTNode *type = function->param_types; type; type = type->next) {
             validate_var_type(context, (VarTypeNode *)type);
         }
