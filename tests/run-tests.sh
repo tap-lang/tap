@@ -364,24 +364,15 @@ active_workers=0
 wait_for_batch() {
     [ -s "$BATCH_FILE" ] || return
 
+    # 每批只显示一次当前 worker，避免频繁刷新终端拖慢 Cygwin。
+    render_progress
     batch_target=$((completed_tests + active_workers))
-    while [ "$completed_tests" -lt "$batch_target" ]; do
-        status_count=0
-        for status_file in "$TEMP_ROOT"/*.status; do
-            [ -f "$status_file" ] || continue
-            status_count=$((status_count + 1))
-        done
-        if [ "$status_count" -gt "$completed_tests" ]; then
-            completed_tests=$status_count
-            render_progress
-        else
-            sleep 0.1
-        fi
-    done
-
     while IFS= read -r worker_pid; do
         wait "$worker_pid" || true
     done < "$BATCH_FILE"
+
+    completed_tests=$batch_target
+    render_progress
     : > "$BATCH_FILE"
     active_workers=0
 }
@@ -394,7 +385,6 @@ launch_case() {
     launch_relative_file=${launch_file#"$PROJECT_ROOT/"}
     worker_slot=$((active_workers + 1))
     printf '%s\n' "$launch_relative_file" > "$TEMP_ROOT/worker.$worker_slot"
-    render_progress
 
     (
         trap - EXIT HUP INT TERM

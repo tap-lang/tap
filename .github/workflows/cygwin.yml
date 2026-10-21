@@ -102,10 +102,11 @@ jobs:
         #   2. 栈帧超过 4KB 时 LLVM 插入的 ___chkstk_ms 在 Cygwin 的 lli 里解析不到
         #      （env_var.tp 有 [string; 256]，触发该问题）。
         # 因此与 msvc.yml 一致改走 native 模式；完整用例只在 Cygwin 的原生可执行文件上验证。
+        # 不通过 ctest 转发，否则 CTest 会缓存脚本输出，Actions 日志看不到实时进度。
         shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
         env:
           TEST_JOBS: "2"
           TEST_RUN_MODE: native
         run: >-
           export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
-          ctest --test-dir build --output-on-failure
+          make test-native
