@@ -109,4 +109,4 @@ jobs:
           TEST_RUN_MODE: native
         run: >-
           export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
-          make test-native
+          sh tests/run-tests.sh ./build/tap.exe
