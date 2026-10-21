@@ -583,19 +583,24 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     // 和 Cygwin 仍需显式链接，否则 Runtime 里的 pow 会报未定义符号。
     // macOS 走上面的 ld 分支，libm 在 libSystem 里，不需要这个标志。
 #ifdef __CYGWIN__
-    // Cygwin 的 `cc` 可能解析到 GCC 驱动。LLVM 生成的 i128 运算会调用
-    // __divti3/__modti3；显式使用 clang 的 compiler-rt，避免把 LLVM 的
-    // __int128 ABI 交给另一套 GCC runtime，后者会在 mixed_signedness 等
-    // 用例中把 i128 除法执行成段错误。
+    // 用 clang 而不是 `cc`（Cygwin 上 cc 是 GCC 13），让驱动版本和生成 obj 的 LLVM 对齐。
+    //
+    // 不能加 `-rtlib=compiler-rt`：Cygwin 的 clang 包不随附 compiler-rt，
+    // `clang -print-resource-dir` 是 /usr/lib/clang/21，但下面只有 include、没有 lib，
+    // 链接时会直接报 `cannot find .../libclang_rt.builtins.a`。Cygwin 的默认 rtlib 是
+    // GCC 的 libgcc，其中提供了 LLVM 为 i128 除法/取模生成的 __divti3/__modti3，
+    // 实测 i128 结果正确，所以这里保持默认。
+    //
+    // 也不加 `-no-pie`：Cygwin 的 clang 驱动不认这个参数（报 unused），Cygwin 目标本身
+    // 就是非 PIE 的。
     const char *linker = "clang";
     char *const dynamic_argv[] = {
-        (char *)linker, "-no-pie", "-rtlib=compiler-rt", (char *)object_file,
-        runtime_static_path, "-o", (char *)exe_file, "-lm", NULL
+        (char *)linker, (char *)object_file, runtime_static_path, "-o",
+        (char *)exe_file, "-lm", NULL
     };
     char *const static_argv[] = {
-        (char *)linker, "-static", "-no-pie", "-rtlib=compiler-rt",
-        (char *)object_file, runtime_static_path, "-o", (char *)exe_file,
-        "-lm", NULL
+        (char *)linker, "-static", (char *)object_file, runtime_static_path,
+        "-o", (char *)exe_file, "-lm", NULL
     };
 #else
     const char *linker = "cc";
