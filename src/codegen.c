@@ -2918,7 +2918,10 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
 }
 
 // 把可变参数实参提升到 C 的默认实参提升规则要求的宽度：
-// 位宽小于 32 的整数提升成 i32，float 提升成 double，其余原样传递。
+// 位宽小于 32 的整数提升成 i32，float 提升成 double。
+// C 的 printf 变参没有 i128/u128 对应的标准格式；超过 64 位的整数必须
+// 截断为 i64，不能把 LLVM 的 i128 直接传给 vfprintf。后者在部分 ABI（如
+// Cygwin x86_64）会改变后续变参的位置，甚至导致 vfprintf 段错误。
 //
 // 是否「需要提升」看生成出来的 LLVM 值类型，而不是 expression_type —— 后者对指针变量
 // 返回的是元素类型（`*u8` 会报成 u8），照它提升会把 64 位指针截成 32 位。
@@ -2934,8 +2937,20 @@ static LLVMValueRef promote_variadic_argument(CodeGenContext *context, ASTNode *
         return LLVMBuildFPExt(context->builder, value,
             LLVMDoubleTypeInContext(context->context), "vararg_fpext");
     }
-    if (kind != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(llvm_type) >= 32) {
-        // 指针、double、i32 及以上整数本身已符合变参 ABI。
+    if (kind != LLVMIntegerTypeKind) {
+        // 指针和 double 本身已符合变参 ABI。
+        return value;
+    }
+
+    unsigned width = LLVMGetIntTypeWidth(llvm_type);
+    if (width > 64) {
+        LLVMTypeRef int64_type = LLVMInt64TypeInContext(context->context);
+        // printf 的 %lld/%llu 都按 64 位读取；这里保留低 64 位，和 C
+        // 整数转换到 unsigned/signed long long 的模 2^64 语义一致。
+        return LLVMBuildTrunc(context->builder, value, int64_type, "vararg_trunc");
+    }
+    if (width >= 32) {
+        // i32/i64 已符合 C 变参 ABI。
         return value;
     }
 
