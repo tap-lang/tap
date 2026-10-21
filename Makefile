@@ -83,6 +83,7 @@ DEPS = $(OBJECTS:.o=.d)
 
 # 目标可执行文件
 TARGET = ./build/tap
+TEST_RUNNER = $(BUILD_DIR)/run-tests$(EXE)
 
 # 默认目标
 all: $(TARGET)
@@ -117,6 +118,10 @@ $(RUNTIME_SHARED): $(RUNTIME_OBJECT)
 $(VERSION_GENERATOR): $(SRC_DIR)/scripts/get_version.c | $(BUILD_DIR)
 	$(CC) -Wall -Wextra -g $< -o $@
 
+# C 版测试运行器：负责发现、解析、并发调度和汇总测试用例。
+$(TEST_RUNNER): $(SRC_DIR)/scripts/run-tests.c | $(BUILD_DIR)
+	$(CC) -Wall -Wextra -g $< -o $@
+
 # 生成版本头文件
 $(SRC_DIR)/version.h: $(SRC_DIR)/version.h.ini $(VERSION_GENERATOR)
 	$(VERSION_GENERATOR) $(SRC_DIR)/version.h.ini $(SRC_DIR)/version.h
@@ -137,6 +142,14 @@ test: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
 # 所有运行用例都生成并链接原生可执行文件，用于完整检查目标代码和链接路径。
 test-native: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
 	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=native sh tests/run-tests.sh $(TARGET)
+
+# 使用 C 测试运行器执行 fast 模式，避免 shell/awk/sed 的调度开销。
+test-by-c: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
+	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=fast $(TEST_RUNNER) $(TARGET)
+
+# 使用 C 测试运行器执行 native 模式。
+test-native-by-c: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
+	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=native $(TEST_RUNNER) $(TARGET)
 
 test_hello: $(TARGET)
 	$(TARGET) tests/run-pass/basics/hello.tp -o ./build/hello
@@ -201,4 +214,4 @@ uninstall:
 	rm -f $(STDDIR)/*.tp
 	rmdir $(INCLUDEDIR) $(STDDIR) 2>/dev/null || true
 
-.PHONY: all clean test test-native test_hello install uninstall
+.PHONY: all clean test test-native test-by-c test-native-by-c test_hello install uninstall
