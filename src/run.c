@@ -582,6 +582,22 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     // `-lm` 必须放在目标文件和静态库之后：glibc 2.34 起 libm 并入了 libc，但更早的发行版
     // 和 Cygwin 仍需显式链接，否则 Runtime 里的 pow 会报未定义符号。
     // macOS 走上面的 ld 分支，libm 在 libSystem 里，不需要这个标志。
+#ifdef __CYGWIN__
+    // Cygwin 的 `cc` 可能解析到 GCC 驱动。LLVM 生成的 i128 运算会调用
+    // __divti3/__modti3；显式使用 clang 的 compiler-rt，避免把 LLVM 的
+    // __int128 ABI 交给另一套 GCC runtime，后者会在 mixed_signedness 等
+    // 用例中把 i128 除法执行成段错误。
+    const char *linker = "clang";
+    char *const dynamic_argv[] = {
+        (char *)linker, "-no-pie", "-rtlib=compiler-rt", (char *)object_file,
+        runtime_static_path, "-o", (char *)exe_file, "-lm", NULL
+    };
+    char *const static_argv[] = {
+        (char *)linker, "-static", "-no-pie", "-rtlib=compiler-rt",
+        (char *)object_file, runtime_static_path, "-o", (char *)exe_file,
+        "-lm", NULL
+    };
+#else
     const char *linker = "cc";
     char *const dynamic_argv[] = {
         (char *)linker, "-no-pie", (char *)object_file, runtime_static_path,
@@ -591,6 +607,7 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
         (char *)linker, "-static", "-no-pie", (char *)object_file,
         runtime_static_path, "-o", (char *)exe_file, "-lm", NULL
     };
+#endif
     result = run_process(static_link ? static_argv : dynamic_argv);
 #endif
     if (result != 0) {
