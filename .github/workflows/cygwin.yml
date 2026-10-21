@@ -105,7 +105,7 @@ jobs:
         # 不通过 ctest 转发，否则 CTest 会缓存脚本输出，Actions 日志看不到实时进度。
         shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
         env:
-          TEST_JOBS: "2"
+          TEST_JOBS: "4"
           TEST_RUN_MODE: native
         run: >-
           export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&

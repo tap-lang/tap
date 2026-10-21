@@ -236,7 +236,7 @@ jobs:
       - name: Test
         shell: pwsh
         env:
-          TEST_JOBS: "2"
+          TEST_JOBS: "4"
           TEST_RUN_MODE: native
         run: ctest --test-dir build-msvc --build-config Release --output-on-failure
 
