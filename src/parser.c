@@ -1294,6 +1294,20 @@ static ASTNode *parse_factor(Parser *parser) {
             continue;
         }
 
+        // 显式类型转换：`expression as Type`。放在因子层，保证转换绑定在
+        // 算术和比较运算之前，并支持链式转换（`value as i64 as string`）。
+        if (parser->current_token->type == TOKEN_AS) {
+            int line = parser->current_token->line;
+            int column = parser->current_token->column;
+            consume(parser, TOKEN_AS);
+            CastNode *cast = create_cast(expression, parse_type(parser));
+            cast->filename = strdup(parser->lexer->filename);
+            cast->line = line;
+            cast->column = column;
+            expression = (ASTNode *)cast;
+            continue;
+        }
+
         break;
     }
     return expression;

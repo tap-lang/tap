@@ -74,6 +74,35 @@ static enum LiteralType common_float_type(enum LiteralType left, enum LiteralTyp
 static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type);
 static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const char *name);
 
+// 显式转换只接受标量类型；数组、指针、结构体和枚举不能用 `as` 直接转换。
+static int is_scalar_var_type(const VarTypeNode *type) {
+    return type && !type->is_array && !type->is_pointer &&
+           !type->struct_name && !type->enum_name && !type->type_arguments;
+}
+
+static const char *literal_type_name(enum LiteralType type) {
+    switch (type) {
+        case LITERAL_INT: return "int";
+        case LITERAL_UINT: return "uint";
+        case LITERAL_I8: return "i8";
+        case LITERAL_U8: return "u8";
+        case LITERAL_I16: return "i16";
+        case LITERAL_U16: return "u16";
+        case LITERAL_I32: return "i32";
+        case LITERAL_U32: return "u32";
+        case LITERAL_I64: return "i64";
+        case LITERAL_U64: return "u64";
+        case LITERAL_I128: return "i128";
+        case LITERAL_U128: return "u128";
+        case LITERAL_FLOAT: return "float";
+        case LITERAL_F32: return "f32";
+        case LITERAL_F64: return "f64";
+        case LITERAL_STRING: return "string";
+        case LITERAL_BOOL: return "bool";
+        default: return "unknown";
+    }
+}
+
 // 返回整数类型对应的位宽。
 static unsigned integer_type_bits(enum LiteralType type) {
     switch (type) {
@@ -965,6 +994,13 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
     if (expression && expression->type == NODE_TRY) {
         return 1;
     }
+    // 显式转换表达式的结果类型已经由 `as` 固定；只有目标类型完全相同才可写入，
+    // 避免声明检查把转换后的值又当成原始值处理。
+    if (expression && expression->type == NODE_CAST) {
+        CastNode *cast = (CastNode *)expression;
+        return is_scalar_var_type(cast->target_type) &&
+               var_type_equal(cast->target_type, target_type);
+    }
     // 字段访问：按字段自身的类型和目标类型比较，三种目标类型（指针 / 结构体 / 枚举）通用。
     if (expression && expression->type == NODE_FIELD_ACCESS) {
         VarTypeNode *field_type = expression_full_type(context, expression);
@@ -1231,6 +1267,13 @@ static VarTypeNode *expression_full_type(
     if (!expression) return NULL;
 
     switch (expression->type) {
+        case NODE_LITERAL:
+            return create_var_type(((LiteralNode *)expression)->literal_type);
+        case NODE_CAST: {
+            CastNode *cast = (CastNode *)expression;
+            return is_scalar_var_type(cast->target_type)
+                ? copy_var_type(cast->target_type) : NULL;
+        }
         case NODE_IDENTIFIER:
             // 局部变量、全局常量、单层字段（`a.b`）、多级字段（`a.b.c`）都在这里面。
             return named_value_type(
@@ -1289,6 +1332,15 @@ static VarTypeNode *expression_full_type(
             free_ast((ASTNode *)object_type);
             return result;
         }
+        case NODE_SIZEOF:
+            return create_var_type(LITERAL_UINT);
+        case NODE_BINARY_OP:
+            return create_var_type(expression_type(context, expression));
+        case NODE_REFERENCE: {
+            VarTypeNode *target = infer_reference_type(
+                context, (const ReferenceNode *)expression);
+            return target;
+        }
         default:
             return NULL;
     }
@@ -1341,6 +1393,11 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
         }
         case NODE_SIZEOF:
             return LITERAL_UINT;
+        case NODE_CAST: {
+            CastNode *cast = (CastNode *)expression;
+            return is_scalar_var_type(cast->target_type)
+                ? cast->target_type->type : default_integer_type();
+        }
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             const char *receiver_name = NULL;
@@ -1436,6 +1493,7 @@ static LLVMValueRef cast_value(CodeGenContext *context, LLVMValueRef value,
 }
 
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
+static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *cast);
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call);
 static LLVMValueRef generate_variant_value(
     CodeGenContext *context, const char *struct_name,
@@ -2358,6 +2416,164 @@ static LLVMValueRef runtime_string_function(
     return LLVMAddFunction(context->module, name, function_type);
 }
 
+// 生成显式标量转换。字符串转换通过 Runtime 的稳定 C ABI 完成，数值转换则使用 LLVM 原生指令。
+static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *cast) {
+    if (!cast || !is_scalar_var_type(cast->target_type)) {
+        print_diagnostic(stderr, "error", cast ? cast->filename : NULL,
+                         cast ? cast->line : 0, cast ? cast->column : 0,
+                         "cast target must be a scalar type");
+        exit(1);
+    }
+
+    enum LiteralType target = cast->target_type->type;
+    VarTypeNode *source_full = expression_full_type(context, cast->expression);
+    if (source_full && !is_scalar_var_type(source_full)) {
+        print_diagnostic(stderr, "error", cast->filename, cast->line, cast->column,
+                         "cannot cast a non-scalar value to %s",
+                         literal_type_name(target));
+        free_ast((ASTNode *)source_full);
+        exit(1);
+    }
+    enum LiteralType source = source_full
+        ? source_full->type : expression_type(context, cast->expression);
+    free_ast((ASTNode *)source_full);
+    LLVMValueRef value = generate_expression(context, cast->expression);
+
+    if (source == LITERAL_STRING && is_integer_type(target)) {
+        if (target == LITERAL_BOOL) {
+            LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_STRING)};
+            LLVMValueRef function = runtime_string_function(
+                context, "__tap_parse_bool", get_llvm_type(context, LITERAL_I32),
+                parameter_types, 1);
+            LLVMValueRef parsed = LLVMBuildCall2(
+                context->builder, LLVMGlobalGetValueType(function), function,
+                &value, 1, "parse_bool");
+            return LLVMBuildTrunc(context->builder, parsed,
+                                  get_llvm_type(context, LITERAL_BOOL), "bool_cast");
+        }
+        if (target == LITERAL_I128 || target == LITERAL_U128) {
+            LLVMTypeRef i64_type = get_llvm_type(context, LITERAL_U64);
+            LLVMTypeRef i64_pointer_type = LLVMPointerType(i64_type, 0);
+            LLVMTypeRef parameter_types[3] = {
+                get_llvm_type(context, LITERAL_STRING), i64_pointer_type, i64_pointer_type
+            };
+            const char *runtime_name = target == LITERAL_I128
+                ? "__tap_parse_i128" : "__tap_parse_u128";
+            LLVMValueRef function = runtime_string_function(
+                context, runtime_name, LLVMVoidTypeInContext(context->context),
+                parameter_types, 3);
+            LLVMValueRef low_slot = create_entry_alloca(context, i64_type, "cast_i128_low");
+            LLVMValueRef high_slot = create_entry_alloca(context, i64_type, "cast_i128_high");
+            LLVMValueRef arguments[3] = {value, low_slot, high_slot};
+            LLVMBuildCall2(context->builder, LLVMGlobalGetValueType(function), function,
+                            arguments, 3, "");
+            LLVMValueRef low = LLVMBuildLoad2(context->builder, i64_type, low_slot,
+                                              "parsed_i128_low");
+            LLVMValueRef high = LLVMBuildLoad2(context->builder, i64_type, high_slot,
+                                               "parsed_i128_high");
+            LLVMTypeRef i128_type = get_llvm_type(context, target);
+            LLVMValueRef high_wide = LLVMBuildZExt(context->builder, high, i128_type,
+                                                   "parsed_i128_high_wide");
+            LLVMValueRef shifted = LLVMBuildShl(
+                context->builder, high_wide, LLVMConstInt(i128_type, 64, 0),
+                "parsed_i128_shift");
+            LLVMValueRef low_wide = LLVMBuildZExt(context->builder, low, i128_type,
+                                                  "parsed_i128_low_wide");
+            return LLVMBuildOr(context->builder, shifted, low_wide, "parsed_i128");
+        }
+        int is_unsigned = is_unsigned_type(target);
+        enum LiteralType parsed_type = is_unsigned ? LITERAL_U64 : LITERAL_I64;
+        const char *runtime_name = is_unsigned ? "__tap_parse_u64" : "__tap_parse_i64";
+        LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_STRING)};
+        LLVMValueRef function = runtime_string_function(
+            context, runtime_name, get_llvm_type(context, parsed_type),
+            parameter_types, 1);
+        LLVMValueRef parsed = LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            &value, 1, "parse_integer");
+        return cast_integer(context, parsed, parsed_type, target);
+    }
+
+    if (is_integer_type(source) && target == LITERAL_STRING) {
+        if (source == LITERAL_BOOL) {
+            LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_I32)};
+            LLVMValueRef function = runtime_string_function(
+                context, "__tap_format_bool", get_llvm_type(context, LITERAL_STRING),
+                parameter_types, 1);
+            LLVMValueRef bool_as_i32 = LLVMBuildZExt(
+                context->builder, value, get_llvm_type(context, LITERAL_I32),
+                "bool_for_format");
+            return LLVMBuildCall2(
+                context->builder, LLVMGlobalGetValueType(function), function,
+                &bool_as_i32, 1, "format_bool");
+        }
+        if (source == LITERAL_I128 || source == LITERAL_U128) {
+            LLVMTypeRef i64_type = get_llvm_type(context, LITERAL_U64);
+            LLVMValueRef low = LLVMBuildTrunc(context->builder, value, i64_type,
+                                              "format_i128_low");
+            LLVMValueRef high_wide = LLVMBuildLShr(
+                context->builder, value,
+                LLVMConstInt(get_llvm_type(context, source), 64, 0),
+                "format_i128_high_wide");
+            LLVMValueRef high = LLVMBuildTrunc(context->builder, high_wide, i64_type,
+                                               "format_i128_high");
+            LLVMTypeRef parameter_types[2] = {i64_type, i64_type};
+            const char *runtime_name = source == LITERAL_I128
+                ? "__tap_format_i128" : "__tap_format_u128";
+            LLVMValueRef function = runtime_string_function(
+                context, runtime_name, get_llvm_type(context, LITERAL_STRING),
+                parameter_types, 2);
+            LLVMValueRef arguments[2] = {low, high};
+            return LLVMBuildCall2(
+                context->builder, LLVMGlobalGetValueType(function), function,
+                arguments, 2, "format_i128");
+        }
+        enum LiteralType format_type = is_unsigned_type(source)
+            ? LITERAL_U64 : LITERAL_I64;
+        const char *runtime_name = is_unsigned_type(source)
+            ? "__tap_format_u64" : "__tap_format_i64";
+        LLVMValueRef formatted_value = cast_integer(context, value, source, format_type);
+        LLVMTypeRef parameter_types[1] = {get_llvm_type(context, format_type)};
+        LLVMValueRef function = runtime_string_function(
+            context, runtime_name, get_llvm_type(context, LITERAL_STRING),
+            parameter_types, 1);
+        return LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            &formatted_value, 1, "format_integer");
+    }
+
+    if (source == LITERAL_STRING && target == LITERAL_STRING) return value;
+    if (is_float_type(source) && target == LITERAL_STRING) {
+        enum LiteralType format_type = source == LITERAL_F64 ? LITERAL_F64 : LITERAL_F32;
+        const char *runtime_name = source == LITERAL_F64
+            ? "__tap_format_f64" : "__tap_format_f32";
+        LLVMValueRef float_value = value;
+        LLVMTypeRef parameter_types[1] = {get_llvm_type(context, format_type)};
+        LLVMValueRef function = runtime_string_function(
+            context, runtime_name, get_llvm_type(context, LITERAL_STRING),
+            parameter_types, 1);
+        return LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            &float_value, 1, "format_float");
+    }
+
+    if (target == LITERAL_STRING || source == LITERAL_STRING) {
+        print_diagnostic(stderr, "error", cast->filename, cast->line, cast->column,
+                         "cannot cast %s to %s",
+                         literal_type_name(source), literal_type_name(target));
+        exit(1);
+    }
+    if ((is_integer_type(source) && is_integer_type(target)) ||
+        (is_integer_type(source) && is_float_type(target)) ||
+        (is_float_type(source) && is_float_type(target))) {
+        return cast_value(context, value, source, target);
+    }
+    print_diagnostic(stderr, "error", cast->filename, cast->line, cast->column,
+                     "cannot cast %s to %s",
+                     literal_type_name(source), literal_type_name(target));
+    exit(1);
+}
+
 // 按 UTF-8 编码字节序生成字符串内容比较。
 static LLVMValueRef generate_string_comparison(
     CodeGenContext *context, BinaryOpNode *binary) {
@@ -2848,6 +3064,8 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             return LLVMSizeOf(get_llvm_var_type(
                 context, size_expression->operand_type));
         }
+        case NODE_CAST:
+            return generate_cast_expression(context, (CastNode *)expression);
         case NODE_ARRAY_LITERAL:
             fprintf(stderr, "error: array literals can only be used to initialize array variables\n"); // 中文：数组字面量只能用于数组变量初始化
             exit(1);

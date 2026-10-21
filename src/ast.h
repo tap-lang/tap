@@ -19,6 +19,7 @@ enum NodeType {
     NODE_BINARY_OP,                 // 二元操作符节点
     NODE_REFERENCE,                 // 取地址表达式节点
     NODE_SIZEOF,                    // 编译期类型大小表达式节点
+    NODE_CAST,                      // 显式类型转换表达式节点（expr as Type）
     NODE_VAR_DECL,                  // 变量声明节点
     NODE_ASSIGNMENT,                // 赋值语句节点
     NODE_ARRAY_LITERAL,             // 数组字面量节点
@@ -258,6 +259,16 @@ typedef struct {
     VarTypeNode *operand_type; // 要计算 ABI 大小的完整类型
 } SizeofNode;
 
+// 显式类型转换表达式节点。
+typedef struct {
+    ASTNode base;
+    ASTNode *expression;      // 待转换的表达式
+    VarTypeNode *target_type; // 转换目标类型
+    char *filename;           // 转换操作所在文件
+    int line;                 // `as` 所在行
+    int column;               // `as` 所在列
+} CastNode;
+
 
 // 变量声明节点
 typedef struct {
@@ -429,6 +440,7 @@ ReturnNode *create_return(ASTNode *expression);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 ReferenceNode *create_reference(ASTNode *target);
 SizeofNode *create_sizeof(VarTypeNode *operand_type);
+CastNode *create_cast(ASTNode *expression, VarTypeNode *target_type);
 VarDeclNode *create_var_decl(
     char *name, VarTypeNode *type, ASTNode *expression, int is_const);
 AssignmentNode *create_assignment(const char *name, ASTNode *expression);

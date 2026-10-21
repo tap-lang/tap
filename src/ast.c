@@ -141,6 +141,15 @@ static void dump_expr(ASTNode *n, int depth) {
         print_var_type(((SizeofNode *)n)->operand_type);
         printf("\n");
         break;
+    case NODE_CAST: {
+        CastNode *cast = (CastNode *)n;
+        print_indent(depth);
+        printf("Cast as ");
+        print_var_type(cast->target_type);
+        printf("\n");
+        dump_expr(cast->expression, depth + 2);
+        break;
+    }
     case NODE_ARRAY_LITERAL: {
         ArrayLiteralNode *array = (ArrayLiteralNode *)n;
         print_indent(depth);
@@ -805,6 +814,23 @@ SizeofNode *create_sizeof(VarTypeNode *operand_type) {
     size_expression->base.next = NULL;
     size_expression->operand_type = operand_type;
     return size_expression;
+}
+
+// 创建显式类型转换节点，并接管 expression / target_type 的所有权。
+CastNode *create_cast(ASTNode *expression, VarTypeNode *target_type) {
+    CastNode *cast = (CastNode *)malloc(sizeof(CastNode));
+    if (!cast) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    cast->base.type = NODE_CAST;
+    cast->base.next = NULL;
+    cast->expression = expression;
+    cast->target_type = target_type;
+    cast->filename = NULL;
+    cast->line = 0;
+    cast->column = 0;
+    return cast;
 }
 
 // 创建变量类型节点
@@ -1620,6 +1646,13 @@ void free_ast(ASTNode *node) {
         case NODE_SIZEOF:
             free_ast((ASTNode *)((SizeofNode *)node)->operand_type);
             break;
+        case NODE_CAST: {
+            CastNode *cast = (CastNode *)node;
+            free_ast(cast->expression);
+            free_ast((ASTNode *)cast->target_type);
+            free(cast->filename);
+            break;
+        }
         case NODE_VAR_TYPE: {
             // 数组类型递归拥有它的元素类型。
             VarTypeNode *var_type = (VarTypeNode *)node;

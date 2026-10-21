@@ -1810,6 +1810,14 @@ static int rewrite_expression(
             rewrite_var_type(
                 current_module, bindings, ((SizeofNode *)expression)->operand_type);
             return 0;
+        case NODE_CAST:
+            // `value as Type` 的内层表达式可能包含模块函数调用；目标标量类型本身
+            // 通常无需改名，但仍递归处理完整类型以覆盖泛型实例化阶段。
+            rewrite_var_type(
+                current_module, bindings, ((CastNode *)expression)->target_type);
+            return rewrite_expression(
+                program, ((CastNode *)expression)->expression,
+                current_module, bindings);
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             // 显式泛型实参里的类型名也要跟着改名。

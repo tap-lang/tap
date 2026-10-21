@@ -370,6 +370,16 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
         case NODE_SIZEOF:
             return (ASTNode *)create_sizeof(substitute_type(
                 template, ((SizeofNode *)source)->operand_type, bindings));
+        case NODE_CAST: {
+            CastNode *cast = (CastNode *)source;
+            CastNode *copy = create_cast(
+                clone_expression(cast->expression, template, bindings),
+                substitute_type(template, cast->target_type, bindings));
+            copy->filename = cast->filename ? strdup(cast->filename) : NULL;
+            copy->line = cast->line;
+            copy->column = cast->column;
+            return (ASTNode *)copy;
+        }
         case NODE_ARRAY_LITERAL: {
             ArrayLiteralNode *array = (ArrayLiteralNode *)source;
             ArrayLiteralNode *copy = create_array_literal();
@@ -819,6 +829,12 @@ static void materialize_expression(GenericContext *context, ASTNode *expression)
         case NODE_SIZEOF:
             materialize_type(context, ((SizeofNode *)expression)->operand_type);
             break;
+        case NODE_CAST: {
+            CastNode *node = (CastNode *)expression;
+            materialize_expression(context, node->expression);
+            materialize_type(context, node->target_type);
+            break;
+        }
         case NODE_ARRAY_LITERAL:
             for (ASTNode *element = ((ArrayLiteralNode *)expression)->elements;
                  element; element = element->next) {
@@ -1770,6 +1786,12 @@ static VarTypeNode *process_expression(GenericContext *context,
         }
         case NODE_SIZEOF:
             return create_var_type(LITERAL_UINT);
+        case NODE_CAST: {
+            CastNode *cast = (CastNode *)expression;
+            VarTypeNode *inner = process_expression(context, cast->expression, NULL);
+            free_ast((ASTNode *)inner);
+            return cast->target_type ? clone_type(cast->target_type) : NULL;
+        }
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
             VarTypeNode *left = process_expression(context, binary->left, NULL);

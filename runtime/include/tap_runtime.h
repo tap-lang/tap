@@ -41,16 +41,34 @@ TAP_RUNTIME_API int32_t __tap_string_compare(const char *left, const char *right
 // 拼接两个字符串；结果由 Runtime 持有到进程退出。
 TAP_RUNTIME_API const char *__tap_string_concat(
     const char *left, const char *right);
+// 把标量格式化为 Runtime 管理的字符串。
+TAP_RUNTIME_API const char *__tap_format_i64(int64_t value);
+TAP_RUNTIME_API const char *__tap_format_u64(uint64_t value);
+// 128 位整数通过高、低两个 64 位无符号半部传递，保持 Windows/Cygwin ABI 可移植。
+TAP_RUNTIME_API const char *__tap_format_i128(uint64_t low, uint64_t high);
+TAP_RUNTIME_API const char *__tap_format_u128(uint64_t low, uint64_t high);
+TAP_RUNTIME_API const char *__tap_format_bool(int32_t value);
 // 把字符串的指定字节数复制到调用方提供的缓冲区；调用方保证两端空间足够。
 TAP_RUNTIME_API int32_t __tap_string_copy_bytes(
     const char *value, uint8_t *destination, size_t length);
 // 把指定长度的字节复制为 Runtime 管理的零结尾字符串；内容不能包含 NUL。
 TAP_RUNTIME_API const char *__tap_bytes_to_string(
     const uint8_t *data, size_t length);
+// 从十进制字符串解析标量；输入非法或超出范围时终止程序。
+TAP_RUNTIME_API int64_t __tap_parse_i64(const char *value);
+TAP_RUNTIME_API uint64_t __tap_parse_u64(const char *value);
+// 解析结果写入 low/high；输入非法或超出对应范围时终止程序。
+TAP_RUNTIME_API void __tap_parse_i128(
+    const char *value, uint64_t *low, uint64_t *high);
+TAP_RUNTIME_API void __tap_parse_u128(
+    const char *value, uint64_t *low, uint64_t *high);
+TAP_RUNTIME_API int32_t __tap_parse_bool(const char *value);
 
 // 把 double 渲染成最短的、能往返的十进制字符串；结果由 Runtime 管理。
 // 非有限值输出 "inf" / "-inf" / "nan"。
 TAP_RUNTIME_API const char *__tap_format_f64(double value);
+// 把 float 渲染成最短的、能往返的十进制字符串。
+TAP_RUNTIME_API const char *__tap_format_f32(float value);
 
 // 打开文件；失败返回 NULL。mode 与 C 的 fopen 一致，调用方应带 b，
 // 否则 Windows 上会把 \n 翻译成 \r\n。

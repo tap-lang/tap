@@ -253,6 +253,232 @@ const char *__tap_string_concat(const char *left, const char *right) {
     return result;
 }
 
+// 把有符号整数格式化为 Runtime 管理的十进制字符串。
+const char *__tap_format_i64(int64_t value) {
+    char buffer[32];
+    int length = snprintf(buffer, sizeof(buffer), "%lld", (long long)value);
+    if (length < 0 || (size_t)length >= sizeof(buffer)) {
+        fprintf(stderr, "failed to format integer\n");
+        exit(1);
+    }
+    char *result = allocate_owned_string((size_t)length);
+    memcpy(result, buffer, (size_t)length + 1);
+    return result;
+}
+
+// 把无符号整数格式化为 Runtime 管理的十进制字符串。
+const char *__tap_format_u64(uint64_t value) {
+    char buffer[32];
+    int length = snprintf(buffer, sizeof(buffer), "%llu", (unsigned long long)value);
+    if (length < 0 || (size_t)length >= sizeof(buffer)) {
+        fprintf(stderr, "failed to format integer\n");
+        exit(1);
+    }
+    char *result = allocate_owned_string((size_t)length);
+    memcpy(result, buffer, (size_t)length + 1);
+    return result;
+}
+
+// 128 位无符号数的四个 32 位小端 limb。手工实现十进制除法和乘法，
+// 不依赖编译器的 __int128 扩展，因此 MSVC、MinGW 和 Cygwin 都使用同一份代码。
+static void u128_from_halves(uint64_t low, uint64_t high, uint32_t limbs[4]) {
+    limbs[0] = (uint32_t)low;
+    limbs[1] = (uint32_t)(low >> 32);
+    limbs[2] = (uint32_t)high;
+    limbs[3] = (uint32_t)(high >> 32);
+}
+
+static void u128_to_halves(const uint32_t limbs[4], uint64_t *low, uint64_t *high) {
+    if (low) *low = ((uint64_t)limbs[1] << 32) | limbs[0];
+    if (high) *high = ((uint64_t)limbs[3] << 32) | limbs[2];
+}
+
+// limbs /= 10，返回余数。
+static uint32_t u128_div10(uint32_t limbs[4]) {
+    uint64_t remainder = 0;
+    for (int index = 3; index >= 0; index--) {
+        uint64_t current = (remainder << 32) | limbs[index];
+        limbs[index] = (uint32_t)(current / 10);
+        remainder = current % 10;
+    }
+    return (uint32_t)remainder;
+}
+
+// limbs = limbs * 10 + digit，返回是否溢出 128 位。
+static int u128_mul10_add(uint32_t limbs[4], uint32_t digit) {
+    uint64_t carry = digit;
+    for (int index = 0; index < 4; index++) {
+        uint64_t current = (uint64_t)limbs[index] * 10 + carry;
+        limbs[index] = (uint32_t)current;
+        carry = current >> 32;
+    }
+    return carry != 0;
+}
+
+static int u128_is_zero(const uint32_t limbs[4]) {
+    return limbs[0] == 0 && limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0;
+}
+
+static int u128_compare(const uint32_t left[4], const uint32_t right[4]) {
+    for (int index = 3; index >= 0; index--) {
+        if (left[index] != right[index]) return left[index] > right[index] ? 1 : -1;
+    }
+    return 0;
+}
+
+static void u128_twos_complement(uint32_t limbs[4]) {
+    uint64_t carry = 1;
+    for (int index = 0; index < 4; index++) {
+        uint64_t current = (uint64_t)(~limbs[index]) + carry;
+        limbs[index] = (uint32_t)current;
+        carry = current >> 32;
+    }
+}
+
+static const char *format_u128_limbs(const uint32_t input[4], int negative) {
+    uint32_t limbs[4];
+    memcpy(limbs, input, sizeof(limbs));
+    char reversed[40]; // ceil(log10(2^128)) == 39
+    size_t length = 0;
+    do {
+        reversed[length++] = (char)('0' + u128_div10(limbs));
+    } while (!u128_is_zero(limbs));
+
+    size_t total = length + (negative ? 1 : 0);
+    char *result = allocate_owned_string(total);
+    size_t offset = 0;
+    if (negative) result[offset++] = '-';
+    while (length > 0) result[offset++] = reversed[--length];
+    result[offset] = '\0';
+    return result;
+}
+
+const char *__tap_format_u128(uint64_t low, uint64_t high) {
+    uint32_t limbs[4];
+    u128_from_halves(low, high, limbs);
+    return format_u128_limbs(limbs, 0);
+}
+
+const char *__tap_format_i128(uint64_t low, uint64_t high) {
+    uint32_t limbs[4];
+    u128_from_halves(low, high, limbs);
+    int negative = (limbs[3] & UINT32_C(0x80000000)) != 0;
+    if (negative) u128_twos_complement(limbs);
+    return format_u128_limbs(limbs, negative);
+}
+
+// 把布尔值格式化为 `true` 或 `false`。
+const char *__tap_format_bool(int32_t value) {
+    return value ? "true" : "false";
+}
+
+static void invalid_numeric_string(const char *kind, const char *value) {
+    fprintf(stderr, "invalid %s string '%s'\n", kind, value ? value : "<null>");
+    exit(1);
+}
+
+// 手工解析无符号十进制整数，避免 strtoull 在不同平台上的 errno 行为差异。
+uint64_t __tap_parse_u64(const char *value) {
+    if (!value || !value[0]) invalid_numeric_string("unsigned integer", value);
+    const char *cursor = value;
+    if (*cursor == '+') cursor++;
+    if (!*cursor) invalid_numeric_string("unsigned integer", value);
+
+    uint64_t result = 0;
+    for (; *cursor; cursor++) {
+        if (*cursor < '0' || *cursor > '9') {
+            invalid_numeric_string("unsigned integer", value);
+        }
+        uint64_t digit = (uint64_t)(*cursor - '0');
+        if (result > (UINT64_MAX - digit) / 10) {
+            invalid_numeric_string("unsigned integer", value);
+        }
+        result = result * 10 + digit;
+    }
+    return result;
+}
+
+// 手工解析有符号十进制整数，同时接受 i64 的最小值。
+int64_t __tap_parse_i64(const char *value) {
+    if (!value || !value[0]) invalid_numeric_string("integer", value);
+    const char *cursor = value;
+    int negative = 0;
+    if (*cursor == '-' || *cursor == '+') {
+        negative = *cursor == '-';
+        cursor++;
+    }
+    if (!*cursor) invalid_numeric_string("integer", value);
+
+    const uint64_t positive_limit = UINT64_C(9223372036854775807);
+    const uint64_t negative_limit = UINT64_C(9223372036854775808);
+    const uint64_t limit = negative ? negative_limit : positive_limit;
+    uint64_t magnitude = 0;
+    for (; *cursor; cursor++) {
+        if (*cursor < '0' || *cursor > '9') {
+            invalid_numeric_string("integer", value);
+        }
+        uint64_t digit = (uint64_t)(*cursor - '0');
+        if (magnitude > (limit - digit) / 10) {
+            invalid_numeric_string("integer", value);
+        }
+        magnitude = magnitude * 10 + digit;
+    }
+    if (!negative) return (int64_t)magnitude;
+    if (magnitude == negative_limit) return INT64_MIN;
+    return -(int64_t)magnitude;
+}
+
+static void parse_u128_limbs(const char *value, uint32_t limbs[4], int is_signed) {
+    if (!value || !value[0]) invalid_numeric_string("integer", value);
+    const char *cursor = value;
+    int negative = 0;
+    if (*cursor == '+' || *cursor == '-') {
+        negative = *cursor == '-';
+        cursor++;
+    }
+    if (!*cursor || (negative && !is_signed)) {
+        invalid_numeric_string(is_signed ? "integer" : "unsigned integer", value);
+    }
+
+    memset(limbs, 0, sizeof(uint32_t) * 4);
+    for (; *cursor; cursor++) {
+        if (*cursor < '0' || *cursor > '9' || u128_mul10_add(limbs, (uint32_t)(*cursor - '0'))) {
+            invalid_numeric_string(is_signed ? "integer" : "unsigned integer", value);
+        }
+    }
+
+    // 有符号数的正数上限是 2^127-1，负数允许到 -2^127；无符号数上限是 2^128-1。
+    uint32_t limit[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    if (is_signed) {
+        limit[3] = negative ? UINT32_C(0x80000000) : UINT32_C(0x7fffffff);
+        if (u128_compare(limbs, limit) > 0) {
+            invalid_numeric_string("integer", value);
+        }
+    }
+    if (negative) u128_twos_complement(limbs);
+}
+
+void __tap_parse_u128(const char *value, uint64_t *low, uint64_t *high) {
+    uint32_t limbs[4];
+    parse_u128_limbs(value, limbs, 0);
+    u128_to_halves(limbs, low, high);
+}
+
+void __tap_parse_i128(const char *value, uint64_t *low, uint64_t *high) {
+    uint32_t limbs[4];
+    parse_u128_limbs(value, limbs, 1);
+    u128_to_halves(limbs, low, high);
+}
+
+// 解析布尔文本；同时接受 true/false 和 1/0，比较大小写敏感。
+int32_t __tap_parse_bool(const char *value) {
+    if (!value) invalid_numeric_string("boolean", value);
+    if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0) return 1;
+    if (strcmp(value, "false") == 0 || strcmp(value, "0") == 0) return 0;
+    invalid_numeric_string("boolean", value);
+    return 0;
+}
+
 // ByteVec.extend 的批量复制入口；调用方保证源长度和目标容量均足够。
 int32_t __tap_string_copy_bytes(
     const char *value, uint8_t *destination, size_t length) {
@@ -291,6 +517,25 @@ const char *__tap_format_f64(double value) {
         }
     }
 
+    size_t length = strlen(buffer);
+    char *result = allocate_owned_string(length);
+    memcpy(result, buffer, length);
+    result[length] = '\0';
+    return result;
+}
+
+// 与 f64 版本相同，但按 float 的有效精度寻找最短往返表示，避免
+// `3.14 as string` 先提升成 double 后暴露出 f32 的二进制尾数。
+const char *__tap_format_f32(float value) {
+    char buffer[64];
+    if (value != value) {
+        snprintf(buffer, sizeof(buffer), "nan");
+    } else {
+        for (int precision = 6; precision <= 9; precision++) {
+            snprintf(buffer, sizeof(buffer), "%.*g", precision, (double)value);
+            if (strtof(buffer, NULL) == value) break;
+        }
+    }
     size_t length = strlen(buffer);
     char *result = allocate_owned_string(length);
     memcpy(result, buffer, length);
