@@ -78,6 +78,42 @@ esac
 total=0
 passed=0
 failed=0
+planned_total=0
+completed_tests=0
+
+render_progress() {
+    [ "$planned_total" -gt 0 ] || return
+
+    progress_percent=$((completed_tests * 100 / planned_total))
+    progress_width=24
+    progress_filled=$((progress_percent * progress_width / 100))
+    progress_bar=
+    progress_index=0
+    while [ "$progress_index" -lt "$progress_filled" ]; do
+        progress_bar="${progress_bar}#"
+        progress_index=$((progress_index + 1))
+    done
+    while [ "$progress_index" -lt "$progress_width" ]; do
+        progress_bar="${progress_bar}."
+        progress_index=$((progress_index + 1))
+    done
+
+    printf '%s\n' '------------------------------------'
+    worker_index=1
+    while [ "$worker_index" -le "$TEST_JOBS" ]; do
+        worker_file="$TEMP_ROOT/worker.$worker_index"
+        if [ -f "$worker_file" ]; then
+            worker_case=
+            IFS= read -r worker_case < "$worker_file" || true
+            printf 'worker %d running: %s\n' "$worker_index" "$worker_case"
+        else
+            printf 'worker %d idle\n' "$worker_index"
+        fi
+        worker_index=$((worker_index + 1))
+    done
+    printf 'Testing [%s] %d/%d (%d%%)\n' \
+        "$progress_bar" "$completed_tests" "$planned_total" "$progress_percent"
+}
 
 mark_failure() {
     case_failed=1
@@ -88,10 +124,36 @@ read_text_file() {
     sed -e 's/\r$//' -e 's/[[:blank:]]*$//' "$1"
 }
 
-extract_expectation() {
-    section=$1
-    source_file=$2
-    awk -v target=".$section" '
+extract_expectations() {
+    extract_source_file=$1
+    embedded_stdout_path=$2
+    embedded_stderr_path=$3
+    embedded_exit_path=$4
+    embedded_args_path=$5
+    embedded_stdout_found_path=$6
+    embedded_stderr_found_path=$7
+    embedded_exit_found_path=$8
+    embedded_args_found_path=$9
+
+    awk \
+        -v stdout_file="$embedded_stdout_path" \
+        -v stderr_file="$embedded_stderr_path" \
+        -v exit_file="$embedded_exit_path" \
+        -v args_file="$embedded_args_path" \
+        -v stdout_found_file="$embedded_stdout_found_path" \
+        -v stderr_found_file="$embedded_stderr_found_path" \
+        -v exit_found_file="$embedded_exit_found_path" \
+        -v args_found_file="$embedded_args_found_path" '
+        BEGIN {
+            output["stdout"] = stdout_file
+            output["stderr"] = stderr_file
+            output["exit"] = exit_file
+            output["args"] = args_file
+            found_output["stdout"] = stdout_found_file
+            found_output["stderr"] = stderr_found_file
+            found_output["exit"] = exit_found_file
+            found_output["args"] = args_found_file
+        }
         { sub(/\r$/, "") }
         $0 == "/** -- test" {
             in_test = 1
@@ -104,29 +166,43 @@ extract_expectation() {
         }
         in_test && $0 ~ /^- \.(stdout|stderr|exit|args)$/ {
             current = substr($0, 3)
-            if (current == target) found = 1
+            current = substr(current, 2)
+            found[current] = 1
             next
         }
-        in_test && current == target {
-            values[++count] = $0
+        in_test && current != "" {
+            values[current, ++count[current]] = $0
         }
         END {
-            while (count > 0 && values[count] == "") count--
-            for (line_number = 1; line_number <= count; line_number++) {
-                print values[line_number]
+            for (section in output) {
+                if (!found[section]) continue
+                print "1" > found_output[section]
+                while (count[section] > 0 &&
+                       values[section, count[section]] == "") {
+                    count[section]--
+                }
+                if (count[section] == 0) {
+                    print "" > output[section]
+                } else {
+                    for (line_number = 1; line_number <= count[section]; line_number++) {
+                        print values[section, line_number] > output[section]
+                    }
+                }
+                close(found_output[section])
+                close(output[section])
             }
-            if (!found) exit 1
         }
-    ' "$source_file"
+    ' "$extract_source_file"
 }
 
 load_expectation() {
     section=$1
     source_file=$2
     output_file=$3
+    embedded_output_file=$4
+    embedded_found_file=$5
 
-    embedded_output_file="$output_file.embedded"
-    if extract_expectation "$section" "$source_file" > "$embedded_output_file"; then
+    if [ -f "$embedded_found_file" ]; then
         read_text_file "$embedded_output_file" > "$output_file"
         return 0
     fi
@@ -191,22 +267,37 @@ run_case() {
     stderr_file="$TEMP_ROOT/$case_id.stderr"
     expected_stdout_file="$TEMP_ROOT/$case_id.expected.stdout"
     expected_stderr_file="$TEMP_ROOT/$case_id.expected.stderr"
-    expected_exit_file="$TEMP_ROOT/$case_id.expected.exit"
-    expected_args_file="$TEMP_ROOT/$case_id.expected.args"
+    embedded_stdout_file="$TEMP_ROOT/$case_id.embedded.stdout"
+    embedded_stderr_file="$TEMP_ROOT/$case_id.embedded.stderr"
+    embedded_exit_file="$TEMP_ROOT/$case_id.embedded.exit"
+    embedded_args_file="$TEMP_ROOT/$case_id.embedded.args"
+    embedded_stdout_found_file="$TEMP_ROOT/$case_id.embedded.stdout.found"
+    embedded_stderr_found_file="$TEMP_ROOT/$case_id.embedded.stderr.found"
+    embedded_exit_found_file="$TEMP_ROOT/$case_id.embedded.exit.found"
+    embedded_args_found_file="$TEMP_ROOT/$case_id.embedded.args.found"
+    expected_args_file="$embedded_args_file"
     case_failed=0
 
-    if load_expectation stdout "$case_file" "$expected_stdout_file"; then
+    extract_expectations "$case_file" \
+        "$embedded_stdout_file" "$embedded_stderr_file" \
+        "$embedded_exit_file" "$embedded_args_file" \
+        "$embedded_stdout_found_file" "$embedded_stderr_found_file" \
+        "$embedded_exit_found_file" "$embedded_args_found_file"
+
+    if load_expectation stdout "$case_file" "$expected_stdout_file" \
+       "$embedded_stdout_file" "$embedded_stdout_found_file"; then
         has_expected_stdout=1
     else
         has_expected_stdout=0
     fi
-    if load_expectation stderr "$case_file" "$expected_stderr_file"; then
+    if load_expectation stderr "$case_file" "$expected_stderr_file" \
+       "$embedded_stderr_file" "$embedded_stderr_found_file"; then
         has_expected_stderr=1
     else
         has_expected_stderr=0
     fi
-    if extract_expectation exit "$case_file" > "$expected_exit_file"; then
-        expected_status=$(tr -d '[:space:]' < "$expected_exit_file")
+    if [ -f "$embedded_exit_found_file" ]; then
+        expected_status=$(tr -d '[:space:]' < "$embedded_exit_file")
         case "$expected_status" in
             ''|*[!0-9]*)
                 mark_failure "invalid embedded .exit expectation"
@@ -217,7 +308,7 @@ run_case() {
         mark_failure "missing embedded .exit expectation"
         expected_status=
     fi
-    if extract_expectation args "$case_file" > "$expected_args_file"; then
+    if [ -f "$embedded_args_found_file" ]; then
         has_program_args=1
     else
         has_program_args=0
@@ -272,6 +363,22 @@ active_workers=0
 
 wait_for_batch() {
     [ -s "$BATCH_FILE" ] || return
+
+    batch_target=$((completed_tests + active_workers))
+    while [ "$completed_tests" -lt "$batch_target" ]; do
+        status_count=0
+        for status_file in "$TEMP_ROOT"/*.status; do
+            [ -f "$status_file" ] || continue
+            status_count=$((status_count + 1))
+        done
+        if [ "$status_count" -gt "$completed_tests" ]; then
+            completed_tests=$status_count
+            render_progress
+        else
+            sleep 0.1
+        fi
+    done
+
     while IFS= read -r worker_pid; do
         wait "$worker_pid" || true
     done < "$BATCH_FILE"
@@ -284,6 +391,10 @@ launch_case() {
     launch_file=$2
     total=$((total + 1))
     launch_id=$total
+    launch_relative_file=${launch_file#"$PROJECT_ROOT/"}
+    worker_slot=$((active_workers + 1))
+    printf '%s\n' "$launch_relative_file" > "$TEMP_ROOT/worker.$worker_slot"
+    render_progress
 
     (
         trap - EXIT HUP INT TERM
@@ -292,6 +403,7 @@ launch_case() {
         else
             worker_status=1
         fi
+        rm -f "$TEMP_ROOT/worker.$worker_slot"
         printf '%s\n' "$worker_status" > "$TEMP_ROOT/$launch_id.status"
     ) > "$TEMP_ROOT/$launch_id.result" 2>&1 &
     printf '%s\n' "$!" >> "$BATCH_FILE"
@@ -301,14 +413,16 @@ launch_case() {
     fi
 }
 
-run_group() {
+prepare_group() {
     group_mode=$1
     group_directory=$2
     list_file="$TEMP_ROOT/$group_mode.list"
+    raw_list_file="$TEMP_ROOT/$group_mode.raw.list"
 
     # 源文件后缀 .tp 和 .tap 都支持，用例文件两种都能写。
     find "$TEST_ROOT/$group_directory" -type f \( -name '*.tp' -o -name '*.tap' \) \
-        | LC_ALL=C sort > "$list_file"
+        | LC_ALL=C sort > "$raw_list_file"
+    : > "$list_file"
     while IFS= read -r test_file; do
         relative_file=${test_file#"$PROJECT_ROOT/"}
         if [ -n "$FILTER" ]; then
@@ -317,11 +431,28 @@ run_group() {
                 *) continue ;;
             esac
         fi
+        printf '%s\n' "$test_file" >> "$list_file"
+        planned_total=$((planned_total + 1))
+    done < "$raw_list_file"
+}
+
+run_group() {
+    group_mode=$1
+    list_file="$TEMP_ROOT/$group_mode.list"
+
+    while IFS= read -r test_file; do
         launch_case "$group_mode" "$test_file"
     done < "$list_file"
 }
 
 cd "$PROJECT_ROOT" || exit 2
+prepare_group run-pass run-pass
+prepare_group run-fail run-fail
+prepare_group compile-fail compile-fail
+
+if [ "$planned_total" -gt 0 ]; then
+    printf 'Running %d tests with %d workers\n' "$planned_total" "$TEST_JOBS"
+fi
 run_group run-pass run-pass
 run_group run-fail run-fail
 run_group compile-fail compile-fail
@@ -332,6 +463,7 @@ if [ "$total" -eq 0 ]; then
     exit 2
 fi
 
+printf '\n'
 case_id=1
 while [ "$case_id" -le "$total" ]; do
     if [ -f "$TEMP_ROOT/$case_id.result" ]; then
