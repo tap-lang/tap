@@ -1,0 +1,15 @@
+fn missing_return(): i32 {
+    print("missing\n");
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: function 'missing_return' may exit without returning a value
+--> tests/compile-fail/functions/missing_return.tp:1:4
+- .exit
+1
+-- */

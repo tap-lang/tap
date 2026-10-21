@@ -1,0 +1,11 @@
+fn main() {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: function 'main' does not declare a return type
+--> tests/compile-fail/functions/return_without_type.tp:1:4
+- .exit
+1
+-- */
