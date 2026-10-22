@@ -6,12 +6,15 @@ fn main(): i32 {
     let from_int: f64 = 3;
     let narrow: f32 = 1.5;
     let widened: f64 = narrow;
+    // `float` 已不是关键字，可以作为普通标识符使用。
+    let float: i32 = 7;
 
     print("%f\n", big);
     print("%f\n", small);
     print("%f\n", upper);
     print("%f\n", from_int);
     print("%f\n", widened);
+    print("%d\n", float);
     return 0;
 }
 
@@ -22,6 +25,7 @@ fn main(): i32 {
 200000000.000000
 3.000000
 1.500000
+7
 - .exit
 0
 -- */

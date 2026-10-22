@@ -42,7 +42,6 @@ enum TokenType {
     TOKEN_U64,         // 64位无符号整数
     TOKEN_I128,        // 128位有符号整数
     TOKEN_U128,        // 128位无符号整数
-    TOKEN_FLOAT,       // 浮点数
     TOKEN_F32,         // 32位浮点数
     TOKEN_F64,         // 64位浮点数
     TOKEN_BOOL,        // 布尔值

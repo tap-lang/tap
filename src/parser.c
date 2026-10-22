@@ -267,7 +267,6 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_U64: type = LITERAL_U64; break;
         case TOKEN_I128: type = LITERAL_I128; break;
         case TOKEN_U128: type = LITERAL_U128; break;
-        case TOKEN_FLOAT: type = LITERAL_FLOAT; break;
         case TOKEN_F32: type = LITERAL_F32; break;
         case TOKEN_F64: type = LITERAL_F64; break;
         case TOKEN_BOOL: type = LITERAL_BOOL; break;
