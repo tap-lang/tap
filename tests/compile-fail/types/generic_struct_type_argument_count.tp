@@ -3,7 +3,7 @@ struct Box<T> {
 }
 
 fn main(): i32 {
-    let box: Box<i32, string> = Box<i32, string> { value: 1 };
+    let box: Box<i32, String> = Box<i32, String> { value: 1 };
     return 0;
 }
 

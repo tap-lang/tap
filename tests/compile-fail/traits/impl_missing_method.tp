@@ -1,14 +1,14 @@
 // impl 必须把 trait 声明的方法都实现：这里漏了 label。
 // 约束检查只看 impl 记录在不在，所以完整性由签名校验兜住。
 trait Show {
-    fn show(self): string;
-    fn label(self, prefix: string): string;
+    fn show(self): String;
+    fn label(self, prefix: String): String;
 }
 
 struct Point { x: i32 }
 
 impl Show for Point {
-    fn show(value: Point): string {
+    fn show(value: Point): String {
         return "point";
     }
 }

@@ -32,14 +32,14 @@ pub fn pick_value(choice: Choice): i32 {
 }
 
 // `?` 传播的内层表达式是模块内函数的调用，调用点同样要被重写。
-pub fn checked(value: i32): Result<i32, string> {
+pub fn checked(value: i32): Result<i32, String> {
     if (value < 0) {
-        return Result<i32, string>.Err("negative");
+        return Result<i32, String>.Err("negative");
     }
-    return Result<i32, string>.Ok(bump(value));
+    return Result<i32, String>.Ok(bump(value));
 }
 
-pub fn doubled(value: i32): Result<i32, string> {
+pub fn doubled(value: i32): Result<i32, String> {
     let inner: i32 = checked(value)?;
-    return Result<i32, string>.Ok(inner * 2);
+    return Result<i32, String>.Ok(inner * 2);
 }

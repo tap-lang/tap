@@ -22,9 +22,9 @@ tap 标准库由两部分组成：
 | `read_key(): i32` | 非阻塞读取真实键值；无按键时返回 `-1` |
 | `sleep_ms(milliseconds: i32): i32` | 休眠指定毫秒；成功返回 `0`，失败返回 `-1` |
 | `clear_screen(): i32` | 清空终端并将光标移动到左上角；成功返回 `0` |
-| `panic(message: string): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
+| `panic(message: String): i32` | 打印 `panic: <message>` 到标准错误并以状态 `1` 终止；不会返回 |
 | `exit(code: i32): i32` | 以状态码 `code` 终止程序；不打印任何东西，不会返回 |
-| `print(format: string, ...): i32` | 写标准输出；单实参时按类型自动挑格式串，返回写出的字符数 |
+| `print(format: String, ...): i32` | 写标准输出；单实参时按类型自动挑格式串，返回写出的字符数 |
 | `Result<T, E>` | 可恢复错误的类型：`Ok(T)` 或 `Err(E)` |
 | `is_ok(value): bool` / `is_err(value): bool` | 判断 `Result` 成功或失败 |
 | `unwrap_or(value, fallback): T` | 取成功值；失败时用 `fallback` |
@@ -57,14 +57,14 @@ tap 标准库由两部分组成：
 
 ```text
 // std/prelude.tp
-extern fn __tap_printf(format: string, ...): i32;
+extern fn __tap_printf(format: c_string, ...): i32;
 
-fn print(format: string, ...): i32 {
+fn print(format: String, ...): i32 {
     return __tap_printf(format, ...);
 }
 
 // std/io.tp
-pub fn printf(format: string, ...): i32 {
+pub fn printf(format: String, ...): i32 {
     return __tap_printf(format, ...);
 }
 ```
@@ -81,8 +81,8 @@ pub fn printf(format: string, ...): i32 {
 
 其余情况（第一个实参是字符串字面量）两者**完全等价**，`print` 只是少打几个字母、少一个 import。
 
-⚠️ 自动挑格式那一档对 `string` 不友好：`print(某个字符串变量)` 会按 `%d` 打出指针值。
-输出字符串一律显式写 `print("%s", value)`。
+自动挑格式支持字符串变量：`print(value)` 等价于 `print("%s", value)`。需要和其他内容
+一起输出或精确控制格式时，仍应显式写格式串。
 
 ### `...` 与变参转发
 
@@ -94,17 +94,20 @@ pub fn printf(format: string, ...): i32 {
 | 位宽小于 32 的有符号整数（`i8` / `i16`） | 符号扩展成 `i32` |
 | 位宽小于 32 的无符号整数（`u8` / `u16`）和 `bool` | 零扩展成 `i32`（`bool` 的 `i1` 变成 `0` / `1`） |
 | `f32` | 提升成 `f64`，所以 `%f` 能直接吃 `f32` 变量 |
-| `i32` 及以上整数、`f64`、`string`、指针 | 原样传递 |
+| `i32` 及以上整数、`f64`、指针 | 原样传递 |
+| `String` | 提取 `data` 指针后传递，供 `%s` 使用 |
+| `c_string` | 原样传递，供 C API 使用 |
 
-`i64` 不提升，格式串要自己对齐（`%lld`）；`string` 在 LLVM 里就是 `i8*`，直接用 `%s`。
+`i64` 不提升，格式串要自己对齐（`%lld`）。`String` 本身是 `{data, length}`，但 C 变参
+不认识这个结构，因此编译器只把 `data` 传给 `%s`。
 
 **`extern` 函数**直接绑 C 的变参 ABI。**普通函数**也能声明变参，但函数体必须是
 **一句纯转发** —— 实参按顺序正好是本函数的具名形参，末尾跟 `...`：
 
 ```text
-extern fn printf(format: string, ...): i32;
+extern fn printf(format: c_string, ...): i32;
 
-fn log_line(prefix: string, ...): i32 {
+fn log_line(prefix: String, ...): i32 {
     return printf(prefix, ...);
 }
 ```
@@ -125,7 +128,7 @@ error: variadic function 'sum' must forward its arguments in a single call, ...
 import std.io;
 
 fn main(): i32 {
-    let name: string = "tap";
+    let name: String = "tap";
     let small: i8 = -3;
     io.printf("name=%s small=%d hex=%x\n", name, small, 255);
     return 0;
@@ -163,11 +166,11 @@ fn main(): i32 {
 | `std.random` | `random(maximum: i32): i32` | 返回 `[0, maximum)`，否则返回 `0`；底层走 Runtime 的 `__tap_random`，使用前需 `import std.random` |
 | --- | --- | --- |
 | `std.env` | `argc(): i32` | 返回当前程序的命令行参数数量，包含程序路径自身 |
-| `std.env` | `arg(index: i32): string` | 返回指定位置的命令行参数；越界时返回空字符串 |
-| `std.env` | `args(): Vec<string>` | 返回全部命令行参数；用完要 `vec.free` |
-| `std.env` | `var(name: string): string` | 返回指定环境变量的值；不存在时返回空字符串 |
+| `std.env` | `arg(index: i32): String` | 返回指定位置的命令行参数；越界时返回空字符串 |
+| `std.env` | `args(): Vec<String>` | 返回全部命令行参数；用完要 `vec.free` |
+| `std.env` | `var(name: String): String` | 返回指定环境变量的值；不存在时返回空字符串 |
 | `std.env` | `varc(): i32` | 返回当前进程环境变量数量 |
-| `std.env` | `vars(): Vec<string>` | 返回全部环境变量条目（`NAME=VALUE`）；用完要 `vec.free` |
+| `std.env` | `vars(): Vec<String>` | 返回全部环境变量条目（`NAME=VALUE`）；用完要 `vec.free` |
 | `std.math` | `PI: f64` | 圆周率常量，值为 `3.141592653589793` |
 | `std.math` | `square<T>(value: T): T` | 返回平方值；`T` 由实参推断，也可显式写 `square<f64>(...)` |
 | `std.math` | `abs<T>(value: T): T` | 返回绝对值；无符号类型原样返回 |
@@ -183,32 +186,32 @@ fn main(): i32 {
 | `std.byte_vec` | `ByteVec` | 可扩容的 `u8` 字节容器 |
 | `std.byte_vec` | `new()/with_capacity(capacity)` | 创建字节容器 |
 | `std.byte_vec` | `push/extend/get/set/clear` | 追加、读写和清空字节 |
-| `std.byte_vec` | `to_string(): string` | 复制有效字节为 Runtime 管理的字符串 |
-| `string` | `len()` | 返回 UTF-8 原始字节长度 |
-| `string` | `char_count()` | 返回 UTF-8 字符（Unicode 码点）数量 |
+| `std.byte_vec` | `to_string(): String` | 复制有效字节为 Runtime 管理的字符串 |
+| `String` | `len()` | 返回 UTF-8 原始字节长度 |
+| `String` | `char_count()` | 返回 UTF-8 字符（Unicode 码点）数量 |
 | `std.string_builder` | `StringBuilder` | 基于 `ByteVec` 的可增量字符串构建器 |
 | `std.string_builder` | `append<T>/append_byte/clear` | 追加字符串或可转换为字符串的值并复用容量 |
-| `std.string_builder` | `to_string(): string` | 获取与后续 Builder 修改无关的字符串快照 |
-| `std.parse` | `parse_i64(text: string): Result<i64, string>` | 解析十进制整数，失败返回 `Err` |
-| `std.parse` | `parse_f64(text: string): Result<f64, string>` | 解析十进制浮点，失败返回 `Err` |
-| `std.parse` | `format_i64(value: i64): string` | 把整数格式化为十进制字符串 |
-| `std.parse` | `format_f64(value: f64): string` | 把浮点数格式化为最短可往返的十进制字符串 |
-| `std.json` | `escape(text: string): string` | 转义为 JSON 字符串内容，不含两侧引号 |
-| `std.json` | `escape_quoted(text: string): string` | 转义并补上两侧引号，结果可直接放进 JSON |
+| `std.string_builder` | `to_string(): String` | 获取与后续 Builder 修改无关的字符串快照 |
+| `std.parse` | `parse_i64(text: String): Result<i64, String>` | 解析十进制整数，失败返回 `Err` |
+| `std.parse` | `parse_f64(text: String): Result<f64, String>` | 解析十进制浮点，失败返回 `Err` |
+| `std.parse` | `format_i64(value: i64): String` | 把整数格式化为十进制字符串 |
+| `std.parse` | `format_f64(value: f64): String` | 把浮点数格式化为最短可往返的十进制字符串 |
+| `std.json` | `escape(text: String): String` | 转义为 JSON 字符串内容，不含两侧引号 |
+| `std.json` | `escape_quoted(text: String): String` | 转义并补上两侧引号，结果可直接放进 JSON |
 | `std.json` | `append_escaped(builder, text): StringBuilder` | 把转义结果追加进构建器，不含两侧引号 |
 | `std.json` | `append_quoted(builder, text): StringBuilder` | 追加转义结果并补上两侧引号 |
-| `std.json` | `unescape(text: string): Result<string, string>` | 反转义 JSON 字符串内容，非法转义返回 `Err` |
+| `std.json` | `unescape(text: String): Result<String, String>` | 反转义 JSON 字符串内容，非法转义返回 `Err` |
 | `std.fs` | `File` | 已打开文件的句柄（`handle` 是不透明指针） |
 | `std.fs` | `open(path, mode): File` | 打开文件；`mode` 与 C 的 `fopen` 一致，务必带 `b`（`rb` / `wb` / `ab`） |
 | `std.fs` | `is_open(file): bool` | 句柄是否有效；已关闭或打开失败时返回 `false` |
-| `std.fs` | `read(file, count): string` | 读取最多 `count` 个字节；到末尾或失败返回空字符串 |
+| `std.fs` | `read(file, count): String` | 读取最多 `count` 个字节；到末尾或失败返回空字符串 |
 | `std.fs` | `write(file, data): i64` | 写入 `data` 的全部字节，返回写入数；失败返回 `-1` |
-| `std.fs` | `read_all(file): string` | 读到末尾，把剩余内容拼成一个字符串 |
+| `std.fs` | `read_all(file): String` | 读到末尾，把剩余内容拼成一个字符串 |
 | `std.fs` | `eof(file): bool` | 是否已经读到文件末尾 |
 | `std.fs` | `close(file): i32` | 关闭文件，成功返回 `0` |
 | `std.fs` | `remove(path): i32` | 删除文件，成功返回 `0` |
-| `std.fs` | `read_text(path): Result<string, string>` | 整个文件读成字符串，打不开返回 `Err` |
-| `std.fs` | `read_dir(path): Result<Vec<string>, string>` | 列出目录条目名，不含 `.` / `..`，**按名字排序**；打不开返回 `Err` |
+| `std.fs` | `read_text(path): Result<String, String>` | 整个文件读成字符串，打不开返回 `Err` |
+| `std.fs` | `read_dir(path): Result<Vec<String>, String>` | 列出目录条目名，不含 `.` / `..`，**按名字排序**；打不开返回 `Err` |
 | `std.fs` | `is_dir(path): bool` | 路径是不是目录 |
 | `std.fs` | `open_dir` / `is_dir_open` / `next_entry` / `close_dir` | 目录遍历的流式版本 |
 | `std.fs` | `make_dir(path): i32` | 建目录（已存在算成功） |
@@ -220,11 +223,11 @@ fn main(): i32 {
 | `std.io` | `printf(format, ...): i32` | 格式化输出到标准输出，格式串语义同 libc `printf`；返回写出的字符数 |
 | `std.io` | `eprintf(format, ...): i32` | 格式化输出到标准错误，格式串语义同 `printf`；返回写出的字符数 |
 | `std.net` | `Socket` | TCP 套接字句柄；`fd` 小于 `0` 表示已关闭或创建失败 |
-| `std.net` | `parse_ipv4(host): Result<[u8; 4], string>` | 解析 `a.b.c.d` 字面量；不做 DNS，格式非法返回 `Err` |
-| `std.net` | `build_address(host, port): Result<[u8; 16], string>` | 构造 16 字节 `sockaddr_in`，端口按大端拆字节 |
-| `std.net` | `listen_on(host, port, backlog): Result<Socket, string>` | 创建、绑定并监听；`port` 传 `0` 由内核分配 |
-| `std.net` | `connect_to(host, port): Result<Socket, string>` | 阻塞连接服务器，失败返回 `Err` |
-| `std.net` | `accept_from(server): Result<Socket, string>` | 取一个已完成握手的连接，阻塞等待 |
+| `std.net` | `parse_ipv4(host): Result<[u8; 4], String>` | 解析 `a.b.c.d` 字面量；不做 DNS，格式非法返回 `Err` |
+| `std.net` | `build_address(host, port): Result<[u8; 16], String>` | 构造 16 字节 `sockaddr_in`，端口按大端拆字节 |
+| `std.net` | `listen_on(host, port, backlog): Result<Socket, String>` | 创建、绑定并监听；`port` 传 `0` 由内核分配 |
+| `std.net` | `connect_to(host, port): Result<Socket, String>` | 阻塞连接服务器，失败返回 `Err` |
+| `std.net` | `accept_from(server): Result<Socket, String>` | 取一个已完成握手的连接，阻塞等待 |
 | `std.net` | `local_port(socket): u16` | 返回实际绑定的端口；句柄无效或查询失败返回 `0` |
 | `std.net` | `receive(socket, buffer, capacity): i64` | 收数据写入缓冲区；`0` 表示对端关闭，`-1` 出错 |
 | `std.net` | `send_text(socket, data): i64` | 发送字符串，返回实际发出的字节数 |
@@ -232,14 +235,14 @@ fn main(): i32 {
 | `std.net` | `close_socket(socket): Socket` | 关闭并返回失效句柄，用法是 `socket = close_socket(socket)` |
 | `std.net` | `is_open(socket): bool` | 句柄是否有效；创建失败或关闭后返回 `false` |
 | `std.net` | `AF_INET` / `SOCK_STREAM` / `ADDRESS_LENGTH` | 地址族、套接字类型常量和 `sockaddr_in` 长度 |
-| `std.sys` | `system(command: string): i32` | 通过 shell 执行命令；成功返回 `0`，否则返回非零 wait status |
+| `std.sys` | `system(command: String): i32` | 通过 shell 执行命令；成功返回 `0`，否则返回非零 wait status |
 | `std.sys` | `popen(command, mode): *i8` | 打开命令管道；`mode` 使用 `"r"` 或 `"w"`，失败返回空指针 |
-| `std.sys` | `read_stream(stream, count): string` | 从 `popen` 管道读取最多 `count` 字节；到末尾返回空字符串 |
+| `std.sys` | `read_stream(stream, count): String` | 从 `popen` 管道读取最多 `count` 字节；到末尾返回空字符串 |
 | `std.sys` | `pclose(stream): i32` | 关闭管道并等待子进程，返回 wait status |
 | `std.sys` | `exit_code(status): i32` | 从 `system` / `pclose` 状态中取退出码；被信号终止或状态无效时返回 `-1` |
 | `std.sys` | `was_signaled(status): bool` | 判断进程是否被信号终止；Windows 始终返回 `false` |
 | `std.sys` | `is_open(stream): bool` | 判断管道句柄是否为非空指针 |
-| `std.sys` | `capture(command): string` | 执行命令并捕获标准输出；单次最多读取 1 MiB |
+| `std.sys` | `capture(command): String` | 执行命令并捕获标准输出；单次最多读取 1 MiB |
 
 `std.random` 示例：
 
@@ -261,12 +264,12 @@ import std.env as env;
 import std.vec as vec;
 
 fn main(): i32 {
-    let values: Vec<string> = env.args();
+    let values: Vec<String> = env.args();
     print("%d\n", env.argc());
     print("%s\n", values.get(1));
     print("%s\n", env.var("PATH"));
 
-    let entries: Vec<string> = env.vars();
+    let entries: Vec<String> = env.vars();
     print("%s\n", entries.get(0));
 
     // 容器在堆上，用完要自己释放。
@@ -288,8 +291,8 @@ tap run app.tp -- alpha beta
 import std.memory as memory;
 
 fn main(): i32 {
-    // 显式指定 T 为 string。
-    let values: *string = memory.malloc<string>(16);
+    // 显式指定 T 为 String。
+    let values: *String = memory.malloc<String>(16);
     values[0] = "hello";
     values = memory.realloc(values, 32);
     values[1] = "tap";
@@ -327,13 +330,13 @@ fn main(): i32 {
 只释放 Vec 自己的元素缓冲区，不会递归释放元素持有的资源。`push()`、`set()`、`clear()`
 和 `reserve()` 作为方法语句调用时会自动把返回的新结构体写回接收者。
 
-字符串动态数组直接用 `Vec<string>`：
+字符串动态数组直接用 `Vec<String>`：
 
 ```text
 import std.vec as vec;
 
 fn main(): i32 {
-    let values: Vec<string> = vec.new();
+    let values: Vec<String> = vec.new();
     values.push("hello");
     values.push("tap");
 
@@ -365,8 +368,8 @@ fn main(): i32 {
 
 `ByteVec` 容量不足时按倍数扩容。`clear()` 只将长度置零并保留容量；
 `free()` 后不能继续访问容器。`to_string()` 会复制当前字节，因此之后清空或修改
-`ByteVec` 不会改变已返回的字符串。由于 tap `string` 使用结尾 NUL，包含 `0` 字节的
-`ByteVec` 不能转换为字符串。
+`ByteVec` 不会改变已返回的字符串。`to_string()` 按 `ByteVec.len` 复制内容，所以包含 `0`
+字节的缓冲区也能转换；但用 C 风格 `%s` 输出时仍会在第一个 NUL 处停止。
 
 `std.string_builder` 示例：
 
@@ -393,15 +396,15 @@ fn main(): i32 {
 import std.parse;
 
 fn main(): i32 {
-    let parsed: Result<i64, string> = parse.parse_i64("-456");
+    let parsed: Result<i64, String> = parse.parse_i64("-456");
     print("value=%lld text=%s\n",
         unwrap_or(parsed, 0), parse.format_i64(unwrap_or(parsed, 0)));
 
-    let ratio: Result<f64, string> = parse.parse_f64("1.5e-3");
+    let ratio: Result<f64, String> = parse.parse_f64("1.5e-3");
     print("ratio=%f\n", unwrap_or(ratio, 0.0));
 
     // format_f64 取最短的、能往返的表示，不补齐到固定小数位。
-    let tenth: Result<f64, string> = parse.parse_f64("0.1");
+    let tenth: Result<f64, String> = parse.parse_f64("0.1");
     print("text=%s\n", parse.format_f64(unwrap_or(tenth, 0.0)));
     return 0;
 }
@@ -415,7 +418,7 @@ fn main(): i32 {
 不想处理分支时用 `result.unwrap_or` 给个兜底值：
 
 ```text
-let parsed: Result<i64, string> = parse.parse_i64(text);
+let parsed: Result<i64, String> = parse.parse_i64(text);
 print("%lld\n", unwrap_or(parsed, 0));
 ```
 
@@ -447,9 +450,9 @@ fn main(): i32 {
     print("%s\n", sb.to_string(out));
 
     // 输入：反转义，非法转义序列通过 ok 报告
-    let decoded: Result<string, string> = json.unescape("a\\u0041\\uD83D\\uDE00b");
+    let decoded: Result<String, String> = json.unescape("a\\u0041\\uD83D\\uDE00b");
     // 字段访问要先绑定到变量，不能在字段链上直接调方法。
-    let text: string = unwrap_or(decoded, "");
+    let text: String = unwrap_or(decoded, "");
     print("len=%llu\n", text.len());
     return 0;
 }
@@ -479,8 +482,8 @@ fn main(): i32 {
     fs.close(out);
 
     let input: File = fs.open("notes.txt", "rb");
-    let first: string = fs.read(input, 5);
-    let rest: string = fs.read_all(input);
+    let first: String = fs.read(input, 5);
+    let rest: String = fs.read_all(input);
     print("%s|%s eof=%d\n", first, rest, fs.eof(input));
     print("close=%d\n", fs.close(input));
     return fs.remove("notes.txt");
@@ -502,8 +505,8 @@ fn main(): i32 {
 开了：
 
 ```text
-let loaded: Result<string, string> = fs.read_text("notes.txt");
-let notes: string = unwrap_or(loaded, "");
+let loaded: Result<String, String> = fs.read_text("notes.txt");
+let notes: String = unwrap_or(loaded, "");
 ```
 
 模块导入、别名、递归加载和错误规则见 [module.md](module.md)。
@@ -589,12 +592,12 @@ Windows 走 winsock（要先 `WSAStartup`、句柄是 64 位 `SOCKET`、关闭�
 
 ## 错误处理约定
 
-标准库统一用 `Result<T, E>` 表示**可恢复错误**。`E` 实践中多用 `string`，用来说明失败原因。
+标准库统一用 `Result<T, E>` 表示**可恢复错误**。`E` 实践中多用 `String`，用来说明失败原因。
 `Result` 和下面几个辅助函数都在 Prelude 里，**不需要导入**。
 
 | 场景 | 做法 |
 |---|---|
-| 可恢复错误（解析、文件打开、转义非法） | 返回 `Result<T, string>`，调用方自行处理或给兜底值 |
+| 可恢复错误（解析、文件打开、转义非法） | 返回 `Result<T, String>`，调用方自行处理或给兜底值 |
 | 程序员错误（索引越界、字符串越界） | 打印诊断并终止程序，不返回 `Result` |
 
 区分这类的标准是**能不能在调用处合理恢复**：文件不存在是运行环境的正常情况，调用方能换路径
@@ -604,10 +607,10 @@ Windows 走 winsock（要先 `WSAStartup`、句柄是 64 位 `SOCKET`、关闭�
 提前返回 `Err`，错误信息原样带出、不做包装。它要求所在函数的返回类型也是载荷枚举：
 
 ```text
-fn pipeline(value: i32): Result<i32, string> {
+fn pipeline(value: i32): Result<i32, String> {
     let a: i32 = step1(value)?;
     let b: i32 = step2(a)?;
-    return Result<i32, string>.Ok(step3(b)?);
+    return Result<i32, String>.Ok(step3(b)?);
 }
 ```
 
@@ -622,7 +625,7 @@ fn pipeline(value: i32): Result<i32, string> {
 就地取值用 `match` 的表达式形式，或者用 `unwrap_or` 给兜底值：
 
 ```text
-let parsed: Result<i64, string> = parse.parse_i64(text);
+let parsed: Result<i64, String> = parse.parse_i64(text);
 let value: i64 = match (parsed) {
     Result.Ok(number) => number,
     Result.Err(message) => 0,
@@ -633,11 +636,11 @@ print("%lld\n", unwrap_or(parsed, 0));
 **失败就终止**用 `panic`（Prelude 提供，无需导入）：打印 `panic: <message>` 到标准错误，
 并以状态 `1` 结束进程。它不会返回。
 
-`Result` 上有两个顺势 panic 的快捷方式，只在 `Result<T, string>` 上可用——tap 还没有
-「把任意类型转成字符串」的手段，所以错误类型必须是 `string` 才报得出有用的信息：
+`Result` 上有两个顺势 panic 的快捷方式，只在 `Result<T, String>` 上可用——tap 还没有
+「把任意类型转成字符串」的手段，所以错误类型必须是 `String` 才报得出有用的信息：
 
 ```text
-let number: Result<i64, string> = parse.parse_i64(text);
+let number: Result<i64, String> = parse.parse_i64(text);
 print("%lld\n", unwrap(number));                       // 失败时 panic，用 Err 的信息
 print("%lld\n", expect(number, "config must be int")); // 失败时 panic，用指定的信息
 ```
@@ -651,7 +654,7 @@ print("%lld\n", parsed.unwrap_or(0));
 print("%lld\n", parsed.unwrap());
 ```
 
-注意 `unwrap` / `expect` 只对 `Result<T, string>` 生效；其他错误类型请自己 `match`。
+注意 `unwrap` / `expect` 只对 `Result<T, String>` 生效；其他错误类型请自己 `match`。
 
 另外 `assert(condition, message)` 是**内建语句**（不是 Prelude 函数）：失败时打印
 `Assertion failed at 文件:行:列: message` 并终止，比 `panic` 多了位置信息。
@@ -667,16 +670,16 @@ extern fn __tap_sleep_ms(milliseconds: i32): i32;
 extern fn __tap_clear_screen(): i32;
 extern fn __tap_random(maximum: i32): i32;
 extern fn __tap_argc(): i32;
-extern fn __tap_arg(index: i32): string;
-extern fn __tap_env_var(name: string): string;
+extern fn __tap_arg(index: i32): String;
+extern fn __tap_env_var(name: String): String;
 extern fn __tap_envc(): i32;
-extern fn __tap_env(index: i32): string;
+extern fn __tap_env(index: i32): String;
 // 字符串 ABI 由内建方法和比较运算符调用。
-extern fn __tap_string_byte_at(value: string, index: i64): u8;
-extern fn __tap_string_slice(value: string, start: i64, end: i64): string;
-extern fn __tap_string_compare(left: string, right: string): i32;
-extern fn __tap_string_copy_bytes(value: string, destination: *u8, length: uint): i32;
-extern fn __tap_bytes_to_string(data: *u8, length: uint): string;
+extern fn __tap_string_byte_at(value: String, index: i64): u8;
+extern fn __tap_string_slice(value: String, start: i64, end: i64): String;
+extern fn __tap_string_compare(left: String, right: String): i32;
+extern fn __tap_string_copy_bytes(value: String, destination: *u8, length: uint): i32;
+extern fn __tap_bytes_to_string(data: *u8, length: uint): String;
 extern fn __tap_malloc(size: uint): *i8;
 extern fn __tap_realloc(pointer: *i8, size: uint): *i8;
 extern fn __tap_free(pointer: *i8): i32;
@@ -725,13 +728,13 @@ Runtime 的 C ABI 声明位于
 ## Current Limits
 
 - 大部分标准库函数仍只覆盖 `i32` 相关能力；`std.parse` 使用 `i64` 和 `f64`。
-- `string` 已提供内建 `.len()`、`.byte_at()`、`.slice()`、内容比较和 `+` 拼接，动态构建可使用
+- `String` 已提供内建 `.len()`、`.byte_at()`、`.slice()`、内容比较和 `+` 拼接，动态构建可使用
   `std.string_builder`，字符串与数值互转可使用 `std.parse`；尚无查找和 Unicode 码点级 API。
 - `std.parse` 只解析十进制，不识别十六进制、下划线分隔符或 `inf` / `nan`。
 - `format_f64` 通过 Runtime 调用 C 库的十进制转换（`__tap_format_f64`），是 `std.parse`
   里唯一不纯 tap 的函数：精确的十进制展开需要大整数算法。
 - 内建数组是固定长度类型，没有动态数组字面量；需要可变长度容器请用 `std.vec`（泛型）
-  或 `std.byte_vec`。字符串数组用 `Vec<string>`，`std.env.args()` / `vars()` 就返回它。
+  或 `std.byte_vec`。字符串数组用 `Vec<String>`，`std.env.args()` / `vars()` 就返回它。
 - 结构体没有析构函数，`Vec` / `ByteVec` 用完要自己调 `free`。
   不释放只是进程退出前一直占着，不会出错。
 - `std.net` 只有 TCP over IPv4，且全程阻塞、没有超时；域名解析、UDP、非阻塞模式和

@@ -1,13 +1,13 @@
-// 字符串 + 运算：按字节拼接，结果仍然是 Runtime 管理的 string。
+// 字符串 + 运算：按字节拼接，结果仍然是 Runtime 管理的 String。
 
-fn join(left: string, right: string): string {
+fn join(left: String, right: String): String {
     return left + right;
 }
 
 fn main(): i32 {
-    let hello: string = "Hello, ";
+    let hello: String = "Hello, ";
     let name = "tap";
-    let greeting: string = hello + name + "!";
+    let greeting: String = hello + name + "!";
     let inferred = "拼" + "接";
 
     print("%s\n", greeting);

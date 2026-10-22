@@ -88,7 +88,7 @@ Cygwin 的 `lli` 有两个限制，导致 `fast` 模式固定有 5 个用例失�
 - **栈帧超过 4KB 时解析不到 `___chkstk_ms`**。Cygwin 的目标 triple 是
   `x86_64-pc-windows-cygnus`，LLVM 会为 Windows ABI 插入栈探测调用，
   而 Cygwin 的 `lli` 里没有这个符号。`tests/run-pass/stdlib/env_var.tp`
-  的 `[string; 256]`（4KB 栈数组）就会触发。
+  的 `[String; 256]`（8KB 栈数组）就会触发。
 
 这两个问题都出自 `lli`，无法在 tap 侧规避，因此 `.github/workflows/cygwin.yml`
 固定使用 `TEST_RUN_MODE=native`（实测 88/88 全过）。

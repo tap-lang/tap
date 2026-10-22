@@ -77,7 +77,7 @@ let mask: i32 = ~flags;       // -13
 ```text
 const ANSWER: i32 = 42;
 const VALUES: [i32; 4] = [0; 4];
-const GREETING: string = "hello, tap";
+const GREETING: String = "hello, tap";
 ```
 
 顶层常量在**模块外**按 `别名.名字` 访问（`conf.GREETING`），在声明它的模块内部直接写裸名。
@@ -91,7 +91,7 @@ const GREETING: string = "hello, tap";
 
 ```text
 let count: i32 = 0;             // 显式标注
-let label = "tap";              // 推断成 string
+let label = "tap";              // 推断成 String
 let point = make_point(1);      // 推断成 Point（结构体）
 ```
 
@@ -155,11 +155,15 @@ let nested = Box { value: Box { value: 9 } };   // Box<Box<i32>>
 ### 字符串类型
 | 类型 | 描述 |
 | --- | --- |
-| `string` | 以空字节结尾的字符串引用 |
+| `String` | UTF-8 数据指针与字节长度 |
+| `c_string` | C ABI 使用的零结尾 `i8*` |
 
 字符串支持字面量、变量、常量、函数参数与返回值、`.len()`、`.byte_at()`、
 `.slice()`、内容比较运算符和固定长度字符串数组。转义序列、输出方式和边界规则见
 [字符串文档](data-type-string.md)。
+
+`String` 可以隐式传给 `c_string` 参数；`c_string` 转回 `String` 必须显式写
+`raw as String`。小写 `string` 不再是类型关键字。
 
 ### 字符类型
 
@@ -174,7 +178,7 @@ let c: char = 'a';
 let zh: char = '中';
 let emoji: char = '😀';
 print(c);                 // a
-print("%s", zh as string); // 中
+print("%s", zh as String); // 中
 ```
 
 `char` 在赋值和传参时不与整数类型隐式转换；需要数值转换时使用 `as`。
@@ -196,7 +200,7 @@ print("%s", zh as string); // 中
 ### 类型大小
 
 `sizeof(T)` 是编译期表达式，返回类型为 `uint`，表示 `T` 在输出目标 ABI 下占用的字节数。
-`T` 可以是标量、`string`、指针、固定长度数组、枚举、结构体或泛型类型参数：
+`T` 可以是标量、`String`、`c_string`、指针、固定长度数组、枚举、结构体或泛型类型参数：
 
 ```text
 import std.memory as memory;
@@ -212,8 +216,9 @@ fn main(): i32 {
 }
 ```
 
-数组大小包含全部元素，结构体大小包含字段对齐产生的填充。`string` 保存字符串引用，因此
-`sizeof(string)` 等于目标平台的指针大小。`sizeof(T)` 不创建值，也不会分配运行时内存。
+数组大小包含全部元素，结构体大小包含字段对齐产生的填充。`String` 保存数据指针和字节长度，
+因此在 64 位目标上 `sizeof(String)` 为 16，`sizeof(c_string)` 为 8。`sizeof(T)` 不创建值，
+也不会分配运行时内存。
 
 ### 结构体类型
 
@@ -291,7 +296,7 @@ enum Shape {
 enum Message {
     Quit,
     Move(i32, i32),
-    Write(string),
+    Write(String),
     ChangeColor(i32, i32, i32),
 }
 ```
@@ -384,7 +389,7 @@ enum Result<T, E> {
 ```text
 let present: Option<i32> = Option.Some(42);
 let absent: Option<i32> = Option.None;
-let ok: Result<i32, string> = Result.Ok(200);
+let ok: Result<i32, String> = Result.Ok(200);
 
 // 显式写法，和上面完全等价
 let explicit: Option<i32> = Option<i32>.Some(42);
@@ -412,8 +417,8 @@ fn unwrap_or(value: Option<i32>, fallback: i32): i32 {
 }
 ```
 
-同一个泛型枚举的不同实例化（例如 `Option<i32>` 和 `Option<string>`）可以共存，实例化后的类型
-也可以嵌套（`Option<Result<i32, string>>`）。类型实参数量不匹配、或者泛型枚举漏写类型实参，
+同一个泛型枚举的不同实例化（例如 `Option<i32>` 和 `Option<String>`）可以共存，实例化后的类型
+也可以嵌套（`Option<Result<i32, String>>`）。类型实参数量不匹配、或者泛型枚举漏写类型实参，
 都会编译报错。
 
 带载荷枚举在编译器内部展开成一个同名结构体：字段 `0` 是 `i32` 判别标签，之后按声明顺序
@@ -474,7 +479,7 @@ fn main(): i32 {
     let count: i32 = 0;
     increment(&count);
 
-    let values: *string = memory.malloc(64);
+    let values: *String = memory.malloc(64);
     values[0] = "hello";
     values[1] = "tap";
     print("%s %s\n", values[0], values[1]);
@@ -506,8 +511,8 @@ fn first<T, U>(left: T, right: U): T {
 
 fn main(): i32 {
     let inferred: i32 = identity(42);
-    let explicit: string = identity<string>("tap");
-    let selected: string = first("left", 10);
+    let explicit: String = identity<String>("tap");
+    let selected: String = first("left", 10);
     return inferred;
 }
 ```
@@ -523,18 +528,18 @@ fn main(): i32 {
 
 ```text
 trait Show {
-    fn show(self): string;
-    fn label(self, prefix: string): string;
+    fn show(self): String;
+    fn label(self, prefix: String): String;
 }
 
 struct Point { x: i32 }
 
 impl Show for Point {
-    fn show(value: Point): string { return "point"; }
-    fn label(value: Point, prefix: string): string { return prefix; }
+    fn show(value: Point): String { return "point"; }
+    fn label(value: Point, prefix: String): String { return prefix; }
 }
 
-fn describe<T: Show>(value: T): string {
+fn describe<T: Show>(value: T): String {
     return value.show();
 }
 ```
@@ -551,8 +556,8 @@ fn describe<T: Show>(value: T): string {
   都要对得上。trait 和 impl 分属不同模块时同样能比对。诊断示例：
 
   ```text
-  error: method 'label' parameter 2 has type 'i32', but trait 'Show' declares 'string'
-  error: method 'show' returns 'i32', but trait 'Show' declares 'string'
+  error: method 'label' parameter 2 has type 'i32', but trait 'Show' declares 'String'
+  error: method 'show' returns 'i32', but trait 'Show' declares 'String'
   error: method 'show' has 2 parameters, but trait 'Show' declares 1
   error: method 'render' is not a member of trait 'Show'
   error: method 'show' takes 'Circle' as its receiver, but impl is for 'Point'
@@ -572,7 +577,7 @@ fn describe<T: Show>(value: T): string {
 import std.vec as vec;
 
 fn main(): i32 {
-    let values: Vec<string> = vec.new();
+    let values: Vec<String> = vec.new();
     values.push("hello");
     values.push("tap");
     print("%s\n", values.get(1));
@@ -588,7 +593,7 @@ fn main(): i32 {
 ### 动态字节与字符串构建
 
 `std.byte_vec.ByteVec` 提供可扩容的字节缓冲区，支持追加字符串或单个 `u8`、按下标读写、
-清空并复用容量，以及复制为 `string`。`string.len()` 返回 UTF-8 原始字节长度，
-`string.char_count()` 返回 Unicode 码点数量。`std.string_builder.StringBuilder` 在它之上提供面向
+清空并复用容量，以及复制为 `String`。`String.len()` 返回 UTF-8 原始字节长度，
+`String.char_count()` 返回 Unicode 码点数量。`std.string_builder.StringBuilder` 在它之上提供面向
 字符串构建的 `append()` 和 `append_byte()`。两个容器都持有堆内存，使用结束后应调用
 `free()`；详细 API 和示例见[标准库文档](std.md)。

@@ -1,12 +1,12 @@
 // 参数个数（含接收者）必须一致：trait 声明 1 个（就是 self），impl 写了 2 个。
 trait Show {
-    fn show(self): string;
+    fn show(self): String;
 }
 
 struct Point { x: i32 }
 
 impl Show for Point {
-    fn show(value: Point, extra: i32): string {
+    fn show(value: Point, extra: i32): String {
         return "point";
     }
 }

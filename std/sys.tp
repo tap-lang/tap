@@ -9,19 +9,19 @@
 //     import std.sys as sys;
 //
 //     if (sys.system("git status") != 0) { ... }   // 只关心成不成功
-//     let out: string = sys.capture("ls -1");       // 拿标准输出
+//     let out: String = sys.capture("ls -1");       // 拿标准输出
 //
 //     // 需要边读边处理时用裸句柄：
 //     let pipe: *i8 = sys.popen("find .", "r");
 //     if (sys.is_open(pipe)) {
-//         let chunk: string = sys.read_stream(pipe, 4096);
+//         let chunk: String = sys.read_stream(pipe, 4096);
 //         sys.pclose(pipe);
 //     }
 
-extern fn __tap_system(command: string): i32;
-extern fn __tap_popen(command: string, mode: string): *i8;
+extern fn __tap_system(command: String): i32;
+extern fn __tap_popen(command: String, mode: String): *i8;
 extern fn __tap_pclose(stream: *i8): i32;
-extern fn __tap_stream_read(stream: *i8, count: uint): string;
+extern fn __tap_stream_read(stream: *i8, count: uint): String;
 extern fn __tap_ptr_is_null(pointer: *i8): i32;
 extern fn __tap_process_exit_code(status: i32): i32;
 extern fn __tap_process_was_signaled(status: i32): i32;
@@ -29,13 +29,13 @@ extern fn __tap_process_was_signaled(status: i32): i32;
 // 运行一条 shell 命令，返回状态码：0 表示成功，非 0 表示命令不存在 / 非零退出 /
 // 被信号打断。判断「成不成功」用 `status != 0`。
 // （POSIX 下是被 << 8 编码过的 wait status，Windows 下是直接退出码。）
-pub fn system(command: string): i32 {
+pub fn system(command: String): i32 {
     return __tap_system(command);
 }
 
 // 打开管道，返回不透明句柄；mode 与 C 的 popen 一致（只读 "r"、只写 "w"）。
 // 失败返回空指针，用 is_open 判断。关闭用 pclose。
-pub fn popen(command: string, mode: string): *i8 {
+pub fn popen(command: String, mode: String): *i8 {
     return __tap_popen(command, mode);
 }
 
@@ -62,22 +62,22 @@ pub fn is_open(stream: *i8): bool {
 
 // 从管道读取最多 count 字节。到末尾或句柄无效时返回空串。
 // 注意：这是「读一次」，不保证一次读完所有输出；要全量用 capture。
-pub fn read_stream(stream: *i8, count: uint): string {
+pub fn read_stream(stream: *i8, count: uint): String {
     return __tap_stream_read(stream, count);
 }
 
 // 跑一条命令并取回它的标准输出（popen "r" + 循环 read_stream + pclose 的便捷封装）。
 // 命令失败或无法启动返回空串；需要区分失败原因时改用 popen / read_stream / pclose。
 // 最多读 1 MiB，超出部分截断。
-pub fn capture(command: string): string {
+pub fn capture(command: String): String {
     let stream: *i8 = __tap_popen(command, "r");
     if (__tap_ptr_is_null(stream) != 0) {
         return "";
     }
-    let out: string = "";
+    let out: String = "";
     while (out.len() < 1048576) {
         let remaining: uint = 1048576 - out.len();
-        let chunk: string = __tap_stream_read(stream, remaining);
+        let chunk: String = __tap_stream_read(stream, remaining);
         if (chunk.len() == 0) {
             break;
         }

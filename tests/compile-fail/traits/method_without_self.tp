@@ -1,6 +1,6 @@
 // trait 方法必须有 `self` 接收者：约束的是「类型上能调用的方法」。
 trait Show {
-    fn show(): string;
+    fn show(): String;
 }
 
 fn main(): i32 {

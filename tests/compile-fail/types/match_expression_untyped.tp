@@ -1,5 +1,5 @@
 fn main(): i32 {
-    let good: Result<i32, string> = Result<i32, string>.Ok(1);
+    let good: Result<i32, String> = Result<i32, String>.Ok(1);
     // 表达式形式没有目标类型：目标类型会被猜错，分支值会被静默截断。
     let value = match (good) {
         Result.Ok(number) => number,

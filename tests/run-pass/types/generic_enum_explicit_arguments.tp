@@ -19,8 +19,8 @@ fn main(): i32 {
     let absent: Option<i32> = Option<i32>.None;
     print("option: %d %d\n", value_or(present, -1), value_or(absent, -1));
 
-    let ok: Result<i32, string> = Result<i32, string>.Ok(200);
-    let err: Result<i32, string> = Result<i32, string>.Err("boom");
+    let ok: Result<i32, String> = Result<i32, String>.Ok(200);
+    let err: Result<i32, String> = Result<i32, String>.Err("boom");
     match (ok) {
         Result.Ok(code) => { print("ok: %d\n", code); }
         Result.Err(message) => { print("ok: %s\n", message); }

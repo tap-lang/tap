@@ -1,7 +1,7 @@
 import std.memory as memory;
 
 fn main(): i32 {
-    let values: *string = memory.malloc<string>(16);
+    let values: *String = memory.malloc<String>(16);
     values[0] = "first";
 
     values = memory.realloc(values, 32);

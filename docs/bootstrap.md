@@ -50,13 +50,13 @@ tap <probe>.tp -o out && ./out
 | 枚举 | ✅ | 无载荷 + 带载荷，`match` 语句/表达式，穷尽性检查 |
 | 泛型 | ✅ | 函数、结构体、枚举都能单态化 |
 | trait | ⚠️ | v1：`trait` 声明方法签名 + `impl Trait for Type` + `fn f<T: Trait>` 约束，单态化时检查；impl 方法与 trait 声明的签名一致性在模块加载完校验。无关联类型 / 默认方法 / `dyn` |
-| 错误处理 | ✅ | `Result<T, string>`、`?` 传播、`unwrap` / `expect` |
+| 错误处理 | ✅ | `Result<T, String>`、`?` 传播、`unwrap` / `expect` |
 | 递归函数 | ✅ | `fact(5) == 120` |
 | 控制流 | ✅ | `if` / `elseif` / `else`、`while`、`for`、`break`、`continue`、提前 `return` |
 | 文件 IO | ✅ | `std.fs`：`open` / `read` / `write` / `append` / `exists` / `remove` |
 | 参数与环境变量 | ✅ | `std.env` |
 | 堆内存 | ✅ | `std.memory` 的泛型 `malloc<T>` / `realloc<T>` / `free<T>` |
-| **调用外部进程** | ✅ | `extern fn system(cmd: string): i32` 实测可用 —— 自举后能调 `clang` / `ld` |
+| **调用外部进程** | ✅ | `std.sys.system(cmd: String)` 实测可用 —— 自举后能调 `clang` / `ld` |
 | FFI | ✅ | 不透明指针、`**T` 取地址、整数/字符串参数都能过 |
 | `sizeof(T)` | ✅ | |
 | 字符串 ↔ 数字 | ✅ | `std.parse` 的 `parse_i64` / `parse_f64` / `format_i64` / `format_f64` |
@@ -84,7 +84,7 @@ fn read(node: *Node): i32 { return node->value; }     // error: expected factor
 ```tp
 let p: *Cell = memory.malloc<Cell>(sizeof(Cell));
 p[0] = Cell { value: 5 };    // error: struct literals must be used with a struct target type
-p[0].value = 9;              // error: only string methods 'len', 'byte_at', 'slice' are supported
+p[0].value = 9;              // error: only String methods 'len', 'byte_at', 'slice' are supported
 ```
 
 `Vec<Cell>.data` 是 `*Cell`，同样写不进去。唯一能改结构体的办法是
@@ -193,7 +193,7 @@ struct Token { kind: i32, value: i64 }
 
 fn is_digit(c: u8): bool { return c >= 48 && c <= 57; }
 
-fn lex(source: string, tokens: Vec<Token>): Vec<Token> {
+fn lex(source: String, tokens: Vec<Token>): Vec<Token> {
     let i: uint = 0;
     while (i < source.len()) {
         let c: u8 = source.byte_at(i);
@@ -272,15 +272,15 @@ kind=0 value=6
 **1. 类型不匹配时不给诊断，直接生成非法 IR**
 
 ```tp
-let n: i64 = parse.parse_i64("123");   // 返回的是 Result<i64, string>
+let n: i64 = parse.parse_i64("123");   // 返回的是 Result<i64, String>
 ```
 
 ```text
 LLVM IR verification failed: SExt only operates on integer
-  %int_sext = sext %"Result$i64$string" %call_result to i64
+  %int_sext = sext %"Result$i64$String" %call_result to i64
 ```
 
-正确行为应该是报 `expected i64, found Result<i64, string>`。现在把一个结构体做了 `sext`，
+正确行为应该是报 `expected i64, found Result<i64, String>`。现在把一个结构体做了 `sext`，
 一路走到 IR 校验才炸。**任何类型不匹配都可能走到这条路**，诊断体验很差。
 
 **2. 指针比较生成非法 IR**

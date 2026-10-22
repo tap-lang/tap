@@ -1,7 +1,7 @@
 # TODO
 
 先补齐以下能力：
-1. [x] string.byte_at()、slice()、内容比较。
+1. [x] String.byte_at()、slice()、内容比较。
 2. [x] StringBuilder 和动态 ByteVec。
 3. [x] sizeof(T)。
 4. [x] 泛型 Vec<T>。
@@ -65,7 +65,7 @@
 
 `process_statements` / `process_expression` 原先都没把分支的载荷绑定登记进泛型阶段的
 类型环境，`inner.len()` 找不到接收者类型，泛型方法 `len` 没有被特化，最后误报
-「method 'len' is only available on string values」。
+「method 'len' is only available on String values」。
 
 原以为难点是执行时机（字段类型实参要到后半程才解析），实际不需要——函数参数走的是同一条
 路。修法是两个 match 分支都先 `bind_match_payloads`，载荷类型取自降级后的内部结构体，

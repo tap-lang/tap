@@ -23,7 +23,7 @@ fn main(): i32 {
     let f32_literal: f32 = 1.5;    // 浮点字面量
     let f32_to_f64: f64 = 1.5;     // f32 -> f64
     let same_bool: bool = true;    // bool -> bool
-    let same_string: string = "x";
+    let same_string: String = "x";
     let unsigned_to_signed: i32 = narrowed;
 
     // 实参和返回值这两条路径同样要放行 int -> float。

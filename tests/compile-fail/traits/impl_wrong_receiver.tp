@@ -1,14 +1,14 @@
 // 接收者必须是 impl 的目标类型本身：trait 里写的是 self，impl 里得写成 Point。
 // 写成别的类型，`x.show()` 的方法查找（首参类型 == 接收者类型）也找不到它。
 trait Show {
-    fn show(self): string;
+    fn show(self): String;
 }
 
 struct Point { x: i32 }
 struct Circle { radius: i32 }
 
 impl Show for Point {
-    fn show(value: Circle): string {
+    fn show(value: Circle): String {
         return "circle";
     }
 }

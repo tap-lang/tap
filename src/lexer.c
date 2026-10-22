@@ -199,10 +199,13 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "return", 6) == 0) return TOKEN_RETURN;
         if (memcmp(text, "sizeof", 6) == 0) return TOKEN_SIZEOF;
         if (memcmp(text, "struct", 6) == 0) return TOKEN_STRUCT;
-        if (memcmp(text, "string", 6) == 0) return TOKEN_STRING;
+        // String 是携带长度的 Tap 文本类型；小写 string 不再作为关键字保留。
+        if (memcmp(text, "String", 6) == 0) return TOKEN_STRING;
         break;
     case 8:
         if (memcmp(text, "continue", 8) == 0) return TOKEN_CONTINUE;
+        // c_string 单独作为关键字，表示 C ABI 的零结尾字符指针。
+        if (memcmp(text, "c_string", 8) == 0) return TOKEN_C_STRING;
         break;
     default:
         break;

@@ -21,7 +21,9 @@ fn main(): i32 {
     print("%llu %llu %llu %llu\n",
           sizeof(bool), sizeof(Kind), sizeof([u16; 3]), sizeof(Layout));
 
-    assert(sizeof(string) == sizeof(*u8), "string must have pointer size");
+    assert(sizeof(String) == sizeof(*u8) + sizeof(uint),
+           "String must store data and length");
+    assert(sizeof(String) == sizeof(String), "String must remain a compatibility alias");
     assert(sizeof(int) == sizeof(*i8), "int must have pointer size");
     assert(type_size<Layout>() == sizeof(Layout), "generic sizeof must be substituted");
 

@@ -63,7 +63,8 @@ enum LiteralType {
     LITERAL_FLOAT,                  // 浮点数 float
     LITERAL_F32,                    // 32位浮点数 f32
     LITERAL_F64,                    // 64位浮点数 f64
-    LITERAL_STRING,                 // 字符串 string
+    LITERAL_STRING,                 // 长度化字符串 String
+    LITERAL_C_STRING,               // C 兼容零结尾字符串指针 c_string
     LITERAL_BOOL,                   // 布尔值 bool
     LITERAL_CHAR                    // Unicode 码点 char
 };

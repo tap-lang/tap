@@ -8,15 +8,15 @@ struct Point {
 }
 
 fn main(): i32 {
-    let number: Result<i64, string> = parse.parse_i64("-456");
+    let number: Result<i64, String> = parse.parse_i64("-456");
     print("i64=%lld\n", unwrap(number));
 
-    let ratio: Result<f64, string> = parse.parse_f64("1.5e-3");
+    let ratio: Result<f64, String> = parse.parse_f64("1.5e-3");
     print("f64=%f\n", unwrap(ratio));
 
     // 结构体作为 T
-    let shape: Result<Point, string> =
-        Result<Point, string>.Ok(Point { x: 3, y: 4 });
+    let shape: Result<Point, String> =
+        Result<Point, String>.Ok(Point { x: 3, y: 4 });
     let point: Point = unwrap(shape);
     print("point=%d,%d\n", point.x, point.y);
 

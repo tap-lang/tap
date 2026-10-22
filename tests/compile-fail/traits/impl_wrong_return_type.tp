@@ -1,6 +1,6 @@
-// 返回类型也要对得上：trait 要求 string，impl 写成 i32。
+// 返回类型也要对得上：trait 要求 String，impl 写成 i32。
 trait Show {
-    fn show(self): string;
+    fn show(self): String;
 }
 
 struct Point { x: i32 }
@@ -17,7 +17,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: method 'show' returns 'i32', but trait 'Show' declares 'string'
+error: method 'show' returns 'i32', but trait 'Show' declares 'String'
 - .exit
 1
 -- */

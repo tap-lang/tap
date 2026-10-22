@@ -1,9 +1,9 @@
-fn echo(value: string): string {
+fn echo(value: String): String {
     return value;
 }
 
 fn main(): i32 {
-    let greeting: string = "Hello";
+    let greeting: String = "Hello";
     let name = echo("tap");
     print("%s, %s!\n", greeting, name);
 

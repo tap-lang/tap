@@ -5,7 +5,7 @@
 import std.fs as fs;
 
 fn main(): i32 {
-    let path: string = "std_file_test.tmp";
+    let path: String = "std_file_test.tmp";
 
     // 写一个文件，关闭后重新打开读回。
     let out: File = fs.open(path, "wb");

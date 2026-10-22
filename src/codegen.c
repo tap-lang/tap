@@ -57,6 +57,9 @@ static int is_float_type(enum LiteralType type) {
 // bool 虽然按整数处理，但不参与隐式数值转换，避免 `let f: f64 = true;` 这类写法通过。
 static int scalar_types_compatible(enum LiteralType target, enum LiteralType source) {
     if (target == source) return 1;
+    // String 的缓冲区保留尾部 NUL，可以在 C ABI 参数位置借出 data 指针。
+    // 反向转换需要扫描长度，只允许显式 `as String`。
+    if (target == LITERAL_C_STRING && source == LITERAL_STRING) return 1;
     // char 是独立的 Unicode 码点类型，只允许通过显式转换参与数值运算。
     if (target == LITERAL_CHAR || source == LITERAL_CHAR) return 0;
     // bool 只和 bool 兼容（上面那行已放行）。这一条必须排在整数/浮点判断**之前**：
@@ -77,6 +80,37 @@ static enum LiteralType common_float_type(enum LiteralType left, enum LiteralTyp
 
 static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type);
 static LLVMTypeRef get_llvm_struct_type_by_name(CodeGenContext *context, const char *name);
+
+// String 的稳定值表示：UTF-8 数据指针 + 不含尾部 NUL 的字节长度。
+// 缓冲区目前仍保留尾部 NUL，供 printf、文件路径等 C API 兼容使用。
+static LLVMTypeRef get_llvm_string_type(CodeGenContext *context) {
+    LLVMTypeRef fields[2] = {
+        LLVMPointerType(LLVMInt8TypeInContext(context->context), 0),
+        LLVMInt64TypeInContext(context->context)
+    };
+    return LLVMStructTypeInContext(context->context, fields, 2, 0);
+}
+
+// 按 ABI 字段下标组装 String：第 0 项是 data，第 1 项是 length。
+static LLVMValueRef string_value(
+    CodeGenContext *context, LLVMValueRef data, LLVMValueRef length,
+    const char *name) {
+    LLVMValueRef value = LLVMGetUndef(get_llvm_string_type(context));
+    value = LLVMBuildInsertValue(context->builder, value, data, 0, name);
+    return LLVMBuildInsertValue(context->builder, value, length, 1, name);
+}
+
+// String 隐式传给 c_string 时只借出第 0 项 data，不分配也不复制。
+static LLVMValueRef string_data(
+    CodeGenContext *context, LLVMValueRef value, const char *name) {
+    return LLVMBuildExtractValue(context->builder, value, 0, name);
+}
+
+// `.len()` 直接读取第 1 项，因此不需要生成扫描字符串的循环。
+static LLVMValueRef string_length(
+    CodeGenContext *context, LLVMValueRef value, const char *name) {
+    return LLVMBuildExtractValue(context->builder, value, 1, name);
+}
 
 // 显式转换只接受标量类型；数组、指针、结构体和枚举不能用 `as` 直接转换。
 static int is_scalar_var_type(const VarTypeNode *type) {
@@ -101,7 +135,8 @@ static const char *literal_type_name(enum LiteralType type) {
         case LITERAL_FLOAT: return "float";
         case LITERAL_F32: return "f32";
         case LITERAL_F64: return "f64";
-        case LITERAL_STRING: return "string";
+        case LITERAL_STRING: return "String";
+        case LITERAL_C_STRING: return "c_string";
         case LITERAL_BOOL: return "bool";
         case LITERAL_CHAR: return "char";
         default: return "unknown";
@@ -182,6 +217,9 @@ static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type)
         case LITERAL_F64:
             return LLVMDoubleTypeInContext(context->context);
         case LITERAL_STRING:
+            return get_llvm_string_type(context);
+        case LITERAL_C_STRING:
+            // c_string 保持原来的 C 字符串 ABI：单个零结尾字节指针。
             return LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
         default:
             fprintf(stderr, "unsupported type: %d\n", type); // 中文：不支持的类型
@@ -1518,6 +1556,10 @@ static LLVMValueRef cast_integer(CodeGenContext *context, LLVMValueRef value,
 // 根据目标类型执行标量转换；支持整数扩展/截断、f32/f64 互转和 int -> float。
 static LLVMValueRef cast_value(CodeGenContext *context, LLVMValueRef value,
                                enum LiteralType source, enum LiteralType target) {
+    if (source == LITERAL_STRING && target == LITERAL_C_STRING) {
+        // 隐式方向只提取 data；String 的缓冲区约定保证末尾已有兼容 C 的 NUL。
+        return string_data(context, value, "c_string_data");
+    }
     if (is_integer_type(source) && is_integer_type(target)) {
         return cast_integer(context, value, source, target);
     }
@@ -2363,7 +2405,7 @@ static LLVMValueRef generate_string_receiver(
         Symbol *symbol = find_symbol_with_length(context, receiver_name, receiver_length);
         if (!symbol) {
             // 全局常量不在局部符号表里，但它同样能当接收者：
-            //     const A: string = "alpha";
+            //     const A: String = "alpha";
             //     A.len()
             // 所以查不到局部符号还要按名字找一遍全局常量，两者都没有才是真的未定义。
             char *name = malloc(receiver_length + 1);
@@ -2387,7 +2429,7 @@ static LLVMValueRef generate_string_receiver(
             }
             if (constant->type->is_array || constant->type->type != LITERAL_STRING) {
                 print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                                 "method '%s' is only available on string values",
+                                 "method '%s' is only available on String values",
                                  string_method_name(method));
                 exit(1);
             }
@@ -2398,7 +2440,7 @@ static LLVMValueRef generate_string_receiver(
         }
         if (symbol->array_type || symbol->type != LITERAL_STRING) {
             print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "method '%s' is only available on string values",
+                             "method '%s' is only available on String values",
                              string_method_name(method));
             exit(1);
         }
@@ -2411,7 +2453,7 @@ static LLVMValueRef generate_string_receiver(
     ASTNode *receiver_expression = call->arguments;
     if (!receiver_expression || expression_type(context, receiver_expression) != LITERAL_STRING) {
         print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "method '%s' is only available on string values",
+                         "method '%s' is only available on String values",
                          string_method_name(method));
         exit(1);
     }
@@ -2422,40 +2464,7 @@ static LLVMValueRef generate_string_receiver(
 // 生成字符串 len() 计算，返回 UTF-8 字节长度。
 static LLVMValueRef generate_string_length(
     CodeGenContext *context, LLVMValueRef string_value) {
-    // 从零开始逐字节扫描，以第一个结尾空字节的位置作为 UTF-8 字节长度。
-    LLVMTypeRef index_type = get_llvm_type(context, LITERAL_UINT);
-    LLVMTypeRef byte_type = LLVMInt8TypeInContext(context->context);
-    LLVMBasicBlockRef initial_block = LLVMGetInsertBlock(context->builder);
-    LLVMValueRef function = LLVMGetBasicBlockParent(initial_block);
-    LLVMBasicBlockRef condition_block = LLVMAppendBasicBlockInContext(
-        context->context, function, "string_len_condition");
-    LLVMBasicBlockRef increment_block = LLVMAppendBasicBlockInContext(
-        context->context, function, "string_len_increment");
-    LLVMBasicBlockRef end_block = LLVMAppendBasicBlockInContext(
-        context->context, function, "string_len_end");
-
-    LLVMBuildBr(context->builder, condition_block);
-    LLVMPositionBuilderAtEnd(context->builder, condition_block);
-    LLVMValueRef index = LLVMBuildPhi(context->builder, index_type, "string_length");
-    LLVMValueRef zero_index = LLVMConstInt(index_type, 0, 0);
-    LLVMAddIncoming(index, &zero_index, &initial_block, 1);
-    LLVMValueRef byte_address = LLVMBuildGEP2(
-        context->builder, byte_type, string_value, &index, 1, "string_byte_address");
-    LLVMValueRef byte = LLVMBuildLoad2(
-        context->builder, byte_type, byte_address, "string_byte");
-    LLVMValueRef at_end = LLVMBuildICmp(
-        context->builder, LLVMIntEQ, byte, LLVMConstInt(byte_type, 0, 0),
-        "string_len_at_end");
-    LLVMBuildCondBr(context->builder, at_end, end_block, increment_block);
-
-    LLVMPositionBuilderAtEnd(context->builder, increment_block);
-    LLVMValueRef next_index = LLVMBuildAdd(
-        context->builder, index, LLVMConstInt(index_type, 1, 0), "string_len_next");
-    LLVMBuildBr(context->builder, condition_block);
-    LLVMAddIncoming(index, &next_index, &increment_block, 1);
-
-    LLVMPositionBuilderAtEnd(context->builder, end_block);
-    return index;
+    return string_length(context, string_value, "string_length");
 }
 
 static LLVMValueRef runtime_string_function(
@@ -2490,6 +2499,23 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
         ? source_full->type : expression_type(context, cast->expression);
     free_ast((ASTNode *)source_full);
     LLVMValueRef value = generate_expression(context, cast->expression);
+
+    if (source == LITERAL_STRING && target == LITERAL_C_STRING) {
+        // 显式写 `as c_string` 与隐式传参采用同样的零复制 data 借用。
+        return string_data(context, value, "c_string_cast");
+    }
+    if (source == LITERAL_C_STRING && target == LITERAL_STRING) {
+        // 反方向没有长度信息，只能显式转换，并由 Runtime 扫描第一个 NUL。
+        LLVMTypeRef parameter_types[1] = {
+            get_llvm_type(context, LITERAL_C_STRING)
+        };
+        LLVMValueRef function = runtime_string_function(
+            context, "__tap_string_from_c", get_llvm_type(context, LITERAL_STRING),
+            parameter_types, 1);
+        return LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            &value, 1, "string_from_c");
+    }
 
     if (source == LITERAL_STRING && is_integer_type(target)) {
         if (target == LITERAL_BOOL) {
@@ -2618,7 +2644,8 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
             &float_value, 1, "format_float");
     }
 
-    if (target == LITERAL_STRING || source == LITERAL_STRING) {
+    if (target == LITERAL_STRING || source == LITERAL_STRING ||
+        target == LITERAL_C_STRING || source == LITERAL_C_STRING) {
         print_diagnostic(stderr, "error", cast->filename, cast->line, cast->column,
                          "cannot cast %s to %s",
                          literal_type_name(source), literal_type_name(target));
@@ -2660,14 +2687,14 @@ static LLVMValueRef generate_string_comparison(
         case OP_LESS_THAN_OR_EQUAL: predicate = LLVMIntSLE; break;
         case OP_GREATER_THAN_OR_EQUAL: predicate = LLVMIntSGE; break;
         default:
-            fprintf(stderr, "error: strings only support comparison operators\n");
+            fprintf(stderr, "error: String values only support comparison operators\n");
             exit(1);
     }
     return LLVMBuildICmp(
         context->builder, predicate, result, zero, "string_compare_result");
 }
 
-// 生成字符串拼接。结果由 Runtime 统一持有，和 string.slice / ByteVec.to_string 一样，
+// 生成字符串拼接。结果由 Runtime 统一持有，和 String.slice / ByteVec.to_string 一样，
 // 不需要 tap 侧手动释放。
 static LLVMValueRef generate_string_concat(
     CodeGenContext *context, BinaryOpNode *binary) {
@@ -2897,8 +2924,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     VariadicForward *forward = find_variadic_forward(context, call->name);
     if (forward) {
         // print 的便利行为：只给一个实参、且它不是字符串字面量时，按实参类型自动挑
-        // 格式串，等价于 printf("%d", 实参)。字符串字面量那一路不需要特判，直接走
-        // 正常的变参转发就行。
+        // 格式串。字符串变量会选 `%s`；字符串字面量本身仍直接作为格式串转发。
         if (forward->auto_format && call->arguments && !call->arguments->next &&
             !(call->arguments->type == NODE_LITERAL &&
               ((LiteralNode *)call->arguments)->literal_type == LITERAL_STRING)) {
@@ -3021,8 +3047,14 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 return integer_constant(context, literal, literal->literal_type);
             }
             if (literal->literal_type == LITERAL_STRING) {
-                return LLVMBuildGlobalStringPtr(context->builder, literal->value.string_value,
-                                                "string_literal");
+                // 字面量底层仍生成带尾部 NUL 的全局数组，再把编译期已知的字节数装进 length。
+                size_t length = strlen(literal->value.string_value);
+                LLVMValueRef data = LLVMBuildGlobalStringPtr(
+                    context->builder, literal->value.string_value, "string_literal_data");
+                LLVMValueRef byte_length = LLVMConstInt(
+                    LLVMInt64TypeInContext(context->context), (uint64_t)length, 0);
+                return string_value(
+                    context, data, byte_length, "string_literal");
             }
             if (literal->literal_type == LITERAL_FLOAT || literal->literal_type == LITERAL_F32 ||
                 literal->literal_type == LITERAL_F64) {
@@ -3172,7 +3204,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             enum LiteralType right_type = expression_type(context, binary->right);
             if (left_type == LITERAL_STRING || right_type == LITERAL_STRING) {
                 if (left_type != LITERAL_STRING || right_type != LITERAL_STRING) {
-                    fprintf(stderr, "error: string operations require two string values\n");
+                    fprintf(stderr, "error: String operations require two String values\n");
                     exit(1);
                 }
                 if (binary->op_type == OP_ADD) {
@@ -3181,7 +3213,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 if (binary->op_type < OP_EQUAL ||
                     binary->op_type > OP_GREATER_THAN_OR_EQUAL) {
                     fprintf(stderr,
-                            "error: strings only support concatenation and comparison operators\n");
+                            "error: String values only support concatenation and comparison operators\n");
                     exit(1);
                 }
                 return generate_string_comparison(context, binary);
@@ -3220,6 +3252,12 @@ static LLVMValueRef promote_variadic_argument(CodeGenContext *context, ASTNode *
     LLVMValueRef value = generate_expression(context, expression);
     if (!value) return value;
 
+    // C 变参不知道 struct String 的布局；`%s` 仍然需要 UTF-8 数据指针。
+    // 具名 String 参数（格式串）保持完整 struct String，由 Runtime 读取 length/data。
+    if (expression_type(context, expression) == LITERAL_STRING) {
+        return string_data(context, value, "vararg_string_data");
+    }
+
     LLVMTypeRef llvm_type = LLVMTypeOf(value);
     LLVMTypeKind kind = LLVMGetTypeKind(llvm_type);
     if (kind == LLVMFloatTypeKind) {
@@ -3251,7 +3289,7 @@ static LLVMValueRef promote_variadic_argument(CodeGenContext *context, ASTNode *
 }
 
 // print 的便利行为：只给一个实参、而且它不是字符串字面量时，按实参类型挑一个格式串，
-// 等价于 printf(格式串, 实参)。
+// 等价于 printf(格式串, 实参)。String 在这里提取 data 给 C 的 `%s`。
 //
 // 这里只处理「非字符串字面量」那一路：字符串字面量开头的调用不需要特判，它会被当成
 // 普通的变参转发，由 print 合并到 printf 之后直接生成 printf 调用。
@@ -3261,6 +3299,23 @@ static LLVMValueRef generate_auto_format_print(
 
     ASTNode *first = call->arguments;
     enum LiteralType type = expression_type(context, first);
+    if (type == LITERAL_STRING) {
+        LLVMValueRef value = generate_expression(context, first);
+        LLVMValueRef arguments[2] = {
+            LLVMBuildGlobalStringPtr(context->builder, "%s", "format_string"),
+            string_data(context, value, "printed_string_data")
+        };
+        return LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
+                              arguments, 2, "printf_result");
+    }
+    if (type == LITERAL_C_STRING) {
+        LLVMValueRef arguments[2] = {
+            LLVMBuildGlobalStringPtr(context->builder, "%s", "format_string"),
+            generate_expression(context, first)
+        };
+        return LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
+                              arguments, 2, "printf_result");
+    }
     if (type == LITERAL_CHAR) {
         LLVMTypeRef char_type = get_llvm_type(context, LITERAL_CHAR);
         LLVMValueRef formatter = runtime_string_function(
@@ -3272,7 +3327,7 @@ static LLVMValueRef generate_auto_format_print(
             &value, 1, "format_char");
         LLVMValueRef arguments[2] = {
             LLVMBuildGlobalStringPtr(context->builder, "%s", "format_string"),
-            formatted
+            string_data(context, formatted, "formatted_char_data")
         };
         return LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
                               arguments, 2, "printf_result");
@@ -4534,14 +4589,16 @@ static FunctionNode *find_user_main(ProgramNode *program) {
 
 // 字符串常量的初始化器。
 //
-// 具名全局的类型是 `i8*`，而全局初始化器只能是常量表达式——不能用
+// String 具名全局的类型是 `{i8*, i64}`，c_string 具名全局只保存其中的 data 指针。
+// 全局初始化器只能是常量表达式——不能用
 // `LLVMBuildGlobalStringPtr`（那会生成一条指令，需要函数上下文）。所以这里手工
 // 落成两块：一个私有的字节数组全局，加一个指向它首元素的常量 GEP。
-static LLVMValueRef string_constant_initializer(
-    CodeGenContext *context, const char *text) {
+static LLVMValueRef string_constant_data(
+    CodeGenContext *context, const char *text, size_t *length_out) {
     LLVMContextRef llvm = context->context;
     LLVMTypeRef byte_type = LLVMInt8TypeInContext(llvm);
     size_t length = strlen(text);
+    if (length_out) *length_out = length;
     LLVMTypeRef array_type = LLVMArrayType(byte_type, (uint64_t)length + 1);
 
     // 匿名全局 + 私有链接：每个字符串常量各存一份，不参与符号解析，
@@ -4555,6 +4612,18 @@ static LLVMValueRef string_constant_initializer(
     LLVMValueRef zero = LLVMConstInt(LLVMInt32TypeInContext(llvm), 0, 0);
     LLVMValueRef indices[2] = {zero, zero};
     return LLVMConstGEP2(array_type, array, indices, 2);
+}
+
+static LLVMValueRef string_constant_initializer(
+    CodeGenContext *context, const char *text) {
+    // String 常量在相同 data 指针之外再携带编译期计算出的长度。
+    size_t length = 0;
+    LLVMValueRef data = string_constant_data(context, text, &length);
+    LLVMValueRef values[2] = {
+        data,
+        LLVMConstInt(LLVMInt64TypeInContext(context->context), (uint64_t)length, 0)
+    };
+    return LLVMConstStructInContext(context->context, values, 2, 0);
 }
 
 // 将顶层常量的字面量初始化表达式转换为 LLVM 常量初始值。
@@ -4586,6 +4655,11 @@ static LLVMValueRef constant_initializer(
     if (constant->type->type == LITERAL_STRING &&
         literal->literal_type == LITERAL_STRING) {
         return string_constant_initializer(context, literal->value.string_value);
+    }
+    if (constant->type->type == LITERAL_C_STRING &&
+        literal->literal_type == LITERAL_STRING) {
+        // c_string 常量保持 C ABI，只用零结尾数组的首地址，不生成 `{data, length}`。
+        return string_constant_data(context, literal->value.string_value, NULL);
     }
     fprintf(stderr, "error: global constant '%s' initializer type mismatch\n",
             constant->name); // 中文：全局常量初始化类型不匹配

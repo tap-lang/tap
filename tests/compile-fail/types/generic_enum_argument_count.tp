@@ -4,7 +4,7 @@ enum Pair<T> {
 }
 
 fn main(): i32 {
-    let bad: Pair<i32, string> = Pair.Both(1, 2);
+    let bad: Pair<i32, String> = Pair.Both(1, 2);
     return 0;
 }
 

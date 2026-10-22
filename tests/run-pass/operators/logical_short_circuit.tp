@@ -1,5 +1,5 @@
 // && 与 || 的短路求值：左侧结果已能决定整体结果时，右侧完全不求值。
-fn noisy(tag: string, result: bool): bool {
+fn noisy(tag: String, result: bool): bool {
     print("%s\n", tag);
     return result;
 }

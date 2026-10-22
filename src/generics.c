@@ -554,10 +554,11 @@ static ASTNode *clone_statement_list(ASTNode *source, FunctionNode *template,
 
 // 为具体类型组合生成稳定的 LLVM 前函数名片段。
 static char *type_key(const VarTypeNode *type) {
+    // String 与 c_string 必须使用不同的单态化键；二者即使都含有指针，ABI 也完全不同。
     const char *scalar_names[] = {
         "int", "uint", "i8", "u8", "i16", "u16", "i32", "u32",
         "i64", "u64", "i128", "u128", "float", "f32", "f64",
-        "string", "bool"
+        "String", "c_string", "bool", "char"
     };
     if (type->is_pointer) {
         char *element = type_key(type->element_type);
@@ -698,7 +699,7 @@ static void materialize_type(GenericContext *context, VarTypeNode *type) {
         materialize_type(context, type->element_type);
         // create_pointer_type 会把元素的名字复制到指针节点上，但不复制类型实参。
         // 元素单态化之后必须把结果同步回来，否则指针节点上留的是已经删掉的模板名，
-        // codegen 的 validate_var_type 会报 undefined enum type（`*Vec<string>` 就是这样）。
+        // codegen 的 validate_var_type 会报 undefined enum type（`*Vec<String>` 就是这样）。
         VarTypeNode *element = type->element_type;
         if (element) {
             if (element->struct_name) {
@@ -1762,7 +1763,7 @@ static VarTypeNode *process_expression(GenericContext *context,
             return result;
         }
         case NODE_TRY: {
-            // 内层按它自己的签名推断，不要把 `?` 的目标类型传下去：内层是 Result<T, string>，
+        // 内层按它自己的签名推断，不要把 `?` 的目标类型传下去：内层是 Result<T, String>，
             // 而目标类型是 T，硬统一会失败。
             VarTypeNode *inner = process_expression(
                 context, ((TryNode *)expression)->inner, NULL);
@@ -1879,7 +1880,7 @@ static StructFieldNode *struct_field_at(StructNode *structure, unsigned index) {
 //
 // 不登记的话，分支体里的 `inner.len()` 找不到接收者类型，泛型方法 `len` 不会被特化，
 // Codegen 的 find_method_function 就匹配不上，最后误报成
-// 「method 'len' is only available on string values」。
+// 「method 'len' is only available on String values」。
 //
 // 载荷类型取自**降级后的内部结构体**：变体首个载荷字段的下标是 variant->field_index，
 // 第 offset 个绑定对应 field_index + offset（和 Codegen 的绑定逻辑一致）。
@@ -1914,7 +1915,7 @@ static void bind_match_payloads(
     EnumVariantNode *variant = find_variant(enum_node, arm->variant_name);
     if (!variant) return;
 
-    // 泛型枚举（`Result<Vec<i32>, string>`）的载荷字段类型是**类型参数**（`T`/`E`），
+    // 泛型枚举（`Result<Vec<i32>, String>`）的载荷字段类型是**类型参数**（`T`/`E`），
     // 直接登记进去等于登记了个 `T`，分支体里照样解析不出接收者类型。必须按被匹配值的
     // 类型实参替换成具体类型。非泛型枚举时 bindings 为空，substitute_type 就是 clone。
     TypeBinding *type_bindings = NULL;

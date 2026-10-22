@@ -50,7 +50,7 @@ fn hex_value(value: u8): i32 {
 }
 
 // 从 start 起读取 4 位十六进制；越界或含非十六进制字符时 ok 为 false。
-fn read_hex4(text: string, start: uint, length: uint): Hex4 {
+fn read_hex4(text: String, start: uint, length: uint): Hex4 {
     if (start + 4 > length) {
         return Hex4 { value: 0, ok: false };
     }
@@ -68,8 +68,8 @@ fn read_hex4(text: string, start: uint, length: uint): Hex4 {
 }
 
 // 取出构建器的快照并释放它。
-fn finish(builder: StringBuilder): string {
-    let text: string = sb.to_string(builder);
+fn finish(builder: StringBuilder): String {
+    let text: String = sb.to_string(builder);
     sb.free(builder);
     return text;
 }
@@ -107,7 +107,7 @@ fn append_escaped_byte(builder: StringBuilder, value: u8): StringBuilder {
 }
 
 // 把原始字符串转义后追加到构建器，不含两侧引号。
-pub fn append_escaped(builder: StringBuilder, text: string): StringBuilder {
+pub fn append_escaped(builder: StringBuilder, text: String): StringBuilder {
     let length: uint = text.len();
     let index: uint = 0;
     while (index < length) {
@@ -118,19 +118,19 @@ pub fn append_escaped(builder: StringBuilder, text: string): StringBuilder {
 }
 
 // 把原始字符串转义后追加，并补上两侧引号。
-pub fn append_quoted(builder: StringBuilder, text: string): StringBuilder {
+pub fn append_quoted(builder: StringBuilder, text: String): StringBuilder {
     builder = sb.append_byte(builder, 34);
     builder = append_escaped(builder, text);
     return sb.append_byte(builder, 34);
 }
 
 // 返回转义后的字符串，不含两侧引号。
-pub fn escape(text: string): string {
+pub fn escape(text: String): String {
     return finish(append_escaped(sb.new(), text));
 }
 
 // 返回可直接放进 JSON 的字符串字面量（含两侧引号）。
-pub fn escape_quoted(text: string): string {
+pub fn escape_quoted(text: String): String {
     return finish(append_quoted(sb.new(), text));
 }
 
@@ -156,7 +156,7 @@ fn append_code_point(builder: StringBuilder, code_point: i32): StringBuilder {
 
 // 反转义 JSON 字符串内容（不含两侧引号）。
 // 遇到非法转义、被截断的 \uXXXX、或孤立的代理时返回 ok = false。
-pub fn unescape(text: string): Result<string, string> {
+pub fn unescape(text: String): Result<String, String> {
     let builder: StringBuilder = sb.new();
     let length: uint = text.len();
     let index: uint = 0;
@@ -171,7 +171,7 @@ pub fn unescape(text: string): Result<string, string> {
 
         // 反斜杠后面必须有字符。
         if (index + 1 >= length) {
-            return Result<string, string>.Err("trailing backslash");
+            return Result<String, String>.Err("trailing backslash");
         }
         let marker: u8 = text.byte_at(index + 1);
         if (marker == 34) {
@@ -201,7 +201,7 @@ pub fn unescape(text: string): Result<string, string> {
         } elseif (marker == 117) {
             let first: Hex4 = read_hex4(text, index + 2, length);
             if (!first.ok) {
-                return Result<string, string>.Err("invalid unicode escape");
+                return Result<String, String>.Err("invalid unicode escape");
             }
             let code_point: i32 = first.value;
             let consumed: uint = 6;
@@ -210,25 +210,25 @@ pub fn unescape(text: string): Result<string, string> {
                 // 高代理后面必须紧跟 \uDC00-\uDFFF 形式的低代理，两者合成一个码点。
                 if (index + 12 > length || text.byte_at(index + 6) != 92 ||
                     text.byte_at(index + 7) != 117) {
-                    return Result<string, string>.Err("expected low surrogate");
+                    return Result<String, String>.Err("expected low surrogate");
                 }
                 let second: Hex4 = read_hex4(text, index + 8, length);
                 if (!second.ok || second.value < 56320 || second.value > 57343) {
-                    return Result<string, string>.Err("invalid low surrogate");
+                    return Result<String, String>.Err("invalid low surrogate");
                 }
                 code_point = 65536 + (code_point - 55296) * 1024 + (second.value - 56320);
                 consumed = 12;
             } elseif (code_point >= 56320 && code_point <= 57343) {
                 // 孤立的低代理无法编码成 UTF-8。
-                return Result<string, string>.Err("lone low surrogate");
+                return Result<String, String>.Err("lone low surrogate");
             }
 
             builder = append_code_point(builder, code_point);
             index = index + consumed;
         } else {
-            return Result<string, string>.Err("unknown escape sequence");
+            return Result<String, String>.Err("unknown escape sequence");
         }
     }
 
-    return Result<string, string>.Ok(finish(builder));
+    return Result<String, String>.Ok(finish(builder));
 }

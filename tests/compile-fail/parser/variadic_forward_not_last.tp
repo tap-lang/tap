@@ -1,5 +1,5 @@
 // `...` 展开必须是实参列表的最后一项，后面不能再跟实参。
-fn log_line(prefix: string, ...): i32 {
+fn log_line(prefix: String, ...): i32 {
     return printf(prefix, ..., 1);
 }
 

@@ -1,9 +1,9 @@
-// std.env 的环境变量访问。vars() 返回 Vec<string>，元素个数就是真实条目数。
+// std.env 的环境变量访问。vars() 返回 Vec<String>，元素个数就是真实条目数。
 import std.env;
 import std.vec as vec;
 
 fn main(): i32 {
-    let values: Vec<string> = env.vars();
+    let values: Vec<String> = env.vars();
     if (env.var("TAP_STD_PATH").len() > 0) {
         print("std path set\n");
     }

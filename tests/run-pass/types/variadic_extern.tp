@@ -2,12 +2,12 @@
 // 这里自己声明一个变参 extern，确认多出的实参同样按默认实参提升规则传递。
 import std.memory as memory;
 
-extern fn snprintf(buffer: *u8, size: uint, format: string, ...): i32;
+extern fn snprintf(buffer: *u8, size: uint, format: c_string, ...): i32;
 
 fn main(): i32 {
     let buffer: *u8 = memory.malloc(64);
 
-    // 具名参数之外的三组实参（string、i32、i32）都落进 `...`。
+    // 具名参数之外的三组实参（String、i32、i32）都落进 `...`。
     let written: i32 = snprintf(buffer, 64, "%s=%d/%d", "answer", 42, 7);
     print("%s written=%d\n", buffer, written);
 

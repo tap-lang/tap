@@ -30,7 +30,7 @@ extern fn __tap_socket_connect(handle: i64, address: *u8, length: u32): i32;
 extern fn __tap_socket_getsockname(handle: i64, address: *u8, length: *u32): i32;
 extern fn __tap_socket_recv(handle: i64, buffer: *u8, length: uint): i64;
 extern fn __tap_socket_send(handle: i64, buffer: *u8, length: uint): i64;
-extern fn __tap_socket_send_text(handle: i64, data: string): i64;
+extern fn __tap_socket_send_text(handle: i64, data: String): i64;
 extern fn __tap_socket_close(handle: i64): i32;
 
 // 地址族：IPv4。sockaddr_in 里 family 字段的值，两平台一致。
@@ -51,7 +51,7 @@ pub struct Socket {
 // 每段必须是 0..255 的十进制数、不能为空、必须正好 4 段，否则返回 Err。
 //
 // 只认字面量，不做 DNS 解析——tap 现在还没有域名解析。
-pub fn parse_ipv4(host: string): Result<[u8; 4], string> {
+pub fn parse_ipv4(host: String): Result<[u8; 4], String> {
     let bytes: [u8; 4] = [0; 4];
     let index: uint = 0;
     let part: i32 = 0;      // 当前这一段的数值
@@ -62,7 +62,7 @@ pub fn parse_ipv4(host: string): Result<[u8; 4], string> {
         let c: u8 = host.byte_at(index);
         if (c == 46) {                                  // '.'
             if (digits == 0 || count >= 3) {            // 空段，或者已经够 4 段了
-                return Result<[u8; 4], string>.Err("invalid IPv4 address");
+                return Result<[u8; 4], String>.Err("invalid IPv4 address");
             }
             bytes[count] = part;
             count = count + 1;
@@ -72,19 +72,19 @@ pub fn parse_ipv4(host: string): Result<[u8; 4], string> {
             part = part * 10 + (c - 48);
             digits = digits + 1;
             if (part > 255) {
-                return Result<[u8; 4], string>.Err("IPv4 octet out of range");
+                return Result<[u8; 4], String>.Err("IPv4 octet out of range");
             }
         } else {
-            return Result<[u8; 4], string>.Err("invalid IPv4 address");
+            return Result<[u8; 4], String>.Err("invalid IPv4 address");
         }
         index = index + 1;
     }
 
     if (digits == 0 || count != 3) {
-        return Result<[u8; 4], string>.Err("invalid IPv4 address");
+        return Result<[u8; 4], String>.Err("invalid IPv4 address");
     }
     bytes[3] = part;
-    return Result<[u8; 4], string>.Ok(bytes);
+    return Result<[u8; 4], String>.Ok(bytes);
 }
 
 // 构造 16 字节的 sockaddr_in：family 在偏移 0，端口在偏移 2，地址在偏移 4，其余补零。
@@ -93,10 +93,10 @@ pub fn parse_ipv4(host: string): Result<[u8; 4], string> {
 // 端口和地址都按大端（网络字节序）手工拆字节。这里刻意不用 libc 的 htons：
 // htons 返回的 u16 要靠「内存布局」才是网络序，而 tap 的整数是数值语义，再从数值里拆
 // 字节就得先知道宿主机端序了；直接按数值拆反而端序无关。
-pub fn build_address(host: string, port: u16): Result<[u8; 16], string> {
-    let parsed: Result<[u8; 4], string> = parse_ipv4(host);
+pub fn build_address(host: String, port: u16): Result<[u8; 16], String> {
+    let parsed: Result<[u8; 4], String> = parse_ipv4(host);
     if (is_err(parsed)) {
-        return Result<[u8; 16], string>.Err("invalid IPv4 address");
+        return Result<[u8; 16], String>.Err("invalid IPv4 address");
     }
     let host_bytes: [u8; 4] = unwrap(parsed);
 
@@ -108,7 +108,7 @@ pub fn build_address(host: string, port: u16): Result<[u8; 16], string> {
     address[5] = host_bytes[1];
     address[6] = host_bytes[2];
     address[7] = host_bytes[3];
-    return Result<[u8; 16], string>.Ok(address);
+    return Result<[u8; 16], String>.Ok(address);
 }
 
 // 是否持有有效句柄。创建失败、或者 close_socket 返回的那个句柄都返回 false。
@@ -121,62 +121,62 @@ pub fn is_open(socket: Socket): bool {
 // `port` 传 0 表示让内核随便挑一个空闲端口，之后用 local_port 取回来；
 // `backlog` 是等待 accept 的连接队列长度，普通场景 8 就够。
 // 地址非法、端口被占用或权限不足时返回 Err。
-pub fn listen_on(host: string, port: u16, backlog: i32): Result<Socket, string> {
-    let built: Result<[u8; 16], string> = build_address(host, port);
+pub fn listen_on(host: String, port: u16, backlog: i32): Result<Socket, String> {
+    let built: Result<[u8; 16], String> = build_address(host, port);
     if (is_err(built)) {
-        return Result<Socket, string>.Err("invalid IPv4 address");
+        return Result<Socket, String>.Err("invalid IPv4 address");
     }
     let address: [u8; 16] = unwrap(built);
 
     let fd: i64 = __tap_socket_create();
     if (fd < 0) {
-        return Result<Socket, string>.Err("socket() failed");
+        return Result<Socket, String>.Err("socket() failed");
     }
     if (__tap_socket_bind(fd, &address[0], ADDRESS_LENGTH) != 0) {
         __tap_socket_close(fd);
-        return Result<Socket, string>.Err("bind() failed");
+        return Result<Socket, String>.Err("bind() failed");
     }
     if (__tap_socket_listen(fd, backlog) != 0) {
         __tap_socket_close(fd);
-        return Result<Socket, string>.Err("listen() failed");
+        return Result<Socket, String>.Err("listen() failed");
     }
-    return Result<Socket, string>.Ok(Socket { fd: fd });
+    return Result<Socket, String>.Ok(Socket { fd: fd });
 }
 
 // 连接服务器，返回已连上的套接字；地址非法或对方拒绝连接时返回 Err。
 //
 // 注意这是阻塞连接：对方不回应会一直等，而且不像 C 那样有超时选项。
-pub fn connect_to(host: string, port: u16): Result<Socket, string> {
-    let built: Result<[u8; 16], string> = build_address(host, port);
+pub fn connect_to(host: String, port: u16): Result<Socket, String> {
+    let built: Result<[u8; 16], String> = build_address(host, port);
     if (is_err(built)) {
-        return Result<Socket, string>.Err("invalid IPv4 address");
+        return Result<Socket, String>.Err("invalid IPv4 address");
     }
     let address: [u8; 16] = unwrap(built);
 
     let fd: i64 = __tap_socket_create();
     if (fd < 0) {
-        return Result<Socket, string>.Err("socket() failed");
+        return Result<Socket, String>.Err("socket() failed");
     }
     if (__tap_socket_connect(fd, &address[0], ADDRESS_LENGTH) != 0) {
         __tap_socket_close(fd);
-        return Result<Socket, string>.Err("connect() failed");
+        return Result<Socket, String>.Err("connect() failed");
     }
-    return Result<Socket, string>.Ok(Socket { fd: fd });
+    return Result<Socket, String>.Ok(Socket { fd: fd });
 }
 
 // 从监听套接字上取一个已完成握手的连接，阻塞直到有连接进来。
 // 传入的句柄已关闭、或者底层 accept 失败时返回 Err。
 //
 // 对端地址这里不返回，所以底层也不需要接收它的缓冲区。
-pub fn accept_from(server: Socket): Result<Socket, string> {
+pub fn accept_from(server: Socket): Result<Socket, String> {
     if (!is_open(server)) {
-        return Result<Socket, string>.Err("socket is closed");
+        return Result<Socket, String>.Err("socket is closed");
     }
     let fd: i64 = __tap_socket_accept(server.fd);
     if (fd < 0) {
-        return Result<Socket, string>.Err("accept() failed");
+        return Result<Socket, String>.Err("accept() failed");
     }
-    return Result<Socket, string>.Ok(Socket { fd: fd });
+    return Result<Socket, String>.Ok(Socket { fd: fd });
 }
 
 // 返回套接字实际绑定的端口；句柄无效或查询失败时返回 0。
@@ -210,7 +210,7 @@ pub fn receive(socket: Socket, buffer: *u8, capacity: uint): i64 {
 //
 // 一次 send 不保证把数据发完，返回小于 data.len() 时调用方要自己接着发剩下的部分
 // （tap 还没有指针算术，切不出「后半段字符串」，所以这里没有提供自动重发的 send_all）。
-pub fn send_text(socket: Socket, data: string): i64 {
+pub fn send_text(socket: Socket, data: String): i64 {
     if (!is_open(socket)) {
         return -1;
     }

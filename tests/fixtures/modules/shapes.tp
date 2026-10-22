@@ -3,5 +3,5 @@
 // 都在各自的模块里改写过）。
 pub trait Shape {
     fn area(self): i32;
-    fn name(self): string;
+    fn name(self): String;
 }

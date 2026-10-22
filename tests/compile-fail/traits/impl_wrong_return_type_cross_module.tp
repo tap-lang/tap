@@ -8,7 +8,7 @@ impl Shape for Square {
     fn area(value: Square): i64 {
         return 1;
     }
-    fn name(value: Square): string {
+    fn name(value: Square): String {
         return "square";
     }
 }

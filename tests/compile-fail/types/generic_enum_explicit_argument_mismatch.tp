@@ -5,7 +5,7 @@ enum Option<T> {
 
 fn main(): i32 {
     // 显式写的实参和目标类型推断出的不一致。
-    let bad: Option<i32> = Option<string>.Some("x");
+    let bad: Option<i32> = Option<String>.Some("x");
     return 0;
 }
 

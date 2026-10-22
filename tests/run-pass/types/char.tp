@@ -20,7 +20,7 @@ fn main(): i32 {
     print("\n");
     print(identity(values[1]));
     print("\n");
-    print("%s\n", zh as string);
+    print("%s\n", zh as String);
     return 0;
 }
 

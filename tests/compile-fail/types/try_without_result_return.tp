@@ -1,5 +1,5 @@
-fn step(value: i32): Result<i32, string> {
-    return Result<i32, string>.Ok(value);
+fn step(value: i32): Result<i32, String> {
+    return Result<i32, String>.Ok(value);
 }
 
 fn main(): i32 {

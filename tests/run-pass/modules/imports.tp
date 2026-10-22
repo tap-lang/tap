@@ -2,7 +2,7 @@ import modules.math;
 import modules.math;
 import modules.math as calc;
 import modules.offset;
-import modules.string as text;
+import modules.String as text;
 import std.math as stdmath;
 
 fn main(): i32 {

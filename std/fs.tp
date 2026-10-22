@@ -9,23 +9,23 @@ import std.string_builder as sb;
 import std.vec as vec;
 
 // 目录遍历所需的内部 Runtime ABI。
-extern fn __tap_dir_open(path: string): *i8;
-extern fn __tap_dir_next(handle: *i8): string;
+extern fn __tap_dir_open(path: String): *i8;
+extern fn __tap_dir_next(handle: *i8): String;
 extern fn __tap_dir_is_open(handle: *i8): i32;
 extern fn __tap_dir_close(handle: *i8): i32;
-extern fn __tap_path_is_directory(path: string): i32;
-extern fn __tap_make_directory(path: string): i32;
-extern fn __tap_symlink(target: string, link_path: string): i32;
-extern fn __tap_remove_entry(path: string): i32;
+extern fn __tap_path_is_directory(path: String): i32;
+extern fn __tap_make_directory(path: String): i32;
+extern fn __tap_symlink(target: String, link_path: String): i32;
+extern fn __tap_remove_entry(path: String): i32;
 
 // 文件读写所需的内部 Runtime ABI。
-extern fn __tap_file_open(path: string, mode: string): *i8;
-extern fn __tap_file_read(handle: *i8, count: uint): string;
-extern fn __tap_file_write(handle: *i8, data: string): i64;
+extern fn __tap_file_open(path: String, mode: String): *i8;
+extern fn __tap_file_read(handle: *i8, count: uint): String;
+extern fn __tap_file_write(handle: *i8, data: String): i64;
 extern fn __tap_file_close(handle: *i8): i32;
 extern fn __tap_file_is_open(handle: *i8): i32;
 extern fn __tap_file_eof(handle: *i8): i32;
-extern fn __tap_file_remove(path: string): i32;
+extern fn __tap_file_remove(path: String): i32;
 
 // 已打开的文件。`handle` 是不透明指针，不要直接读写它。
 pub struct File {
@@ -33,7 +33,7 @@ pub struct File {
 }
 
 // 以指定模式打开文件；失败时返回句柄为空的 File，用 is_open 判断。
-pub fn open(path: string, mode: string): File {
+pub fn open(path: String, mode: String): File {
     return File { handle: __tap_file_open(path, mode) };
 }
 
@@ -44,12 +44,12 @@ pub fn is_open(file: File): bool {
 
 // 读取最多 count 个字节，返回读到的内容。
 // 已到末尾或读取失败都返回空字符串，用 eof 区分这两种情况。
-pub fn read(file: File, count: uint): string {
+pub fn read(file: File, count: uint): String {
     return __tap_file_read(file.handle, count);
 }
 
 // 写入 data 的全部字节，返回实际写入的字节数；失败返回 -1。
-pub fn write(file: File, data: string): i64 {
+pub fn write(file: File, data: String): i64 {
     return __tap_file_write(file.handle, data);
 }
 
@@ -64,24 +64,24 @@ pub fn eof(file: File): bool {
 }
 
 // 删除文件；成功返回 0，失败返回 -1。
-pub fn remove(path: string): i32 {
+pub fn remove(path: String): i32 {
     return __tap_file_remove(path);
 }
 
 // 把整个文件读成字符串；打不开时返回 Err。
 // 适合已知不会太大的文件；大文件请用 open + 分次 read。
-pub fn read_text(path: string): Result<string, string> {
+pub fn read_text(path: String): Result<String, String> {
     let file: File = open(path, "rb");
     if (!is_open(file)) {
-        return Result<string, string>.Err("cannot open file");
+        return Result<String, String>.Err("cannot open file");
     }
-    let text: string = read_all(file);
+    let text: String = read_all(file);
     close(file);
-    return Result<string, string>.Ok(text);
+    return Result<String, String>.Ok(text);
 }
 
 // 把字符串写入文件（覆盖已有内容），返回写入的字节数；打不开时返回 -1。
-pub fn write_text(path: string, data: string): i64 {
+pub fn write_text(path: String, data: String): i64 {
     let file: File = open(path, "wb");
     if (!is_open(file)) {
         return -1;
@@ -92,7 +92,7 @@ pub fn write_text(path: string, data: string): i64 {
 }
 
 // 追加到文件末尾，返回写入的字节数；打不开时返回 -1。
-pub fn append_text(path: string, data: string): i64 {
+pub fn append_text(path: String, data: String): i64 {
     let file: File = open(path, "ab");
     if (!is_open(file)) {
         return -1;
@@ -104,7 +104,7 @@ pub fn append_text(path: string, data: string): i64 {
 
 // 能否以只读方式打开；文件不存在或无权限时返回 false。
 // 整个文件读写和 exists 都只是流式接口的组合，没有再新增 Runtime ABI。
-pub fn exists(path: string): bool {
+pub fn exists(path: String): bool {
     let file: File = open(path, "rb");
     if (!is_open(file)) {
         return false;
@@ -119,7 +119,7 @@ pub struct Dir {
 }
 
 // 打开目录准备遍历；失败时返回句柄为空的 Dir，用 is_dir_open 判断。
-pub fn open_dir(path: string): Dir {
+pub fn open_dir(path: String): Dir {
     return Dir { handle: __tap_dir_open(path) };
 }
 
@@ -130,7 +130,7 @@ pub fn is_dir_open(directory: Dir): bool {
 
 // 取下一条目名；已到末尾返回空字符串（文件名不可能是空串，所以能这样区分）。
 // 名字由 Runtime 持有，关闭目录后失效。
-pub fn next_entry(directory: Dir): string {
+pub fn next_entry(directory: Dir): String {
     return __tap_dir_next(directory.handle);
 }
 
@@ -140,23 +140,23 @@ pub fn close_dir(directory: Dir): i32 {
 }
 
 // path 是不是目录；不存在或不是目录都返回 false。
-pub fn is_dir(path: string): bool {
+pub fn is_dir(path: String): bool {
     return __tap_path_is_directory(path) != 0;
 }
 
 // 建目录（已存在算成功）；成功返回 0。
-pub fn make_dir(path: string): i32 {
+pub fn make_dir(path: String): i32 {
     return __tap_make_directory(path);
 }
 
 // 建符号链接 link_path -> target；成功返回 0。
 // Windows 上需要管理员权限或开启开发者模式，失败时调用方应回退到复制。
-pub fn symlink(target: string, link_path: string): i32 {
+pub fn symlink(target: String, link_path: String): i32 {
     return __tap_symlink(target, link_path);
 }
 
 // 删除文件或空目录；成功返回 0。
-pub fn remove_entry(path: string): i32 {
+pub fn remove_entry(path: String): i32 {
     return __tap_remove_entry(path);
 }
 
@@ -164,16 +164,16 @@ pub fn remove_entry(path: string): i32 {
 // 排序后结果才稳定）。打不开目录时返回 Err。
 //
 // 返回的 Vec 在堆上，**调用方用完要自己 vec.free**。
-pub fn read_dir(path: string): Result<Vec<string>, string> {
+pub fn read_dir(path: String): Result<Vec<String>, String> {
     let directory: Dir = open_dir(path);
     if (!is_dir_open(directory)) {
-        return Result<Vec<string>, string>.Err("cannot open directory");
+        return Result<Vec<String>, String>.Err("cannot open directory");
     }
 
-    let names: Vec<string> = vec.new();
+    let names: Vec<String> = vec.new();
     let running: bool = true;
     while (running) {
-        let name: string = next_entry(directory);
+        let name: String = next_entry(directory);
         if (name.len() == 0) {
             running = false;
         } else {
@@ -181,23 +181,23 @@ pub fn read_dir(path: string): Result<Vec<string>, string> {
         }
     }
     close_dir(directory);
-    return Result<Vec<string>, string>.Ok(names);
+    return Result<Vec<String>, String>.Ok(names);
 }
 
 // 读到文件末尾为止，把全部内容拼成一个字符串返回。
 // 适合已知不会太大的文件；大文件请分次 read。
-pub fn read_all(file: File): string {
+pub fn read_all(file: File): String {
     let builder: StringBuilder = sb.new();
     let running: bool = true;
     while (running) {
-        let chunk: string = read(file, 4096);
+        let chunk: String = read(file, 4096);
         if (chunk.len() == 0) {
             running = false;
         } else {
             builder = sb.append(builder, chunk);
         }
     }
-    let text: string = sb.to_string(builder);
+    let text: String = sb.to_string(builder);
     sb.free(builder);
     return text;
 }

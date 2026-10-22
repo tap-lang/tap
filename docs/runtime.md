@@ -16,11 +16,11 @@ extern fn __tap_sleep_ms(milliseconds: i32): i32;
 | `clear_screen(): i32` | 清空终端并将光标移到左上角；成功返回 `0` |
 | `random(maximum: i32): i32` | `maximum > 0` 时返回 `[0, maximum)`，否则返回 `0`；现由 `std.random` 提供，需显式导入 |
 | `argc(): i32` | 返回命令行参数数量，包含程序路径自身 |
-| `arg(index: i32): string` | 返回指定命令行参数；越界时返回空字符串 |
-| `args(): Vec<string>` | 返回全部命令行参数；`Vec` 来自 `std.vec` |
-| `var(name: string): string` | 返回指定环境变量的值；不存在时返回空字符串 |
+| `arg(index: i32): String` | 返回指定命令行参数；越界时返回空字符串 |
+| `args(): Vec<String>` | 返回全部命令行参数；`Vec` 来自 `std.vec` |
+| `var(name: String): String` | 返回指定环境变量的值；不存在时返回空字符串 |
 | `varc(): i32` | 返回当前进程环境变量数量 |
-| `vars(): Vec<string>` | 返回全部环境变量条目，格式为 `NAME=VALUE` |
+| `vars(): Vec<String>` | 返回全部环境变量条目，格式为 `NAME=VALUE` |
 
 说明：POSIX 终端方向键会在一次 read_key 调用中消费 ANSI 序列，并返回末尾方向字节 `65/66/67/68`；Windows 扩展方向键返回第二个 scan code，通常是 `72/80/77/75`。
 
@@ -37,16 +37,21 @@ Runtime 的公开 ABI 声明位于 [`runtime/include/tap_runtime.h`](../runtime/
 
 ## 底层字符串 ABI
 
+`String` 在 C ABI 中对应 `struct String { const char *data; uint64_t length; }`。缓冲区目前仍保留
+尾部 NUL 以兼容系统 API，但 Runtime 的字符串操作以 `length` 为准。
+`c_string` 则直接对应 `const char *`。`String` 传入 `c_string` 参数时隐式提取 `data`；
+`c_string` 转回 `String` 必须显式使用 `as String`，由 `__tap_string_from_c` 扫描长度。
+
 内建字符串方法、比较运算符和 `+` 拼接由编译器生成对以下 Runtime ABI 的调用：
 
 | C ABI | 行为 |
 |---|---|
 | `__tap_string_byte_at(value, index): u8` | 读取 UTF-8 原始字节；越界时终止程序 |
-| `__tap_string_slice(value, start, end): string` | 复制 `[start, end)` 字节区间；无效边界时终止程序 |
+| `__tap_string_slice(value, start, end): String` | 复制 `[start, end)` 字节区间；无效边界时终止程序 |
 | `__tap_string_compare(left, right): i32` | 按 UTF-8 无符号字节序返回 `-1`、`0` 或 `1` |
-| `__tap_string_concat(left, right): string` | 按字节拼接两个字符串；结果由 Runtime 跟踪 |
+| `__tap_string_concat(left, right): String` | 按字节拼接两个字符串；结果由 Runtime 跟踪 |
 | `__tap_string_copy_bytes(value, destination, length): i32` | 把字符串字节批量复制到已有缓冲区 |
-| `__tap_bytes_to_string(data, length): string` | 把字节复制为零结尾字符串；内部 NUL 会终止程序 |
+| `__tap_bytes_to_string(data, length): String` | 按给定长度复制字节并补尾部 NUL；允许内部 NUL |
 
 `slice` 和 `bytes_to_string` 结果由 Runtime 跟踪，进程退出时统一释放。
 普通程序不应直接调用这些符号。
@@ -57,7 +62,7 @@ Runtime 的公开 ABI 声明位于 [`runtime/include/tap_runtime.h`](../runtime/
 
 | C ABI | 行为 |
 |---|---|
-| `__tap_format_f64(value: f64): string` | 渲染成最短的、能往返的十进制字符串；结果由 Runtime 跟踪 |
+| `__tap_format_f64(value: f64): String` | 渲染成最短的、能往返的十进制字符串；结果由 Runtime 跟踪 |
 
 精确的十进制展开需要大整数算法，纯 tap 实现会引入难以察觉的精度偏差，因此这里选择调用
 C 库：先用 `%.15g`，再逐步提高精度直到结果能往返，这样 `0.1` 输出 `0.1` 而不是
@@ -102,7 +107,7 @@ macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的�
 | C ABI | 行为 |
 |---|---|
 | `__tap_dir_open(path): *void` | 打开目录，**读入全部条目名并排序**；失败返回 NULL |
-| `__tap_dir_next(handle): string` | 取下一条目名；已到末尾返回空串 |
+| `__tap_dir_next(handle): String` | 取下一条目名；已到末尾返回空串 |
 | `__tap_dir_is_open(handle): i32` | 句柄是否有效 |
 | `__tap_dir_close(handle): i32` | 关闭句柄 |
 | `__tap_path_is_directory(path): i32` | 路径是不是目录 |
@@ -150,7 +155,7 @@ libc 的 `exit`**，因为那会占住 LLVM 模块里的 `exit` 符号，和 Pre
 |---|---|
 | `__tap_file_open(path, mode): *i8` | 打开文件；失败返回 `NULL`。`mode` 与 `fopen` 一致 |
 | `__tap_file_is_open(handle): i32` | 句柄是否在打开登记表里；`NULL` 或已关闭返回 `0` |
-| `__tap_file_read(handle, count): string` | 读取最多 `count` 字节；末尾或失败返回空串 |
+| `__tap_file_read(handle, count): String` | 读取最多 `count` 字节；末尾或失败返回空串 |
 | `__tap_file_write(handle, data): i64` | 写入全部字节并返回写入数；失败返回 `-1` |
 | `__tap_file_close(handle): i32` | 关闭并从登记表移除；成功返回 `0` |
 | `__tap_file_eof(handle): i32` | 是否已到末尾；句柄无效返回 `0` |
@@ -169,7 +174,7 @@ libc 的 `exit`**，因为那会占住 LLVM 模块里的 `exit` 符号，和 Pre
 |---|---|
 | `__tap_system(command): i32` | 通过 shell 执行命令；成功返回 `0`，否则返回非零 wait status |
 | `__tap_popen(command, mode): *void` | 打开命令管道；`mode` 通常为 `"r"` 或 `"w"`，失败返回 `NULL` |
-| `__tap_stream_read(stream, count): string` | 从管道读取最多 `count` 字节；到末尾或失败返回空字符串 |
+| `__tap_stream_read(stream, count): String` | 从管道读取最多 `count` 字节；到末尾或失败返回空字符串 |
 | `__tap_pclose(stream): i32` | 关闭管道并等待子进程，返回 wait status |
 | `__tap_ptr_is_null(pointer): i32` | `NULL` 返回 `1`，非空返回 `0` |
 | `__tap_process_exit_code(status): i32` | 提取退出码；被信号终止或状态无效时返回 `-1` |

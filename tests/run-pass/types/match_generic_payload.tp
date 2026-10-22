@@ -3,7 +3,7 @@
 // 回归点：`process_statements` / `process_expression` 的 match 分支原先只递归分支体，
 // **没把载荷绑定登记进泛型阶段的类型环境**。于是 `inner.len()` 找不到接收者类型，
 // 泛型方法 `len` 不会被特化，Codegen 的 find_method_function 匹配不上，最后误报成
-// 「method 'len' is only available on string values」。
+// 「method 'len' is only available on String values」。
 //
 // 两条分支体都要覆盖：单载荷（`Item(inner)`）和多载荷（`Pair(items, n)`）。
 import std.vec as vec;

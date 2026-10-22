@@ -1,5 +1,5 @@
 // 用 tap 现有语言能力实现的 JSON 解析器 + 序列化器，不需要扩展 runtime。
-// 覆盖 object / array / string / number / true / false / null；字符串的转义与反转义
+// 覆盖 object / array / String / number / true / false / null；字符串的转义与反转义
 // 交给 std.json——那里覆盖全部控制字符和 \uXXXX（含代理对），比内联实现完整。
 //
 // 两个不显然的设计要点：
@@ -16,17 +16,17 @@ import std.parse as parse;
 import std.vec as vec;
 import std.string_builder as sb;
 
-// kind: 0=null 1=bool 2=number 3=string 4=array 5=object
+// kind: 0=null 1=bool 2=number 3=String 4=array 5=object
 // number 是十进制文本：解析来的保留输入原文，number_of() 构造的用 format_f64 渲染。
 // pos 是解析游标：因为没有多返回值，把它折进结构体里带出来。
 struct Json {
     pos: uint,
     kind: i32,
     boolean: bool,
-    number: string,
-    text: string,
+    number: String,
+    text: String,
     items: Vec<Json>,
-    keys: Vec<string>,
+    keys: Vec<String>,
     values: Vec<Json>,
 }
 
@@ -38,7 +38,7 @@ fn blank(pos: uint): Json {
         number: "",
         text: "",
         items: vec.new<Json>(),
-        keys: vec.new<string>(),
+        keys: vec.new<String>(),
         values: vec.new<Json>(),
     };
 }
@@ -65,14 +65,14 @@ fn is_number_byte(b: u8): bool {
     return is_digit(b) || b == 45 || b == 43 || b == 46 || b == 101 || b == 69;
 }
 
-fn byte_at_or_zero(src: string, pos: uint): u8 {
+fn byte_at_or_zero(src: String, pos: uint): u8 {
     if (pos >= src.len()) {
         return 0;
     }
     return src.byte_at(pos);
 }
 
-fn skip_ws(src: string, pos: uint): uint {
+fn skip_ws(src: String, pos: uint): uint {
     let p: uint = pos;
     let n: uint = src.len();
     while (p < n && is_space(src.byte_at(p))) {
@@ -81,7 +81,7 @@ fn skip_ws(src: string, pos: uint): uint {
     return p;
 }
 
-fn parse_number(src: string, pos: uint): Json {
+fn parse_number(src: String, pos: uint): Json {
     let p: uint = pos;
     let n: uint = src.len();
     while (p < n && is_number_byte(src.byte_at(p))) {
@@ -95,7 +95,7 @@ fn parse_number(src: string, pos: uint): Json {
 
 // elseif 把原来 6 层嵌套的转义分支压平成一条链。
 // 找到字符串字面量的结束引号下标；未闭合时返回 n。
-fn scan_string_end(src: string, start: uint, n: uint): uint {
+fn scan_string_end(src: String, start: uint, n: uint): uint {
     let p: uint = start;
     while (p < n) {
         let b: u8 = src.byte_at(p);
@@ -112,13 +112,13 @@ fn scan_string_end(src: string, start: uint, n: uint): uint {
     return n;
 }
 
-fn parse_string(src: string, pos: uint): Json {
+fn parse_string(src: String, pos: uint): Json {
     let n: uint = src.len();
     let content_start: uint = pos + 1;
     let end: uint = scan_string_end(src, content_start, n);
 
-    let raw: string = src.slice(content_start, end);
-    let decoded: Result<string, string> = json.unescape(raw);
+    let raw: String = src.slice(content_start, end);
+    let decoded: Result<String, String> = json.unescape(raw);
 
     // 这个示例是尽力而为的解析器：转义非法时用空串，真正的解析器应该检查
     // is_err(decoded) 并报错。
@@ -132,14 +132,14 @@ fn parse_string(src: string, pos: uint): Json {
     return result;
 }
 
-fn match_keyword(src: string, pos: uint, word: string): bool {
+fn match_keyword(src: String, pos: uint, word: String): bool {
     if (pos + word.len() > src.len()) {
         return false;
     }
     return src.slice(pos, pos + word.len()) == word;
 }
 
-fn parse_array(src: string, pos: uint): Json {
+fn parse_array(src: String, pos: uint): Json {
     let p: uint = skip_ws(src, pos + 1);
     let items: Vec<Json> = vec.new<Json>();
     let result: Json = blank(p);
@@ -171,9 +171,9 @@ fn parse_array(src: string, pos: uint): Json {
     return result;
 }
 
-fn parse_object(src: string, pos: uint): Json {
+fn parse_object(src: String, pos: uint): Json {
     let p: uint = skip_ws(src, pos + 1);
-    let keys: Vec<string> = vec.new<string>();
+    let keys: Vec<String> = vec.new<String>();
     let values: Vec<Json> = vec.new<Json>();
     let result: Json = blank(p);
     if (byte_at_or_zero(src, p) == 125) {
@@ -210,7 +210,7 @@ fn parse_object(src: string, pos: uint): Json {
     return result;
 }
 
-fn parse_value(src: string, pos: uint): Json {
+fn parse_value(src: String, pos: uint): Json {
     let p: uint = skip_ws(src, pos);
     let b: u8 = byte_at_or_zero(src, p);
     if (b == 123) {
@@ -263,7 +263,7 @@ fn write_json(out: StringBuilder, value: Json): StringBuilder {
     }
 
     let items: Vec<Json> = value.items;
-    let keys: Vec<string> = value.keys;
+    let keys: Vec<String> = value.keys;
     let values: Vec<Json> = value.values;
 
     if (value.kind == 4) {
@@ -300,7 +300,7 @@ fn write_json(out: StringBuilder, value: Json): StringBuilder {
 }
 
 fn main(): i32 {
-    let source: string = "{\"name\":\"tap\",\"nums\":[1,2.5,-3e2],\"ok\":true,\"none\":null,\"nested\":{\"a\":[[]]}}";
+    let source: String = "{\"name\":\"tap\",\"nums\":[1,2.5,-3e2],\"ok\":true,\"none\":null,\"nested\":{\"a\":[[]]}}";
 
     let root: Json = parse_value(source, 0);
     print("parsed kind=%d pos=%llu len=%llu\n", root.kind, root.pos, source.len());
@@ -310,7 +310,7 @@ fn main(): i32 {
     print("reserialized: %s\n", out.to_string());
 
     // 新运算符让「找某个键」变得直接
-    let keys: Vec<string> = root.keys;
+    let keys: Vec<String> = root.keys;
     let values: Vec<Json> = root.values;
     print("keys=%llu\n", keys.len());
     let i: uint = 0;
@@ -328,8 +328,8 @@ fn main(): i32 {
 
     // 反过来：用程序里算出来的值构造 JSON 再序列化。
     // number_of 通过 format_f64 渲染，因此 1.5e-3 写成 "0.0015"，不补齐到固定小数位。
-    let ratio: Result<f64, string> = parse.parse_f64("1.5e-3");
-    let built_keys: Vec<string> = vec.new<string>();
+    let ratio: Result<f64, String> = parse.parse_f64("1.5e-3");
+    let built_keys: Vec<String> = vec.new<String>();
     let built_values: Vec<Json> = vec.new<Json>();
     built_keys = built_keys.push("half");
     built_values = built_values.push(number_of(0.5));

@@ -5,7 +5,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-string operations require two string values
+String operations require two String values
 - .exit
 1
 -- */

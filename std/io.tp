@@ -18,7 +18,7 @@
 //
 // 名字带 __tap_ 前缀：extern 的符号名就是 C 符号名、不能改名，用 fprintf 这类通用名会占住
 // 全局函数名。
-extern fn __tap_eprintf(format: string, ...): i32;
+extern fn __tap_eprintf(format: c_string, ...): i32;
 
 // 标准输出的 Runtime ABI（__tap_printf）**声明在 std/prelude.tp 里**，这里不再重复声明：
 // 全局函数名唯一，同一个 extern 符号只能有一处声明。Prelude 的 print 也要转发到它，而
@@ -29,7 +29,7 @@ extern fn __tap_eprintf(format: string, ...): i32;
 // `...` 的实参按 C 的默认实参提升规则传递（f32 提升成 f64，位宽小于 32 的整数提升成 i32）。
 // i128/u128 没有 printf 对应的标准格式，会先截断为低 64 位再传递；请使用 `%lld` 或 `%llu`。
 // 格式串和实参的对应关系由调用方保证，编译器不做检查。返回写出的字符数，出错时为负数。
-pub fn printf(format: string, ...): i32 {
+pub fn printf(format: String, ...): i32 {
     return __tap_printf(format, ...);
 }
 
@@ -40,6 +40,6 @@ pub fn printf(format: string, ...): i32 {
 //
 // 和 panic 的分工：panic 会补上 `panic: ` 前缀并以状态 1 终止程序；eprintf 只写不终止，
 // 用于「要报告但不是致命错误」的场合，可恢复错误仍应优先用 Result 交给调用方。
-pub fn eprintf(format: string, ...): i32 {
+pub fn eprintf(format: String, ...): i32 {
     return __tap_eprintf(format, ...);
 }

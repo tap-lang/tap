@@ -10,7 +10,7 @@ fn main(): i32 {
     print("%llu\n", output.len());
     print("%s\n", output.to_string());
 
-    let snapshot: string = output.to_string();
+    let snapshot: String = output.to_string();
     output.clear();
     output.append("reset");
     print("%s | %s\n", snapshot, output.to_string());

@@ -1,5 +1,5 @@
 fn main(): i32 {
-    let value: string = "hello";
+    let value: String = "hello";
     print("%s\n", value.slice(1, 6));
     return 0;
 }

@@ -3,8 +3,8 @@
 extern fn __tap_read_key(): i32;
 extern fn __tap_sleep_ms(milliseconds: i32): i32;
 extern fn __tap_clear_screen(): i32;
-extern fn __tap_printf(format: string, ...): i32;
-extern fn __tap_panic(message: string): i32;
+extern fn __tap_printf(format: c_string, ...): i32;
+extern fn __tap_panic(message: String): i32;
 extern fn __tap_exit(code: i32): i32;
 
 // 非阻塞读取一个按键；当前无按键或输入不是终端时返回 -1。
@@ -25,7 +25,7 @@ fn clear_screen(): i32 {
 // 打印 `panic: <message>` 到标准错误，并以状态 1 终止程序。
 // 用于调用方无法合理恢复的情况；可恢复的错误应当用 std.result 的 Result 交给调用方。
 // 函数不会返回；返回 i32 只是为了让 tap 侧能当普通调用使用。
-fn panic(message: string): i32 {
+fn panic(message: String): i32 {
     return __tap_panic(message);
 }
 
@@ -48,18 +48,17 @@ fn exit(code: i32): i32 {
 // 编译器只接受「一句纯转发」这种写法，并在编译期把对 print 的调用整个合并到目标函数上，
 // 所以没有额外的函数调用开销。转发时实参必须按顺序就是本函数的具名形参。
 //
-// 只传一个实参、且它不是字符串字面量时，按实参类型自动挑格式串 —— print(42) 等价于
-// printf("%d", 42)。注意这一档对 string 不友好（会按 %d 打出指针值），输出字符串请显式写
-// print("%s", value)。
+// 只传一个实参时按实参类型自动挑格式串 —— print(42) 等价于 printf("%d", 42)，
+// print(text) 等价于 printf("%s", text)。
 //
 // 需要精确控制格式（`%05d`、`%.3f`、`%x`、`%s`）用 std.io 的 printf —— 它不在 Prelude，
 // 要 `import std.io;` 之后按 io.printf(...) 调用。标准错误则用 std.io 的 eprintf。
-fn print(format: string, ...): i32 {
+fn print(format: String, ...): i32 {
     return __tap_printf(format, ...);
 }
 
 // 可恢复错误的标准表示：`Ok(T)` 携带成功值，`Err(E)` 携带错误信息，实践中 `E` 多为
-// `string`。用它取代「返回哨兵值」和「打印后继续」这两种含糊的做法。
+// `String`。用它取代「返回哨兵值」和「打印后继续」这两种含糊的做法。
 //
 // Result 放在 Prelude 里，所以类型名和下面几个辅助函数都不需要导入。取值用 match 的
 // 表达式形式，或者用 unwrap_or 给兜底值、unwrap / expect 直接 panic。
@@ -94,9 +93,9 @@ fn unwrap_or<T, E>(value: Result<T, E>, fallback: T): T {
 
 // 取成功值；遇到 Err 直接 panic，错误信息用 Err 携带的那个。
 //
-// 只支持 `Result<T, string>`：tap 还没有「把任意类型转成字符串」的手段，所以错误类型
-// 必须是 string 才报得出有用的信息。其他错误类型请自己 match。
-fn unwrap<T>(value: Result<T, string>): T {
+// 只支持 `Result<T, String>`：tap 还没有「把任意类型转成字符串」的手段，所以错误类型
+// 必须是 String 才报得出有用的信息。其他错误类型请自己 match。
+fn unwrap<T>(value: Result<T, String>): T {
     // panic 不返回，所以 Err 那条路不需要再给出值；函数末尾也就没有返回值。
     match (value) {
         Result.Ok(inner) => {
@@ -109,7 +108,7 @@ fn unwrap<T>(value: Result<T, string>): T {
 }
 
 // 同 unwrap，但 panic 时用 message 而不是 Err 携带的信息。
-fn expect<T>(value: Result<T, string>, message: string): T {
+fn expect<T>(value: Result<T, String>, message: String): T {
     match (value) {
         Result.Ok(inner) => {
             return inner;

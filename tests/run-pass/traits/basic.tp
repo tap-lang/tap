@@ -4,38 +4,38 @@
 // `value.show()` 走的还是普通的方法查找，单态化时再检查约束是否满足。
 
 trait Show {
-    fn show(self): string;
-    fn label(self, prefix: string): string;
+    fn show(self): String;
+    fn label(self, prefix: String): String;
 }
 
 struct Point { x: i32 }
 struct Circle { radius: i32 }
 
 impl Show for Point {
-    fn show(value: Point): string {
+    fn show(value: Point): String {
         return "point";
     }
-    fn label(value: Point, prefix: string): string {
+    fn label(value: Point, prefix: String): String {
         return prefix;
     }
 }
 
 impl Show for Circle {
-    fn show(value: Circle): string {
+    fn show(value: Circle): String {
         return "circle";
     }
-    fn label(value: Circle, prefix: string): string {
+    fn label(value: Circle, prefix: String): String {
         return prefix;
     }
 }
 
 // T 由实参推断。
-fn describe<T: Show>(value: T): string {
+fn describe<T: Show>(value: T): String {
     return value.show();
 }
 
 // 显式写类型实参，并调用带额外参数的方法。
-fn tagged<T: Show>(value: T, prefix: string): string {
+fn tagged<T: Show>(value: T, prefix: String): String {
     return value.label(prefix);
 }
 

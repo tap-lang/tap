@@ -1,19 +1,19 @@
-// 显式标量转换：整数、bool、string，以及浮点数到 string。
+// 显式标量转换：整数、bool、String，以及浮点数到 String。
 fn main(): i32 {
     let x: i32 = true as i32;
     let ok: bool = 1 as bool;
-    let s: string = 123 as string;
+    let s: String = 123 as String;
     let a: i32 = "123" as i32;
-    let s2: string = 3.14 as string;
-    let b: string = true as string;
+    let s2: String = 3.14 as String;
+    let b: String = true as String;
     let b2: bool = "true" as bool;
     let zero: bool = "0" as bool;
     let false_i32: i32 = false as i32;
     let false_bool: bool = 0 as bool;
-    let false_text: string = false as string;
+    let false_text: String = false as String;
     let false_from_text: bool = "false" as bool;
 
-    // 每一种整数类型都覆盖 string -> integer -> string。
+    // 每一种整数类型都覆盖 String -> integer -> String。
     let int_value: int = "-123" as int;
     let uint_value: uint = "123" as uint;
     let i8_value: i8 = "-8" as i8;
@@ -27,19 +27,19 @@ fn main(): i32 {
     let i128_max: i128 = "170141183460469231731687303715884105727" as i128;
     let u128_max: u128 = "340282366920938463463374607431768211455" as u128;
     let i128_negative: i128 = "-170141183460469231731687303715884105728" as i128;
-    let int_text: string = int_value as string;
-    let uint_text: string = uint_value as string;
-    let i8_text: string = i8_value as string;
-    let u8_text: string = u8_value as string;
-    let i16_text: string = i16_value as string;
-    let u16_text: string = u16_value as string;
-    let i32_text: string = i32_value as string;
-    let u32_text: string = u32_value as string;
-    let i64_text: string = i64_value as string;
-    let u64_text: string = u64_value as string;
-    let i128_text: string = i128_max as string;
-    let u128_text: string = u128_max as string;
-    let i128_negative_text: string = i128_negative as string;
+    let int_text: String = int_value as String;
+    let uint_text: String = uint_value as String;
+    let i8_text: String = i8_value as String;
+    let u8_text: String = u8_value as String;
+    let i16_text: String = i16_value as String;
+    let u16_text: String = u16_value as String;
+    let i32_text: String = i32_value as String;
+    let u32_text: String = u32_value as String;
+    let i64_text: String = i64_value as String;
+    let u64_text: String = u64_value as String;
+    let i128_text: String = i128_max as String;
+    let u128_text: String = u128_max as String;
+    let i128_negative_text: String = i128_negative as String;
     print("%d %d %s %d %s %s %d %d\n",
           x, ok, s, a, s2, b, b2, zero);
     print("%d %d %s %d\n", false_i32, false_bool, false_text, false_from_text);

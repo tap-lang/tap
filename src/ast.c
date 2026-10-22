@@ -24,7 +24,8 @@ static const char *literal_type_str(enum LiteralType t) {
     case LITERAL_FLOAT: return "float";
     case LITERAL_F32: return "f32";
     case LITERAL_F64: return "f64";
-    case LITERAL_STRING: return "string";
+    case LITERAL_STRING: return "String";
+    case LITERAL_C_STRING: return "c_string";
     case LITERAL_BOOL: return "bool";
     case LITERAL_CHAR: return "char";
     default: return "?";

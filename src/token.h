@@ -46,7 +46,8 @@ enum TokenType {
     TOKEN_F32,         // 32位浮点数
     TOKEN_F64,         // 64位浮点数
     TOKEN_BOOL,        // 布尔值
-    TOKEN_STRING,      // 字符串
+    TOKEN_STRING,      // String 类型或字符串字面量
+    TOKEN_C_STRING,    // C 兼容的零结尾字符串指针 c_string
     TOKEN_CHAR,        // char 类型
     TOKEN_CHAR_LITERAL,// 字符字面量
 

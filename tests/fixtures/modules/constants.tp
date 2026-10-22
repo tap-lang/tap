@@ -4,7 +4,7 @@ pub const SCALE: i32 = 3;
 // 导出的字符串常量。模块外 `constants.LABEL.len()` 会被 Parser 拼成
 // `constants.LABEL.len` 一个整串点名字——模块解析阶段必须认出最后一段是字符串内建，
 // 否则会按「模块里有个叫 LABEL.len 的函数」去查而报错。
-pub const LABEL: string = "tap";
+pub const LABEL: String = "tap";
 
 // 模块内部引用自己导出的常量。
 pub fn scaled(value: i32): i32 {

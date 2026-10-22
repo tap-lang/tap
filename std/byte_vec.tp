@@ -1,8 +1,8 @@
 import std.memory as memory;
 
-// ByteVec 与 string 之间批量复制所需的内部 Runtime ABI。
-extern fn __tap_bytes_to_string(data: *u8, length: uint): string;
-extern fn __tap_string_copy_bytes(value: string, destination: *u8, length: uint): i32;
+// ByteVec 与 String 之间批量复制所需的内部 Runtime ABI。
+extern fn __tap_bytes_to_string(data: *u8, length: uint): String;
+extern fn __tap_string_copy_bytes(value: String, destination: *u8, length: uint): i32;
 
 // 使用堆内存保存可变长度字节；len 是有效长度，cap 是已分配容量。
 pub struct ByteVec {
@@ -63,8 +63,8 @@ pub fn push(vec: ByteVec, value: u8): ByteVec {
     return vec;
 }
 
-// 在末尾批量追加 string 的 UTF-8 原始字节。
-pub fn extend(vec: ByteVec, value: string): ByteVec {
+// 在末尾批量追加 String 的 UTF-8 原始字节。
+pub fn extend(vec: ByteVec, value: String): ByteVec {
     let value_length: uint = value.len();
     vec = reserve(vec, vec.len + value_length);
     if (value_length > 0) {
@@ -99,8 +99,8 @@ pub fn clear(vec: ByteVec): ByteVec {
     return vec;
 }
 
-// 复制有效字节并返回独立字符串；内容包含 NUL 时 Runtime 会终止程序。
-pub fn to_string(vec: ByteVec): string {
+// 按 len 复制有效字节并返回独立字符串；允许内容包含 NUL。
+pub fn to_string(vec: ByteVec): String {
     return __tap_bytes_to_string(vec.data, vec.len);
 }
 

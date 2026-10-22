@@ -30,12 +30,12 @@ fn countdown<T>(value: T): T {
 
 fn main(): i32 {
     let number: i32 = identity(41);
-    let text: string = identity<string>("generic");
+    let text: String = identity<String>("generic");
     let wide: i64 = identity<i64>(7);
-    let selected: string = first("multi", 10);
+    let selected: String = first("multi", 10);
 
     replace(&number, 42);
-    replace<string>(&text, "works");
+    replace<String>(&text, "works");
 
     let point: Point = identity(Point { x: 4, y: 2 });
     let direction: Direction = identity(Direction.Down);

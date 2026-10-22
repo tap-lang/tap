@@ -10,8 +10,8 @@ fn main(): i32 {
     let written: i32 = io.printf("abc\n");
     io.printf("written=%d\n", written);
 
-    // %s 接 string；LLVM 里 string 就是 i8*，字面量和变量都能直接传。
-    let name: string = "tap";
+    // %s 接 String；编译器会提取 data 指针传给 C 变参。
+    let name: String = "tap";
     io.printf("name=%s\n", name);
 
     // 窄整数提升到 i32：有符号补符号位，无符号补零。

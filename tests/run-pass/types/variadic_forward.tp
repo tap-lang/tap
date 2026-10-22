@@ -3,9 +3,9 @@
 //
 // 转发的目标必须是一个**真实的**变参函数（extern）：转发函数自己没有可供跳转的实体，
 // 所以不能把另一个转发函数当目标。这里自己声明一个 libc 的 printf 来转发。
-extern fn printf(format: string, ...): i32;
+extern fn printf(format: c_string, ...): i32;
 
-fn log_line(prefix: string, ...): i32 {
+fn log_line(prefix: String, ...): i32 {
     return printf(prefix, ...);
 }
 

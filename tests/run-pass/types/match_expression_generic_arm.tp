@@ -6,51 +6,51 @@
 import std.vec as vec;
 
 // 分支值是泛型调用，载荷是非泛型的
-fn from_plain(source: Result<i32, string>): Vec<string> {
+fn from_plain(source: Result<i32, String>): Vec<String> {
     return match (source) {
-        Result.Ok(value) => vec.new<string>(),
-        Result.Err(reason) => vec.new<string>(),
+        Result.Ok(value) => vec.new<String>(),
+        Result.Err(reason) => vec.new<String>(),
     };
 }
 
 // 分支值是泛型调用，载荷本身也是泛型结构体（原来失败最典型的一种）
-fn from_generic(source: Result<Vec<string>, string>): Vec<string> {
+fn from_generic(source: Result<Vec<String>, String>): Vec<String> {
     return match (source) {
         Result.Ok(inner) => inner,
-        Result.Err(reason) => vec.new<string>(),
+        Result.Err(reason) => vec.new<String>(),
     };
 }
 
 // 分支值是「泛型调用 + 后续操作」
-fn with_ops(source: Result<i32, string>): Vec<string> {
-    let names: Vec<string> = match (source) {
-        Result.Ok(value) => vec.new<string>(),
-        Result.Err(reason) => vec.new<string>(),
+fn with_ops(source: Result<i32, String>): Vec<String> {
+    let names: Vec<String> = match (source) {
+        Result.Ok(value) => vec.new<String>(),
+        Result.Err(reason) => vec.new<String>(),
     };
     names = vec.push(names, "added");
     return names;
 }
 
 fn main(): i32 {
-    let plain: Result<i32, string> = Result<i32, string>.Ok(1);
-    let a: Vec<string> = from_plain(plain);
+    let plain: Result<i32, String> = Result<i32, String>.Ok(1);
+    let a: Vec<String> = from_plain(plain);
     print("plain=%u\n", a.len());
     vec.free(a);
 
-    let seeded: Vec<string> = vec.new();
+    let seeded: Vec<String> = vec.new();
     seeded = vec.push(seeded, "first");
-    let generic: Result<Vec<string>, string> = Result<Vec<string>, string>.Ok(seeded);
-    let b: Vec<string> = from_generic(generic);
+    let generic: Result<Vec<String>, String> = Result<Vec<String>, String>.Ok(seeded);
+    let b: Vec<String> = from_generic(generic);
     print("generic=%u %s\n", b.len(), b.get(0));
     vec.free(b);
 
-    let ops: Vec<string> = with_ops(plain);
+    let ops: Vec<String> = with_ops(plain);
     print("ops=%u %s\n", ops.len(), ops.get(0));
     vec.free(ops);
 
     // 失败路径也要能走通
-    let bad: Result<Vec<string>, string> = Result<Vec<string>, string>.Err("boom");
-    let c: Vec<string> = from_generic(bad);
+    let bad: Result<Vec<String>, String> = Result<Vec<String>, String>.Err("boom");
+    let c: Vec<String> = from_generic(bad);
     print("bad=%u\n", c.len());
     vec.free(c);
     return 0;

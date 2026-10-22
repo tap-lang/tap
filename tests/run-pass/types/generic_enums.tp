@@ -16,7 +16,7 @@ fn value_or(value: Option<i32>, fallback: i32): i32 {
     return fallback;
 }
 
-fn status_code(result: Result<i32, string>): i32 {
+fn status_code(result: Result<i32, String>): i32 {
     match (result) {
         Result.Ok(code) => {
             return code;
@@ -37,14 +37,14 @@ fn main(): i32 {
     let absent: Option<i32> = Option.None;
     print("unwrap: %d %d\n", value_or(present, -1), value_or(absent, -1));
 
-    let ok: Result<i32, string> = Result.Ok(200);
-    let err: Result<i32, string> = Result.Err("boom");
+    let ok: Result<i32, String> = Result.Ok(200);
+    let err: Result<i32, String> = Result.Err("boom");
     print("status: %d %d\n", status_code(ok), status_code(err));
 
     print("made: %d\n", value_or(make_some(7), -1));
 
     // 同一个泛型枚举的不同实例化可以共存。
-    let text: Option<string> = Option.Some("tap");
+    let text: Option<String> = Option.Some("tap");
     match (text) {
         Option.Some(value) => {
             print("text: %s\n", value);
@@ -55,7 +55,7 @@ fn main(): i32 {
     }
 
     // 嵌套实例化，分支体内可以再套 match。
-    let nested: Option<Result<i32, string>> = Option.Some(Result.Ok(5));
+    let nested: Option<Result<i32, String>> = Option.Some(Result.Ok(5));
     match (nested) {
         Option.Some(inner) => {
             print("nested status: %d\n", status_code(inner));
@@ -65,7 +65,7 @@ fn main(): i32 {
         }
     }
 
-    print("sizes: %llu %llu\n", sizeof(Option<i32>), sizeof(Option<string>));
+    print("sizes: %llu %llu\n", sizeof(Option<i32>), sizeof(Option<String>));
     return 0;
 }
 
@@ -76,7 +76,7 @@ status: 200 -4
 made: 7
 text: tap
 nested status: 5
-sizes: 8 16
+sizes: 8 24
 - .exit
 0
 -- */

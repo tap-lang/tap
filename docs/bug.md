@@ -132,7 +132,7 @@ ptr @string_literal.1
 |---|---|
 | `f("x")` 传 `i32` 参数 | `Call parameter type does not match function signature!` |
 | `f(1.5)` 传 `i32` 参数 | 同上 |
-| `f(42)` 传 `string` 参数 | 同上 |
+| `f(42)` 传 `String` 参数 | 同上 |
 | `f("x")` 传 `f64` 参数 | 同上 |
 | `fn g(): i32 { return "x"; }` | `Function return type does not match operand type of return inst!` |
 | `fn g(): i32 { return 1.5; }` | 同上 |
@@ -153,7 +153,7 @@ if (... && (param_type->enum_name || param_type->struct_name || param_type->is_p
 
 ### 根因
 
-标量目标（`i32` / `f64` / `string` / `bool`）不满足那个「非标量」条件，检查被整段跳过；
+标量目标（`i32` / `f64` / `String` / `bool`）不满足那个「非标量」条件，检查被整段跳过；
 随后 `generate_expression_for_type` 强行按目标类型生成，产出类型不符的 IR，
 最后由 LLVM 的 verifier 兜底报错。
 
@@ -260,7 +260,7 @@ fn main(): i32 {
 实际输出：
 
 ```text
-error: method 'len' is only available on string values
+error: method 'len' is only available on String values
 ```
 
 对照：字段访问（`inner.x`）、非泛型结构体载荷（`StringBuilder`）、函数参数形式
@@ -295,7 +295,7 @@ Codegen 的 `find_method_function` 匹配不上。
 **两种都要认**——只认一种会静默 return，症状和没修一样。
 
 用例：`match_generic_payload.tp`（单载荷 + 多载荷）/
-`match_generic_enum_payload.tp`（`Result<Vec<i32>, string>` + match 表达式形式）。
+`match_generic_enum_payload.tp`（`Result<Vec<i32>, String>` + match 表达式形式）。
 
 ---
 
@@ -498,7 +498,7 @@ C 会把两边都提升到 `int` 再算（signed），tap 按 `u8` 算（unsigne
 | 项目 | 结论 |
 |---|---|
 | 赋值路径的类型检查 | ✓ 完整：`x = "s"`、`p.x = "s"`、`a[0] = "s"`、`x = 1.5` 都正常报错 |
-| `let` 的 struct / string / 嵌套结构体检查 | ✓ |
+| `let` 的 struct / String / 嵌套结构体检查 | ✓ |
 | `return` 的 struct / 指针类型检查 | ✓（只有标量漏，见 B2） |
 | 载荷枚举的 `match` 穷尽性 | ✓ `match is not exhaustive: variant 'E.B' is not covered` |
 | 数组越界 | ✓ 运行时有检查，退出码 1 |

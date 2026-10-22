@@ -6,7 +6,7 @@ import std.net as net;
 
 fn main(): i32 {
     // 1. IPv4 字面量解析与各种非法输入。
-    let parsed: Result<[u8; 4], string> = net.parse_ipv4("192.168.0.255");
+    let parsed: Result<[u8; 4], String> = net.parse_ipv4("192.168.0.255");
     let quad: [u8; 4] = unwrap(parsed);
     print("ip=%d.%d.%d.%d\n", quad[0], quad[1], quad[2], quad[3]);
 
@@ -18,7 +18,7 @@ fn main(): i32 {
     print("bad_alpha=%d\n", is_err(net.parse_ipv4("a.b.c.d")));
 
     // 2. sockaddr_in 的字节布局：family 在 0，端口按大端放在 2、3，地址在 4..8。
-    let built: Result<[u8; 16], string> = net.build_address("127.0.0.1", 18080);
+    let built: Result<[u8; 16], String> = net.build_address("127.0.0.1", 18080);
     let address: [u8; 16] = unwrap(built);
     print("layout=%d %d %d %d.%d.%d.%d\n",
         address[0], address[2], address[3],

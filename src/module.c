@@ -1825,7 +1825,7 @@ static int rewrite_expression(
             for (ASTNode *type = call->type_arguments; type; type = type->next) {
                 rewrite_var_type(current_module, bindings, (VarTypeNode *)type);
             }
-            // `Result<Vec<string>, string>.Ok(...)` 这种**显式枚举类型实参**同样要改。
+            // `Result<Vec<String>, String>.Ok(...)` 这种**显式枚举类型实参**同样要改。
             // 这块以前漏了没暴露：pub 类型那时保持裸名，不改也对得上；类型带上模块前缀
             // 之后不改就会报 `undefined generic struct type`。
             for (ASTNode *type = call->enum_type_arguments; type; type = type->next) {

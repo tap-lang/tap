@@ -6,7 +6,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: method 'len' is only available on string values
+error: method 'len' is only available on String values
 --> tests/compile-fail/types/string_length_non_string.tp:3:18
 -> 3      let length = value.len();
 - .exit

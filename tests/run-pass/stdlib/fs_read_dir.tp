@@ -4,11 +4,11 @@ import std.fs as fs;
 import std.vec as vec;
 
 fn main(): i32 {
-    let result: Result<Vec<string>, string> = fs.read_dir("tests/fixtures/dir_sample");
+    let result: Result<Vec<String>, String> = fs.read_dir("tests/fixtures/dir_sample");
     print("is_ok=%d\n", is_ok(result));
-    let names: Vec<string> = match (result) {
+    let names: Vec<String> = match (result) {
         Result.Ok(inner) => inner,
-        Result.Err(reason) => vec.new<string>(),
+        Result.Err(reason) => vec.new<String>(),
     };
     print("count=%u\n", names.len());
     for (let i: uint = 0; i < names.len(); i++) {
@@ -23,7 +23,7 @@ fn main(): i32 {
         fs.is_dir("tests/fixtures/dir_sample/nope"));
 
     // 打不开目录时返回 Err
-    let missing: Result<Vec<string>, string> = fs.read_dir("tests/fixtures/no_such_dir");
+    let missing: Result<Vec<String>, String> = fs.read_dir("tests/fixtures/no_such_dir");
     print("missing is_err=%d\n", is_err(missing));
 
     // 流式版本
@@ -31,7 +31,7 @@ fn main(): i32 {
     print("open=%d\n", fs.is_dir_open(directory));
     let running: bool = true;
     while (running) {
-        let name: string = fs.next_entry(directory);
+        let name: String = fs.next_entry(directory);
         if (name.len() == 0) {
             running = false;
         } else {

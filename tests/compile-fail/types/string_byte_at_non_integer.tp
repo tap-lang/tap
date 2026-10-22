@@ -1,5 +1,5 @@
 fn main(): i32 {
-    let value: string = "hello";
+    let value: String = "hello";
     let byte = value.byte_at("zero");
     return 0;
 }

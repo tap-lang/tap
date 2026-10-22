@@ -1,20 +1,20 @@
 // 顶层字符串常量。
 //
 // 回归点：`constant_initializer` 原先只处理整数和浮点，字符串落到「initializer type
-// mismatch」。字符串在 LLVM 里是 i8*，全局初始化器只能是常量表达式，所以不能走
+// mismatch」。字符串在 LLVM 里是 `{i8*, i64}`，全局初始化器只能是常量表达式，所以不能走
 // LLVMBuildGlobalStringPtr（那是指令，需要函数上下文），得手工落成「私有字节数组 +
 // 指向它的常量 GEP」两块。
 //
 // 顺带钉住「全局常量当方法接收者」：`A.len()` 原先只查局部符号表，找不到就报
 // undefined variable——全局常量不在里面。
-const EMPTY: string = "";
-const A: string = "alpha";
-const B: string = "beta";
-const SAME: string = "alpha";
-const GREETING: string = "hello, tap";
-const WIDE: string = "中文";
+const EMPTY: String = "";
+const A: String = "alpha";
+const B: String = "beta";
+const SAME: String = "alpha";
+const GREETING: String = "hello, tap";
+const WIDE: String = "中文";
 
-fn take(value: string): string {
+fn take(value: String): String {
     return value;
 }
 

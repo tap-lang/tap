@@ -4,7 +4,7 @@
 //     __tap_module_0.len$n___tap_module_2.Point
 // 于是方法名里有**两个点**。`function_base_name` 原先按最后一个点切，会切到 `Point`，
 // `method_name_matches` 就对不上，方法查找失败，最后误报成
-// 「method 'len' is only available on string values」。
+// 「method 'len' is only available on String values」。
 import std.vec as vec;
 import modules.clash_b as b;
 

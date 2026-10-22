@@ -2,8 +2,8 @@
 // 取值靠 match 的表达式形式，或用 unwrap_or 给兜底值；辅助函数也可以写成方法调用。
 
 fn main(): i32 {
-    let good: Result<i32, string> = Result<i32, string>.Ok(42);
-    let bad: Result<i32, string> = Result<i32, string>.Err("boom");
+    let good: Result<i32, String> = Result<i32, String>.Ok(42);
+    let bad: Result<i32, String> = Result<i32, String>.Err("boom");
 
     print("ok=%d err=%d\n", is_ok(good), is_err(bad));
     print("is_err=%d\n", is_err(bad));
@@ -25,13 +25,13 @@ fn main(): i32 {
     print("match=%d\n", value);
 
     // match 表达式取错误信息。
-    let reason: string = match (bad) {
+    let reason: String = match (bad) {
         Result.Ok(number) => "ok",
         Result.Err(message) => message,
     };
     print("reason=%s\n", reason);
 
-    // 错误类型不限于 string。
+    // 错误类型不限于 String。
     let code: Result<i32, i32> = Result<i32, i32>.Err(7);
     let number: i32 = match (code) {
         Result.Ok(inner) => inner,

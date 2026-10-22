@@ -28,10 +28,10 @@ pub fn append_byte(builder: StringBuilder, value: u8): StringBuilder {
     return builder;
 }
 
-// 追加 string 或任意可显式转换为 string 的标量值。
+// 追加 String 或任意可显式转换为 String 的标量值。
 // 具体类型由调用点推断，因此整数、浮点数和 bool 共用这一套接口。
 pub fn append<T>(builder: StringBuilder, value: T): StringBuilder {
-    let text: string = value as string;
+    let text: String = value as String;
     builder.buffer = bytes.extend(builder.buffer, text);
     return builder;
 }
@@ -43,7 +43,7 @@ pub fn clear(builder: StringBuilder): StringBuilder {
 }
 
 // 返回独立字符串快照；后续修改构建器不会改变该字符串。
-pub fn to_string(builder: StringBuilder): string {
+pub fn to_string(builder: StringBuilder): String {
     return bytes.to_string(builder.buffer);
 }
 

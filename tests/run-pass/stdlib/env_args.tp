@@ -1,19 +1,19 @@
-// std.env 的参数访问。args() 返回 Vec<string>，元素个数就是真实参数个数，
+// std.env 的参数访问。args() 返回 Vec<String>，元素个数就是真实参数个数，
 // 不再有定长数组的空串填充；用完要自己 free。
 import std.env as env;
 import std.vec as vec;
 
 fn main(): i32 {
-    let values: Vec<string> = env.args();
+    let values: Vec<String> = env.args();
     print("%d\n", env.argc());
     print("%u\n", values.len());
 
-    let first: string = values.get(1);
-    let second: string = values.get(2);
+    let first: String = values.get(1);
+    let second: String = values.get(2);
     print("%s %s %s\n", first, second, env.arg(2));
 
     // 函数返回值不能直接下标，要先绑定到变量。
-    let again: Vec<string> = env.args();
+    let again: Vec<String> = env.args();
     print("%s\n", again.get(1));
 
     vec.free(values);

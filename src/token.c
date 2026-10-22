@@ -5,7 +5,7 @@ const char *TokenNames[] = {
     "else", "elseif", "import", "as", "match", "trait", "impl",
     "identifier", "int", "uint", "i8", "u8", "i16", "u16", "i32", "u32",
     "i64", "u64", "i128", "u128", "f32", "f64",
-    "bool", "string", "char", "char_literal",
+    "bool", "String", "c_string", "char", "char_literal",
     "+", "-", "++", "--", "*", "/", "%", "=", "=>", "==", "!=", "!", "<", ">", "<=", ">=", "&&", "||", "&", "|", "^", "~",
     "(", ")", "{", "}", ";", ",", ":", ".", "...", "[", "]", "?",
     "EOF"

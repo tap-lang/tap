@@ -270,7 +270,9 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_F32: type = LITERAL_F32; break;
         case TOKEN_F64: type = LITERAL_F64; break;
         case TOKEN_BOOL: type = LITERAL_BOOL; break;
+        // 两种字符串类型在 AST 中保持独立，后续类型检查才能限制转换方向。
         case TOKEN_STRING: type = LITERAL_STRING; break;
+        case TOKEN_C_STRING: type = LITERAL_C_STRING; break;
         case TOKEN_CHAR: type = LITERAL_CHAR; break;
         case TOKEN_IDENTIFIER: {
             char *type_name = strdup(parser->current_token->lexeme);
@@ -1302,7 +1304,7 @@ static ASTNode *parse_factor(Parser *parser) {
         }
 
         // 显式类型转换：`expression as Type`。放在因子层，保证转换绑定在
-        // 算术和比较运算之前，并支持链式转换（`value as i64 as string`）。
+        // 算术和比较运算之前，并支持链式转换（`value as i64 as String`）。
         if (parser->current_token->type == TOKEN_AS) {
             int line = parser->current_token->line;
             int column = parser->current_token->column;

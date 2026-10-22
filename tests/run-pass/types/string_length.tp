@@ -1,17 +1,17 @@
-fn measured_length(value: string): uint {
+fn measured_length(value: String): uint {
     return value.len();
 }
 
-fn measured_char_count(value: string): uint {
+fn measured_char_count(value: String): uint {
     return value.char_count();
 }
 
-fn returned_string(): string {
+fn returned_string(): String {
     return "returned";
 }
 
 fn main(): i32 {
-    let value: string = "hello";
+    let value: String = "hello";
     let length = value.len();
     print(length);
     print("\n");
@@ -19,7 +19,7 @@ fn main(): i32 {
     print("".len());
     print("\n");
 
-    let values: [string; 2] = ["one", "four"];
+    let values: [String; 2] = ["one", "four"];
     print(values[1].len());
     print("\n");
 

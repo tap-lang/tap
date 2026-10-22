@@ -9,12 +9,12 @@ impl Shape for Square {
     fn area(value: Square): i32 {
         return value.side * value.side;
     }
-    fn name(value: Square): string {
+    fn name(value: Square): String {
         return "square";
     }
 }
 
-fn describe<T: Shape>(value: T): string {
+fn describe<T: Shape>(value: T): String {
     return value.name();
 }
 

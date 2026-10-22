@@ -13,48 +13,48 @@ fn main(): i32 {
     ctrl = sb.append_byte(ctrl, 8);
     ctrl = sb.append_byte(ctrl, 12);
     ctrl = sb.append_byte(ctrl, 31);
-    let raw: string = sb.to_string(ctrl);
+    let raw: String = sb.to_string(ctrl);
     print("ctrl: %s\n", json.escape_quoted(raw));
 
     let del: StringBuilder = sb.new();
     del = sb.append_byte(del, 127);
-    let del_raw: string = sb.to_string(del);
-    let del_escaped: string = json.escape_quoted(del_raw);
+    let del_raw: String = sb.to_string(del);
+    let del_escaped: String = json.escape_quoted(del_raw);
     print("del passthrough: len=%llu\n", del_escaped.len());
 
     // 反转义：短形式、\uXXXX（2 字节 / 3 字节）、代理对、\/。
-    let nl: Result<string, string> = json.unescape("a\\nb");
-    let uni: Result<string, string> = json.unescape("\\u0041\\u00e9\\u4e2d");
-    let emoji: Result<string, string> = json.unescape("\\uD83D\\uDE00");
-    let solidus: Result<string, string> = json.unescape("\\/");
-    let nl_text: string = unwrap_or(nl, "");
-    let uni_text: string = unwrap_or(uni, "");
-    let emoji_text: string = unwrap_or(emoji, "");
+    let nl: Result<String, String> = json.unescape("a\\nb");
+    let uni: Result<String, String> = json.unescape("\\u0041\\u00e9\\u4e2d");
+    let emoji: Result<String, String> = json.unescape("\\uD83D\\uDE00");
+    let solidus: Result<String, String> = json.unescape("\\/");
+    let nl_text: String = unwrap_or(nl, "");
+    let uni_text: String = unwrap_or(uni, "");
+    let emoji_text: String = unwrap_or(emoji, "");
     print("nl: ok=%d len=%llu\n", is_ok(nl), nl_text.len());
     print("unicode: ok=%d text=%s len=%llu\n", is_ok(uni), uni_text, uni_text.len());
     print("surrogate: ok=%d len=%llu\n", is_ok(emoji), emoji_text.len());
     print("solidus: ok=%d\n", is_ok(solidus));
 
     // 非法输入：未知转义、孤立代理、截断、结尾裸反斜杠。
-    let bad1: Result<string, string> = json.unescape("\\q");
-    let bad2: Result<string, string> = json.unescape("\\uD83D");
-    let bad3: Result<string, string> = json.unescape("\\uDE00");
-    let bad4: Result<string, string> = json.unescape("\\u12");
-    let bad5: Result<string, string> = json.unescape("\\");
+    let bad1: Result<String, String> = json.unescape("\\q");
+    let bad2: Result<String, String> = json.unescape("\\uD83D");
+    let bad3: Result<String, String> = json.unescape("\\uDE00");
+    let bad4: Result<String, String> = json.unescape("\\u12");
+    let bad5: Result<String, String> = json.unescape("\\");
     print("invalid: %d %d %d %d %d\n",
         is_err(bad1), is_err(bad2), is_err(bad3),
         is_err(bad4), is_err(bad5));
 
     // 失败原因也带出来了。
-    let why: string = match (bad1) {
+    let why: String = match (bad1) {
         Result.Ok(text) => "ok",
         Result.Err(message) => message,
     };
     print("why: %s\n", why);
 
     // escape 与 unescape 互为逆运算。
-    let back: Result<string, string> = json.unescape(json.escape(raw));
-    let back_text: string = unwrap_or(back, "");
+    let back: Result<String, String> = json.unescape(json.escape(raw));
+    let back_text: String = unwrap_or(back, "");
     print("roundtrip: ok=%d same=%d\n",
         is_ok(back), back_text.len() == raw.len());
     return 0;

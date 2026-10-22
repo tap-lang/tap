@@ -10,7 +10,7 @@ fn main(): i32 {
     print("%llu %llu\n", buffer.len(), buffer.capacity());
     print("%u %u %s\n", buffer.get(0), buffer.get(5), buffer.to_string());
 
-    let snapshot: string = buffer.to_string();
+    let snapshot: String = buffer.to_string();
     buffer.clear();
     print("%llu %llu %s\n", buffer.len(), buffer.capacity(), snapshot);
 

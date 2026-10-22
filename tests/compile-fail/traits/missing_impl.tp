@@ -1,11 +1,11 @@
 // 泛型函数的类型参数带了 `T: Show` 约束，但 Point 没有实现 Show —— 实例化时报错。
 trait Show {
-    fn show(self): string;
+    fn show(self): String;
 }
 
 struct Point { x: i32 }
 
-fn describe<T: Show>(value: T): string {
+fn describe<T: Show>(value: T): String {
     return value.show();
 }
 

@@ -10,11 +10,11 @@ struct Point {
     y: i32,
 }
 
-fn divide(a: i32, b: i32): Result<i32, string> {
+fn divide(a: i32, b: i32): Result<i32, String> {
     if (b == 0) {
-        return Result<i32, string>.Err("divide by zero");
+        return Result<i32, String>.Err("divide by zero");
     }
-    return Result<i32, string>.Ok(a / b);
+    return Result<i32, String>.Ok(a / b);
 }
 
 // 分支值可以是结构体，也可以直接用在 return 上。
@@ -34,8 +34,8 @@ fn sum_or_zero(shape: Shape): i32 {
 }
 
 fn main(): i32 {
-    let good: Result<i32, string> = divide(10, 2);
-    let bad: Result<i32, string> = divide(10, 0);
+    let good: Result<i32, String> = divide(10, 2);
+    let bad: Result<i32, String> = divide(10, 0);
 
     let value: i32 = match (good) {
         Result.Ok(number) => number,
@@ -47,8 +47,8 @@ fn main(): i32 {
     };
     print("value=%d fallback=%d\n", value, fallback);
 
-    // 分支值也能是 string。
-    let message: string = match (bad) {
+    // 分支值也能是 String。
+    let message: String = match (bad) {
         Result.Ok(number) => "fine",
         Result.Err(reason) => reason,
     };

@@ -178,7 +178,7 @@ fn clear_lines(board: *i32): i32 {
 // 用的是 U+1F7E5..U+1F7EB 这一组彩色方块 emoji（红/蓝/橙/黄/绿/紫/棕），
 // 它们在终端里固定占两列，正好对上「一个格子两列宽」的棋盘。
 // 某个格子取哪一号颜色由 cell_color 决定。
-fn cell_glyph(value: i32): string {
+fn cell_glyph(value: i32): String {
     if (value == 1) { return "🟫"; }
     if (value == 2) { return "🟨"; }
     if (value == 3) { return "🟪"; }
