@@ -184,6 +184,8 @@ fn main(): i32 {
 | `std.byte_vec` | `new()/with_capacity(capacity)` | 创建字节容器 |
 | `std.byte_vec` | `push/extend/get/set/clear` | 追加、读写和清空字节 |
 | `std.byte_vec` | `to_string(): string` | 复制有效字节为 Runtime 管理的字符串 |
+| `string` | `len()` | 返回 UTF-8 原始字节长度 |
+| `string` | `char_count()` | 返回 UTF-8 字符（Unicode 码点）数量 |
 | `std.string_builder` | `StringBuilder` | 基于 `ByteVec` 的可增量字符串构建器 |
 | `std.string_builder` | `append<T>/append_byte/clear` | 追加字符串或可转换为字符串的值并复用容量 |
 | `std.string_builder` | `to_string(): string` | 获取与后续 Builder 修改无关的字符串快照 |

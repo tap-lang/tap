@@ -212,6 +212,48 @@ uint8_t __tap_string_byte_at(const char *value, int64_t index) {
     return (uint8_t)(unsigned char)value[index];
 }
 
+// 统计 UTF-8 码点数量。遇到格式错误的字节时把它当作一个独立字符，
+// 这样即使字符串来自未经校验的原始字节，也不会越界或陷入死循环。
+uint64_t __tap_string_char_count(const char *value) {
+    const unsigned char *bytes = (const unsigned char *)value;
+    size_t length = strlen(value);
+    size_t offset = 0;
+    uint64_t count = 0;
+    while (offset < length) {
+        unsigned char first = bytes[offset];
+        size_t sequence_length = 1;
+        int valid = 1;
+        if (first >= 0xC2 && first <= 0xDF) {
+            sequence_length = 2;
+            valid = sequence_length <= length - offset &&
+                    bytes[offset + 1] >= 0x80 && bytes[offset + 1] <= 0xBF;
+        } else if (first >= 0xE0 && first <= 0xEF) {
+            sequence_length = 3;
+            valid = sequence_length <= length - offset &&
+                    bytes[offset + 1] >= 0x80 && bytes[offset + 1] <= 0xBF &&
+                    bytes[offset + 2] >= 0x80 && bytes[offset + 2] <= 0xBF;
+            // E0 80..9F is overlong; ED A0..BF encodes UTF-16 surrogates.
+            if (first == 0xE0 && valid) valid = bytes[offset + 1] >= 0xA0;
+            if (first == 0xED && valid) valid = bytes[offset + 1] <= 0x9F;
+        } else if (first >= 0xF0 && first <= 0xF4) {
+            sequence_length = 4;
+            valid = sequence_length <= length - offset &&
+                    bytes[offset + 1] >= 0x80 && bytes[offset + 1] <= 0xBF &&
+                    bytes[offset + 2] >= 0x80 && bytes[offset + 2] <= 0xBF &&
+                    bytes[offset + 3] >= 0x80 && bytes[offset + 3] <= 0xBF;
+            // F0 80..8F is overlong; F4 90..BF exceeds U+10FFFF.
+            if (first == 0xF0 && valid) valid = bytes[offset + 1] >= 0x90;
+            if (first == 0xF4 && valid) valid = bytes[offset + 1] <= 0x8F;
+        } else if (first >= 0x80) {
+            // Continuation bytes, C0/C1, and F5..FF are invalid standalone bytes.
+            valid = 0;
+        }
+        offset += valid ? sequence_length : 1;
+        count++;
+    }
+    return count;
+}
+
 // 复制半开区间 [start, end)，结果由 Runtime 持有到进程退出。
 const char *__tap_string_slice(const char *value, int64_t start, int64_t end) {
     size_t length = strlen(value);

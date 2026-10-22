@@ -570,6 +570,7 @@ fn main(): i32 {
 ### 动态字节与字符串构建
 
 `std.byte_vec.ByteVec` 提供可扩容的字节缓冲区，支持追加字符串或单个 `u8`、按下标读写、
-清空并复用容量，以及复制为 `string`。`std.string_builder.StringBuilder` 在它之上提供面向
+清空并复用容量，以及复制为 `string`。`string.len()` 返回 UTF-8 原始字节长度，
+`string.char_count()` 返回 Unicode 码点数量。`std.string_builder.StringBuilder` 在它之上提供面向
 字符串构建的 `append()` 和 `append_byte()`。两个容器都持有堆内存，使用结束后应调用
 `free()`；详细 API 和示例见[标准库文档](std.md)。

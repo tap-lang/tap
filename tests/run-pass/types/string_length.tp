@@ -2,6 +2,10 @@ fn measured_length(value: string): uint {
     return value.len();
 }
 
+fn measured_char_count(value: string): uint {
+    return value.char_count();
+}
+
 fn returned_string(): string {
     return "returned";
 }
@@ -24,6 +28,11 @@ fn main(): i32 {
 
     print(measured_length("你好"));
     print("\n");
+
+    print(measured_char_count("你好"));
+    print("\n");
+    print("a你好🙂".char_count());
+    print("\n");
     return 0;
 }
 
@@ -34,6 +43,8 @@ fn main(): i32 {
 4
 8
 6
+2
+4
 - .exit
 0
 -- */

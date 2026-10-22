@@ -33,6 +33,8 @@ TAP_RUNTIME_API const char *__tap_env(int32_t index);
 
 // 按 UTF-8 原始字节读取字符串；越界时终止程序。
 TAP_RUNTIME_API uint8_t __tap_string_byte_at(const char *value, int64_t index);
+// 返回 UTF-8 字符数；合法 UTF-8 按 Unicode 码点计数，非法字节按一个字符计数。
+TAP_RUNTIME_API uint64_t __tap_string_char_count(const char *value);
 // 返回 [start, end) 字节区间的新字符串；非法边界时终止程序。
 TAP_RUNTIME_API const char *__tap_string_slice(
     const char *value, int64_t start, int64_t end);

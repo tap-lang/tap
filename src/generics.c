@@ -1705,6 +1705,10 @@ static VarTypeNode *process_call(GenericContext *context,
         strstr(call->name, ".len")) {
         return create_var_type(LITERAL_UINT);
     }
+    if (strcmp(call->name, "__tap_builtin_string_char_count") == 0 ||
+        strstr(call->name, ".char_count")) {
+        return create_var_type(LITERAL_UINT);
+    }
     if (strcmp(call->name, "__tap_builtin_string_byte_at") == 0 ||
         strstr(call->name, ".byte_at")) {
         return create_var_type(LITERAL_U8);

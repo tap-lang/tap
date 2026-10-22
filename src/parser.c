@@ -1248,6 +1248,8 @@ static ASTNode *parse_factor(Parser *parser) {
             const char *internal_name = NULL;
             if (strcmp(member_name, "len") == 0) {
                 internal_name = "__tap_builtin_string_len";
+            } else if (strcmp(member_name, "char_count") == 0) {
+                internal_name = "__tap_builtin_string_char_count";
             } else if (strcmp(member_name, "byte_at") == 0) {
                 internal_name = "__tap_builtin_string_byte_at";
             } else if (strcmp(member_name, "slice") == 0) {

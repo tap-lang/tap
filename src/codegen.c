@@ -534,6 +534,7 @@ static VarDeclNode *find_global_constant(CodeGenContext *context, const char *na
 typedef enum {
     STRING_METHOD_NONE,
     STRING_METHOD_LEN,
+    STRING_METHOD_CHAR_COUNT,
     STRING_METHOD_BYTE_AT,
     STRING_METHOD_SLICE
 } StringMethodKind;
@@ -541,6 +542,7 @@ typedef enum {
 static const char *string_method_name(StringMethodKind method) {
     switch (method) {
         case STRING_METHOD_LEN: return "len";
+        case STRING_METHOD_CHAR_COUNT: return "char_count";
         case STRING_METHOD_BYTE_AT: return "byte_at";
         case STRING_METHOD_SLICE: return "slice";
         default: return "";
@@ -551,6 +553,9 @@ static const char *string_method_name(StringMethodKind method) {
 static StringMethodKind internal_string_method(const FunctionCallNode *call) {
     if (strcmp(call->name, "__tap_builtin_string_len") == 0) {
         return STRING_METHOD_LEN;
+    }
+    if (strcmp(call->name, "__tap_builtin_string_char_count") == 0) {
+        return STRING_METHOD_CHAR_COUNT;
     }
     if (strcmp(call->name, "__tap_builtin_string_byte_at") == 0) {
         return STRING_METHOD_BYTE_AT;
@@ -572,6 +577,7 @@ static StringMethodKind named_string_method(
 
     StringMethodKind method = STRING_METHOD_NONE;
     if (strcmp(dot + 1, "len") == 0) method = STRING_METHOD_LEN;
+    else if (strcmp(dot + 1, "char_count") == 0) method = STRING_METHOD_CHAR_COUNT;
     else if (strcmp(dot + 1, "byte_at") == 0) method = STRING_METHOD_BYTE_AT;
     else if (strcmp(dot + 1, "slice") == 0) method = STRING_METHOD_SLICE;
     if (method == STRING_METHOD_NONE) return method;
@@ -1449,6 +1455,7 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             }
             if (!function) {
                 if (method == STRING_METHOD_LEN) return LITERAL_UINT;
+                if (method == STRING_METHOD_CHAR_COUNT) return LITERAL_UINT;
                 if (method == STRING_METHOD_BYTE_AT) return LITERAL_U8;
                 if (method == STRING_METHOD_SLICE) return LITERAL_STRING;
             }
@@ -2680,17 +2687,27 @@ static LLVMValueRef generate_string_method(
     const char *receiver_name, size_t receiver_length) {
     unsigned expected_count = method == STRING_METHOD_LEN
         ? 0
+        : method == STRING_METHOD_CHAR_COUNT ? 0
         : method == STRING_METHOD_BYTE_AT ? 1 : 2;
     ASTNode *arguments = NULL;
     LLVMValueRef receiver = generate_string_receiver(
         context, call, method, receiver_name, receiver_length,
         expected_count, &arguments);
+    LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
 
     if (method == STRING_METHOD_LEN) {
         return generate_string_length(context, receiver);
     }
+    if (method == STRING_METHOD_CHAR_COUNT) {
+        LLVMTypeRef parameter_types[1] = {string_type};
+        LLVMValueRef function = runtime_string_function(
+            context, "__tap_string_char_count", get_llvm_type(context, LITERAL_UINT),
+            parameter_types, 1);
+        return LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            &receiver, 1, "string_char_count");
+    }
 
-    LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
     LLVMTypeRef index_type = get_llvm_type(context, LITERAL_I64);
     if (method == STRING_METHOD_BYTE_AT) {
         LLVMTypeRef parameter_types[2] = {string_type, index_type};

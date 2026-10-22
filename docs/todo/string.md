@@ -141,7 +141,7 @@ struct String {
 
 1. 修正未知转义的处理，并补齐常用的 `\\r`、`\\b`、`\\f`、`\\0` 转义。
 2. 增加 `contains`、`find`、`starts_with`、`ends_with`、`trim`、`split`、`join`、`replace`。
-3. 增加 `StringBuilder` 的整数、浮点和布尔追加接口。
+3. 增加 `StringBuilder` 的整数、浮点和布尔追加接口。  ✅ 已完成
 4. 增加 UTF-8 校验和码点读取 API，明确 `.len()` 继续表示字节长度。
 5. 为越界和无效 UTF-8 增加回归测试及可恢复 API。
 
