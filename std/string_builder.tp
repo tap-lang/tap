@@ -28,9 +28,11 @@ pub fn append_byte(builder: StringBuilder, value: u8): StringBuilder {
     return builder;
 }
 
-// 追加 string 的全部 UTF-8 原始字节。
-pub fn append(builder: StringBuilder, value: string): StringBuilder {
-    builder.buffer = bytes.extend(builder.buffer, value);
+// 追加 string 或任意可显式转换为 string 的标量值。
+// 具体类型由调用点推断，因此整数、浮点数和 bool 共用这一套接口。
+pub fn append<T>(builder: StringBuilder, value: T): StringBuilder {
+    let text: string = value as string;
+    builder.buffer = bytes.extend(builder.buffer, text);
     return builder;
 }
 

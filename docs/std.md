@@ -185,7 +185,7 @@ fn main(): i32 {
 | `std.byte_vec` | `push/extend/get/set/clear` | 追加、读写和清空字节 |
 | `std.byte_vec` | `to_string(): string` | 复制有效字节为 Runtime 管理的字符串 |
 | `std.string_builder` | `StringBuilder` | 基于 `ByteVec` 的可增量字符串构建器 |
-| `std.string_builder` | `append/append_byte/clear` | 追加字符串或字节并复用容量 |
+| `std.string_builder` | `append<T>/append_byte/clear` | 追加字符串或可转换为字符串的值并复用容量 |
 | `std.string_builder` | `to_string(): string` | 获取与后续 Builder 修改无关的字符串快照 |
 | `std.parse` | `parse_i64(text: string): Result<i64, string>` | 解析十进制整数，失败返回 `Err` |
 | `std.parse` | `parse_f64(text: string): Result<f64, string>` | 解析十进制浮点，失败返回 `Err` |
@@ -382,7 +382,8 @@ fn main(): i32 {
 ```
 
 `StringBuilder` 内部使用 `ByteVec`。`append()` 追加字符串的 UTF-8 字节，
-`append_byte()` 追加单个字节，`to_string()` 返回独立快照。
+`append_byte()` 追加单个字节；泛型 `append<T>()` 会把整数、浮点数和 bool 转成文本后追加。
+`to_string()` 返回独立快照。
 
 `std.parse` 示例：
 

@@ -14,6 +14,43 @@ fn main(): i32 {
     output.clear();
     output.append("reset");
     print("%s | %s\n", snapshot, output.to_string());
+
+    let negative_i64: i64 = -9;
+    let negative_i128: i128 = -11;
+    let values: StringBuilder = builder.new();
+    values.append(-1);
+    values.append(",");
+    values.append(2 as uint);
+    values.append(",");
+    values.append(-3 as i8);
+    values.append(",");
+    values.append(4 as u8);
+    values.append(",");
+    values.append(-5 as i16);
+    values.append(",");
+    values.append(6 as u16);
+    values.append(",");
+    values.append(-7 as i32);
+    values.append(",");
+    values.append(8 as u32);
+    values.append(",");
+    values.append(negative_i64);
+    values.append(",");
+    values.append(10 as u64);
+    values.append(",");
+    values.append(negative_i128);
+    values.append(",");
+    values.append(12 as u128);
+    values.append(",");
+    values.append(1.5 as f32);
+    values.append(",");
+    values.append(2.5 as f64);
+    values.append(",");
+    values.append(true);
+    values.append(",");
+    values.append(false);
+    print("%s\n", values.to_string());
+    values.free();
     return output.free();
 }
 
@@ -22,6 +59,7 @@ fn main(): i32 {
 14
 {"name":"tap"}
 {"name":"tap"} | reset
+-1,2,-3,4,-5,6,-7,8,-9,10,-11,12,1.5,2.5,true,false
 - .exit
 0
 -- */

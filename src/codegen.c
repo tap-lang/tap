@@ -637,6 +637,8 @@ static const char *llvm_call_name(const char *name) {
 }
 
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression);
+static int expression_assignable_to(CodeGenContext *context, ASTNode *expression,
+                                    const VarTypeNode *target_type);
 // 表达式的完整类型（标量也给）；见下面的定义。
 static VarTypeNode *expression_full_type(CodeGenContext *context, ASTNode *expression);
 // 复制类型节点（定义在下面）；named_value_type 等早期函数要用。
@@ -874,18 +876,52 @@ static int method_name_matches(const char *function_name, const char *method_nam
 // 根据接收者完整类型和方法名查找可作为方法调用的函数。
 static FunctionNode *find_method_function(
     CodeGenContext *context, const VarTypeNode *receiver_type,
-    const char *method_name) {
+    const char *method_name, const FunctionCallNode *call) {
     if (!context->program || !receiver_type) return NULL;
+    FunctionNode *fallback = NULL;
     for (ASTNode *node = context->program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         FunctionNode *function = (FunctionNode *)node;
+        // 泛型模板本身没有可调用的 LLVM 签名；单态化后生成的具体函数才参与匹配。
+        if (function->type_params) continue;
         const VarTypeNode *first_param = function_param_var_type(function, 0);
         if (first_param && var_type_equal(first_param, receiver_type) &&
             method_name_matches(function->name, method_name)) {
-            return function;
+            if (!call) return function;
+            unsigned argument_count = 0;
+            for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
+                argument_count++;
+            }
+            unsigned parameter_count = 0;
+            for (ASTNode *parameter = function->param_types;
+                 parameter; parameter = parameter->next) {
+                parameter_count++;
+            }
+            if (parameter_count != argument_count + 1) continue;
+
+            int exact = 1;
+            ASTNode *argument = call->arguments;
+            ASTNode *parameter = function->param_types
+                ? ((ASTNode *)function->param_types)->next : NULL;
+            while (argument && parameter) {
+                const VarTypeNode *expected = (const VarTypeNode *)parameter;
+                if (is_scalar_var_type(expected)) {
+                    if (expression_type(context, argument) != expected->type) {
+                        exact = 0;
+                        break;
+                    }
+                } else if (!expression_assignable_to(context, argument, expected)) {
+                    exact = 0;
+                    break;
+                }
+                argument = argument->next;
+                parameter = parameter->next;
+            }
+            if (exact) return function;
+            if (!fallback) fallback = function;
         }
     }
-    return NULL;
+    return fallback;
 }
 
 // 解析 receiver.method(...) 调用，只有接收者是结构体变量时才参与方法匹配。
@@ -909,7 +945,7 @@ static FunctionNode *resolve_method_call(
     }
 
     FunctionNode *function =
-        find_method_function(context, receiver_symbol->declared_type, method_name);
+        find_method_function(context, receiver_symbol->declared_type, method_name, call);
     if (!function) {
         free(receiver_name);
         free(method_name);
