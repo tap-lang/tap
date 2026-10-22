@@ -1,0 +1,28 @@
+import std.byte_vec as bytes;
+
+fn main(): i32 {
+    let buffer: ByteVec = bytes.new();
+    buffer.push(97);
+    buffer.push(0);
+    buffer.push(98);
+
+    let value: String = buffer.to_string();
+    print("%llu %u %u %u\n", value.len(), value.byte_at(0),
+          value.byte_at(1), value.byte_at(2));
+
+    let middle: String = value.slice(1, 2);
+    print("%llu %u\n", middle.len(), middle.byte_at(0));
+
+    let joined: String = value + "x";
+    print("%llu %u\n", joined.len(), joined.byte_at(1));
+    return buffer.free();
+}
+
+/** -- test
+- .stdout
+3 97 0 98
+1 0
+4 0
+- .exit
+0
+-- */

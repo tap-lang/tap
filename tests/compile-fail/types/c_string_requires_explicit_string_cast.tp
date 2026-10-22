@@ -1,0 +1,14 @@
+extern fn strchr(value: c_string, character: i32): c_string;
+
+fn main(): i32 {
+    let raw: c_string = strchr("tap", 97);
+    let text: String = raw;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: initializer type mismatch for 'text'
+- .exit
+1
+-- */

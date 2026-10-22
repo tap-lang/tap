@@ -1,0 +1,24 @@
+extern fn strlen(value: c_string): uint;
+const RAW_GREETING: c_string = "tap";
+
+fn main(): i32 {
+    let text: String = "hello";
+    let raw: c_string = text;
+    print("%llu %s\n", strlen(raw), raw);
+
+    let restored: String = raw as String;
+    print("%llu %s\n", restored.len(), restored);
+    print("%llu %s\n", strlen("literal"), RAW_GREETING);
+    print("%llu %llu\n", sizeof(c_string), sizeof(String));
+    return 0;
+}
+
+/** -- test
+- .stdout
+5 hello
+5 hello
+7 tap
+8 16
+- .exit
+0
+-- */
