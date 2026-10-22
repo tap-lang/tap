@@ -64,7 +64,8 @@ enum LiteralType {
     LITERAL_F32,                    // 32位浮点数 f32
     LITERAL_F64,                    // 64位浮点数 f64
     LITERAL_STRING,                 // 字符串 string
-    LITERAL_BOOL                    // 布尔值 bool
+    LITERAL_BOOL,                   // 布尔值 bool
+    LITERAL_CHAR                    // Unicode 码点 char
 };
 
 // 二元操作符类型  + - * / == != < > <= >= && ||
@@ -227,6 +228,7 @@ typedef struct {
     char *integer_text;       // 十进制整数原文，用于构造 i128/u128 常量
     union {
         uint64_t int_value;
+        uint32_t char_value;
         char *string_value;
         double float_value;
         int bool_value;
@@ -436,6 +438,7 @@ LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);
 LiteralNode *create_float_literal(double value);
 LiteralNode *create_bool_literal(int value);
+LiteralNode *create_char_literal(uint32_t value);
 ReturnNode *create_return(ASTNode *expression);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 ReferenceNode *create_reference(ASTNode *target);

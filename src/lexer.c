@@ -177,6 +177,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "else", 4) == 0) return TOKEN_ELSE;
         if (memcmp(text, "enum", 4) == 0) return TOKEN_ENUM;
         if (memcmp(text, "bool", 4) == 0) return TOKEN_BOOL;
+        if (memcmp(text, "char", 4) == 0) return TOKEN_CHAR;
         if (memcmp(text, "true", 4) == 0) return TOKEN_BOOL;
         if (memcmp(text, "uint", 4) == 0) return TOKEN_UINT;
         if (memcmp(text, "i128", 4) == 0) return TOKEN_I128;
@@ -207,6 +208,104 @@ static enum TokenType check_keyword(const char *text, int length) {
         break;
     }
     return TOKEN_IDENTIFIER;
+}
+
+// 从 UTF-8 字节序列解码一个 Unicode 码点；返回占用的字节数，非法时返回 0。
+static size_t decode_utf8_char(const unsigned char *text, size_t length,
+                               uint32_t *value) {
+    if (!length) return 0;
+    unsigned char first = text[0];
+    size_t width = 1;
+    uint32_t codepoint = first;
+    if (first <= 0x7F) {
+        width = 1;
+    } else if (first >= 0xC2 && first <= 0xDF) {
+        width = 2;
+        if (length < width || text[1] < 0x80 || text[1] > 0xBF) return 0;
+        codepoint = ((uint32_t)(first & 0x1F) << 6) | (text[1] & 0x3F);
+    } else if (first >= 0xE0 && first <= 0xEF) {
+        width = 3;
+        if (length < width || text[1] < 0x80 || text[1] > 0xBF ||
+            text[2] < 0x80 || text[2] > 0xBF) return 0;
+        if ((first == 0xE0 && text[1] < 0xA0) ||
+            (first == 0xED && text[1] > 0x9F)) return 0;
+        codepoint = ((uint32_t)(first & 0x0F) << 12) |
+                    ((uint32_t)(text[1] & 0x3F) << 6) | (text[2] & 0x3F);
+    } else if (first >= 0xF0 && first <= 0xF4) {
+        width = 4;
+        if (length < width || text[1] < 0x80 || text[1] > 0xBF ||
+            text[2] < 0x80 || text[2] > 0xBF ||
+            text[3] < 0x80 || text[3] > 0xBF) return 0;
+        if ((first == 0xF0 && text[1] < 0x90) ||
+            (first == 0xF4 && text[1] > 0x8F)) return 0;
+        codepoint = ((uint32_t)(first & 0x07) << 18) |
+                    ((uint32_t)(text[1] & 0x3F) << 12) |
+                    ((uint32_t)(text[2] & 0x3F) << 6) | (text[3] & 0x3F);
+    } else {
+        return 0;
+    }
+    if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+        return 0;
+    }
+    if (value) *value = codepoint;
+    return width;
+}
+
+// 解析单引号 Unicode 字符字面量，例如 'a'、'中'、'😀' 和 '\\n'。
+static Token *character(Lexer *lexer) {
+    const char *start = lexer->current;
+    advance(lexer); // 跳过开头的单引号
+    if (is_at_end(lexer) || peek(lexer) == '\n' || peek(lexer) == '\r') {
+        print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+                         "unterminated character literal");
+        exit(1);
+    }
+
+    uint32_t value = 0;
+    if (peek(lexer) == '\\') {
+        advance(lexer);
+        if (is_at_end(lexer)) {
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+                             "unterminated character literal");
+            exit(1);
+        }
+        switch (advance(lexer)) {
+            case 'n': value = '\n'; break;
+            case 'r': value = '\r'; break;
+            case 't': value = '\t'; break;
+            case 'b': value = '\b'; break;
+            case 'f': value = '\f'; break;
+            case '0': value = 0; break;
+            case '\\': value = '\\'; break;
+            case '\'': value = '\''; break;
+            case '"': value = '"'; break;
+            default:
+                print_diagnostic(stderr, "error", lexer->filename,
+                                 lexer->line, lexer->column - 1,
+                                 "unknown character escape");
+                exit(1);
+        }
+    } else {
+        size_t width = decode_utf8_char(
+            (const unsigned char *)lexer->current,
+            strlen(lexer->current), &value);
+        if (!width) {
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+                             "invalid UTF-8 character literal");
+            exit(1);
+        }
+        while (width-- > 0) advance(lexer);
+    }
+
+    if (peek(lexer) != '\'') {
+        print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+                         "character literal must contain exactly one character");
+        exit(1);
+    }
+    advance(lexer);
+    Token *token = create_token(lexer, TOKEN_CHAR_LITERAL, start, lexer->current);
+    token->value.char_value = value;
+    return token;
 }
 
 // 解析标识符或关键字
@@ -453,6 +552,13 @@ Token *get_next_token(Lexer *lexer) {
         lexer->current--;
         lexer->column--;
         return string(lexer);
+    }
+
+    // 处理单引号 Unicode 字符字面量
+    if (c == '\'') {
+        lexer->current--;
+        lexer->column--;
+        return character(lexer);
     }
     
     // 处理运算符和分隔符

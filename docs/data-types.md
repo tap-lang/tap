@@ -161,6 +161,24 @@ let nested = Box { value: Box { value: 9 } };   // Box<Box<i32>>
 `.slice()`、内容比较运算符和固定长度字符串数组。转义序列、输出方式和边界规则见
 [字符串文档](data-type-string.md)。
 
+### 字符类型
+
+| 类型 | 描述 |
+| --- | --- |
+| `char` | 一个 Unicode 码点，底层使用 32 位整数表示 |
+
+字符字面量使用单引号，必须包含一个 Unicode 码点；字符串仍使用双引号：
+
+```text
+let c: char = 'a';
+let zh: char = '中';
+let emoji: char = '😀';
+print(c);                 // a
+print("%s", zh as string); // 中
+```
+
+`char` 在赋值和传参时不与整数类型隐式转换；需要数值转换时使用 `as`。
+
 ### 布尔类型
 | 类型 | 描述 |
 | --- | --- |

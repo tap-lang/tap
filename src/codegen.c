@@ -24,6 +24,7 @@ static int is_integer_type(enum LiteralType type) {
         case LITERAL_I128:
         case LITERAL_U128:
         case LITERAL_BOOL:
+        case LITERAL_CHAR:
             return 1;
         default:
             return 0;
@@ -40,6 +41,7 @@ static int is_unsigned_type(enum LiteralType type) {
         case LITERAL_U64:
         case LITERAL_U128:
         case LITERAL_BOOL:
+        case LITERAL_CHAR:
             return 1;
         default:
             return 0;
@@ -55,6 +57,8 @@ static int is_float_type(enum LiteralType type) {
 // bool 虽然按整数处理，但不参与隐式数值转换，避免 `let f: f64 = true;` 这类写法通过。
 static int scalar_types_compatible(enum LiteralType target, enum LiteralType source) {
     if (target == source) return 1;
+    // char 是独立的 Unicode 码点类型，只允许通过显式转换参与数值运算。
+    if (target == LITERAL_CHAR || source == LITERAL_CHAR) return 0;
     // bool 只和 bool 兼容（上面那行已放行）。这一条必须排在整数/浮点判断**之前**：
     // `is_integer_type` 把 LITERAL_BOOL 也算作整数，否则 `let x: i32 = true` 和
     // `let b: bool = 1` 都会溜过去。
@@ -99,6 +103,7 @@ static const char *literal_type_name(enum LiteralType type) {
         case LITERAL_F64: return "f64";
         case LITERAL_STRING: return "string";
         case LITERAL_BOOL: return "bool";
+        case LITERAL_CHAR: return "char";
         default: return "unknown";
     }
 }
@@ -117,6 +122,7 @@ static unsigned integer_type_bits(enum LiteralType type) {
         case LITERAL_U64: return 64;
         case LITERAL_I128:
         case LITERAL_U128: return 128;
+        case LITERAL_CHAR: return 32;
         case LITERAL_INT:
         case LITERAL_UINT: return (unsigned)(sizeof(void *) * CHAR_BIT);
         default: return 0;
@@ -1561,6 +1567,9 @@ static uint64_t literal_integer_value(const LiteralNode *literal) {
     if (literal->literal_type == LITERAL_BOOL) {
         return literal->value.bool_value != 0 ? 1 : 0;
     }
+    if (literal->literal_type == LITERAL_CHAR) {
+        return literal->value.char_value;
+    }
     return literal->value.int_value;
 }
 
@@ -2537,6 +2546,15 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
         return cast_integer(context, parsed, parsed_type, target);
     }
 
+    if (source == LITERAL_CHAR && target == LITERAL_STRING) {
+        LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_CHAR)};
+        LLVMValueRef function = runtime_string_function(
+            context, "__tap_format_char", get_llvm_type(context, LITERAL_STRING),
+            parameter_types, 1);
+        return LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            &value, 1, "format_char");
+    }
     if (is_integer_type(source) && target == LITERAL_STRING) {
         if (source == LITERAL_BOOL) {
             LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_I32)};
@@ -3243,6 +3261,22 @@ static LLVMValueRef generate_auto_format_print(
 
     ASTNode *first = call->arguments;
     enum LiteralType type = expression_type(context, first);
+    if (type == LITERAL_CHAR) {
+        LLVMTypeRef char_type = get_llvm_type(context, LITERAL_CHAR);
+        LLVMValueRef formatter = runtime_string_function(
+            context, "__tap_format_char", get_llvm_type(context, LITERAL_STRING),
+            &char_type, 1);
+        LLVMValueRef value = generate_expression(context, first);
+        LLVMValueRef formatted = LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(formatter), formatter,
+            &value, 1, "format_char");
+        LLVMValueRef arguments[2] = {
+            LLVMBuildGlobalStringPtr(context->builder, "%s", "format_string"),
+            formatted
+        };
+        return LLVMBuildCall2(context->builder, context->printf_type, context->printf_func,
+                              arguments, 2, "printf_result");
+    }
     const char *format = "%d";
     if (is_float_type(type)) {
         format = "%f";

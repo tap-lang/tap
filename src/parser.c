@@ -271,6 +271,7 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_F64: type = LITERAL_F64; break;
         case TOKEN_BOOL: type = LITERAL_BOOL; break;
         case TOKEN_STRING: type = LITERAL_STRING; break;
+        case TOKEN_CHAR: type = LITERAL_CHAR; break;
         case TOKEN_IDENTIFIER: {
             char *type_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
@@ -1095,6 +1096,11 @@ static ASTNode *parse_primary(Parser *parser) {
         LiteralNode *string_literal = create_string_literal(token->value.string_value);
         consume(parser, TOKEN_STRING);
         return (ASTNode *)string_literal;
+    }
+    if (token->type == TOKEN_CHAR_LITERAL) {
+        LiteralNode *char_literal = create_char_literal(token->value.char_value);
+        consume(parser, TOKEN_CHAR_LITERAL);
+        return (ASTNode *)char_literal;
     }
     if (token->type == TOKEN_LBRACKET) {
         return parse_array_literal(parser);

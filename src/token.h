@@ -2,6 +2,7 @@
 #define TOKEN_H
 
 #include <stdlib.h>
+#include <stdint.h>
 
 // 标记类型
 enum TokenType {
@@ -46,6 +47,8 @@ enum TokenType {
     TOKEN_F64,         // 64位浮点数
     TOKEN_BOOL,        // 布尔值
     TOKEN_STRING,      // 字符串
+    TOKEN_CHAR,        // char 类型
+    TOKEN_CHAR_LITERAL,// 字符字面量
 
     // 运算符
     TOKEN_PLUS,                     // +
@@ -104,6 +107,7 @@ typedef struct {
     // 根据标记类型存储不同的值
     union {
         unsigned long long int_value;
+        uint32_t char_value;
         char *string_value;
         double float_value;
         int bool_value;

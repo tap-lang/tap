@@ -414,6 +414,33 @@ const char *__tap_format_bool(int32_t value) {
     return value ? "true" : "false";
 }
 
+// 把 Unicode 码点编码为 Runtime 管理的 UTF-8 字符串。
+const char *__tap_format_char(uint32_t value) {
+    if (value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
+        fprintf(stderr, "invalid Unicode code point U+%04X\n", value);
+        exit(1);
+    }
+    size_t length = value <= 0x7F ? 1 : value <= 0x7FF ? 2 : value <= 0xFFFF ? 3 : 4;
+    char *result = allocate_owned_string(length);
+    if (length == 1) {
+        result[0] = (char)value;
+    } else if (length == 2) {
+        result[0] = (char)(0xC0 | (value >> 6));
+        result[1] = (char)(0x80 | (value & 0x3F));
+    } else if (length == 3) {
+        result[0] = (char)(0xE0 | (value >> 12));
+        result[1] = (char)(0x80 | ((value >> 6) & 0x3F));
+        result[2] = (char)(0x80 | (value & 0x3F));
+    } else {
+        result[0] = (char)(0xF0 | (value >> 18));
+        result[1] = (char)(0x80 | ((value >> 12) & 0x3F));
+        result[2] = (char)(0x80 | ((value >> 6) & 0x3F));
+        result[3] = (char)(0x80 | (value & 0x3F));
+    }
+    result[length] = '\0';
+    return result;
+}
+
 static void invalid_numeric_string(const char *kind, const char *value) {
     fprintf(stderr, "invalid %s string '%s'\n", kind, value ? value : "<null>");
     exit(1);

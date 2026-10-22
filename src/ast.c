@@ -26,6 +26,7 @@ static const char *literal_type_str(enum LiteralType t) {
     case LITERAL_F64: return "f64";
     case LITERAL_STRING: return "string";
     case LITERAL_BOOL: return "bool";
+    case LITERAL_CHAR: return "char";
     default: return "?";
     }
 }
@@ -87,6 +88,9 @@ static void print_literal_value(const LiteralNode *lit) {
         break;
     case LITERAL_BOOL:
         printf("%s", lit->value.bool_value ? "true" : "false");
+        break;
+    case LITERAL_CHAR:
+        printf("U+%04X", lit->value.char_value);
         break;
     case LITERAL_FLOAT:
     case LITERAL_F32:
@@ -759,6 +763,21 @@ LiteralNode *create_bool_literal(int value) {
     literal->literal_type = LITERAL_BOOL;
     literal->integer_text = NULL;
     literal->value.bool_value = value;
+    return literal;
+}
+
+// 创建 Unicode 字符（码点）字面量节点。
+LiteralNode *create_char_literal(uint32_t value) {
+    LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
+    if (!literal) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    literal->base.type = NODE_LITERAL;
+    literal->base.next = NULL;
+    literal->literal_type = LITERAL_CHAR;
+    literal->integer_text = NULL;
+    literal->value.char_value = value;
     return literal;
 }
 

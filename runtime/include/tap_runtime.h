@@ -50,6 +50,8 @@ TAP_RUNTIME_API const char *__tap_format_u64(uint64_t value);
 TAP_RUNTIME_API const char *__tap_format_i128(uint64_t low, uint64_t high);
 TAP_RUNTIME_API const char *__tap_format_u128(uint64_t low, uint64_t high);
 TAP_RUNTIME_API const char *__tap_format_bool(int32_t value);
+// 把 Unicode 码点编码为 UTF-8 字符串；非法码点会终止程序。
+TAP_RUNTIME_API const char *__tap_format_char(uint32_t value);
 // 把字符串的指定字节数复制到调用方提供的缓冲区；调用方保证两端空间足够。
 TAP_RUNTIME_API int32_t __tap_string_copy_bytes(
     const char *value, uint8_t *destination, size_t length);

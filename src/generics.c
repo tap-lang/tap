@@ -349,6 +349,8 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
                 copy = create_float_literal(literal->value.float_value);
             } else if (literal->literal_type == LITERAL_BOOL) {
                 copy = create_bool_literal(literal->value.bool_value);
+            } else if (literal->literal_type == LITERAL_CHAR) {
+                copy = create_char_literal(literal->value.char_value);
             } else if (literal->integer_text) {
                 copy = create_int_literal_text(literal->integer_text);
             } else {

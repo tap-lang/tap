@@ -1,0 +1,37 @@
+fn identity(value: char): char {
+    return value;
+}
+
+const LETTER: char = 'Z';
+
+fn main(): i32 {
+    let c: char = 'a';
+    let zh: char = '中';
+    let emoji: char = '😀';
+    let values: [char; 2] = ['x', '界'];
+
+    print(c);
+    print("\n");
+    print(LETTER);
+    print("\n");
+    print(zh);
+    print("\n");
+    print(emoji);
+    print("\n");
+    print(identity(values[1]));
+    print("\n");
+    print("%s\n", zh as string);
+    return 0;
+}
+
+/** -- test
+- .stdout
+a
+Z
+中
+😀
+界
+中
+- .exit
+0
+-- */
