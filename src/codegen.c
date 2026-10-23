@@ -580,7 +580,11 @@ typedef enum {
     STRING_METHOD_LEN,
     STRING_METHOD_CHAR_COUNT,
     STRING_METHOD_BYTE_AT,
-    STRING_METHOD_SLICE
+    STRING_METHOD_SLICE,
+    STRING_METHOD_CONTAINS,
+    STRING_METHOD_STARTS_WITH,
+    STRING_METHOD_ENDS_WITH,
+    STRING_METHOD_REPLACE
 } StringMethodKind;
 
 static const char *string_method_name(StringMethodKind method) {
@@ -589,6 +593,10 @@ static const char *string_method_name(StringMethodKind method) {
         case STRING_METHOD_CHAR_COUNT: return "char_count";
         case STRING_METHOD_BYTE_AT: return "byte_at";
         case STRING_METHOD_SLICE: return "slice";
+        case STRING_METHOD_CONTAINS: return "contains";
+        case STRING_METHOD_STARTS_WITH: return "starts_with";
+        case STRING_METHOD_ENDS_WITH: return "ends_with";
+        case STRING_METHOD_REPLACE: return "replace";
         default: return "";
     }
 }
@@ -607,6 +615,18 @@ static StringMethodKind internal_string_method(const FunctionCallNode *call) {
     if (strcmp(call->name, "__tap_builtin_string_slice") == 0) {
         return STRING_METHOD_SLICE;
     }
+    if (strcmp(call->name, "__tap_builtin_string_contains") == 0) {
+        return STRING_METHOD_CONTAINS;
+    }
+    if (strcmp(call->name, "__tap_builtin_string_starts_with") == 0) {
+        return STRING_METHOD_STARTS_WITH;
+    }
+    if (strcmp(call->name, "__tap_builtin_string_ends_with") == 0) {
+        return STRING_METHOD_ENDS_WITH;
+    }
+    if (strcmp(call->name, "__tap_builtin_string_replace") == 0) {
+        return STRING_METHOD_REPLACE;
+    }
     return STRING_METHOD_NONE;
 }
 
@@ -624,6 +644,10 @@ static StringMethodKind named_string_method(
     else if (strcmp(dot + 1, "char_count") == 0) method = STRING_METHOD_CHAR_COUNT;
     else if (strcmp(dot + 1, "byte_at") == 0) method = STRING_METHOD_BYTE_AT;
     else if (strcmp(dot + 1, "slice") == 0) method = STRING_METHOD_SLICE;
+    else if (strcmp(dot + 1, "contains") == 0) method = STRING_METHOD_CONTAINS;
+    else if (strcmp(dot + 1, "starts_with") == 0) method = STRING_METHOD_STARTS_WITH;
+    else if (strcmp(dot + 1, "ends_with") == 0) method = STRING_METHOD_ENDS_WITH;
+    else if (strcmp(dot + 1, "replace") == 0) method = STRING_METHOD_REPLACE;
     if (method == STRING_METHOD_NONE) return method;
 
     *receiver_name = call->name;
@@ -1502,6 +1526,10 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
                 if (method == STRING_METHOD_CHAR_COUNT) return LITERAL_UINT;
                 if (method == STRING_METHOD_BYTE_AT) return LITERAL_U8;
                 if (method == STRING_METHOD_SLICE) return LITERAL_STRING;
+                if (method == STRING_METHOD_CONTAINS) return LITERAL_BOOL;
+                if (method == STRING_METHOD_STARTS_WITH) return LITERAL_BOOL;
+                if (method == STRING_METHOD_ENDS_WITH) return LITERAL_BOOL;
+                if (method == STRING_METHOD_REPLACE) return LITERAL_STRING;
             }
             return function_return_type(function);
         }
@@ -2726,6 +2754,22 @@ static LLVMValueRef generate_string_integer_argument(
     return generate_expression_as(context, argument, LITERAL_I64);
 }
 
+// 生成内建字符串方法的 String 参数，并做类型检查。
+static LLVMValueRef generate_string_string_argument(
+    CodeGenContext *context, FunctionCallNode *call, ASTNode *argument,
+    unsigned argument_index) {
+    enum LiteralType type = expression_type(context, argument);
+    if (type != LITERAL_STRING) {
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "method '%s' argument %u must be a String value",
+                         strchr(call->name, '.') ? strrchr(call->name, '.') + 1 :
+                         string_method_name(internal_string_method(call)),
+                         argument_index);
+        exit(1);
+    }
+    return generate_expression(context, argument);
+}
+
 // 生成内建字符串方法。
 static LLVMValueRef generate_string_method(
     CodeGenContext *context, FunctionCallNode *call, StringMethodKind method,
@@ -2733,7 +2777,12 @@ static LLVMValueRef generate_string_method(
     unsigned expected_count = method == STRING_METHOD_LEN
         ? 0
         : method == STRING_METHOD_CHAR_COUNT ? 0
-        : method == STRING_METHOD_BYTE_AT ? 1 : 2;
+        : method == STRING_METHOD_BYTE_AT ? 1
+        : method == STRING_METHOD_SLICE ? 2
+        : method == STRING_METHOD_CONTAINS ? 1
+        : method == STRING_METHOD_STARTS_WITH ? 1
+        : method == STRING_METHOD_ENDS_WITH ? 1
+        : method == STRING_METHOD_REPLACE ? 2 : 2;
     ASTNode *arguments = NULL;
     LLVMValueRef receiver = generate_string_receiver(
         context, call, method, receiver_name, receiver_length,
@@ -2766,6 +2815,48 @@ static LLVMValueRef generate_string_method(
         return LLVMBuildCall2(
             context->builder, LLVMGlobalGetValueType(function), function,
             call_arguments, 2, "string_byte");
+    }
+
+    // contains / starts_with / ends_with: (String, String) -> i32 (bool)
+    if (method == STRING_METHOD_CONTAINS ||
+        method == STRING_METHOD_STARTS_WITH ||
+        method == STRING_METHOD_ENDS_WITH) {
+        const char *runtime_name =
+            method == STRING_METHOD_CONTAINS ? "__tap_string_contains" :
+            method == STRING_METHOD_STARTS_WITH ? "__tap_string_starts_with" :
+            "__tap_string_ends_with";
+        LLVMTypeRef parameter_types[2] = {string_type, string_type};
+        LLVMValueRef function = runtime_string_function(
+            context, runtime_name, get_llvm_type(context, LITERAL_I32),
+            parameter_types, 2);
+        LLVMValueRef call_arguments[2] = {
+            receiver,
+            generate_string_string_argument(context, call, arguments, 1)
+        };
+        const char *label =
+            method == STRING_METHOD_CONTAINS ? "string_contains" :
+            method == STRING_METHOD_STARTS_WITH ? "string_starts_with" :
+            "string_ends_with";
+        LLVMValueRef result = LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            call_arguments, 2, label);
+        return LLVMBuildTrunc(context->builder, result,
+                              get_llvm_type(context, LITERAL_BOOL), "string_predicate");
+    }
+
+    // replace: (String, String, String) -> String
+    if (method == STRING_METHOD_REPLACE) {
+        LLVMTypeRef parameter_types[3] = {string_type, string_type, string_type};
+        LLVMValueRef function = runtime_string_function(
+            context, "__tap_string_replace", string_type, parameter_types, 3);
+        LLVMValueRef from_arg = generate_string_string_argument(
+            context, call, arguments, 1);
+        LLVMValueRef to_arg = generate_string_string_argument(
+            context, call, arguments->next, 2);
+        LLVMValueRef call_arguments[3] = {receiver, from_arg, to_arg};
+        return LLVMBuildCall2(
+            context->builder, LLVMGlobalGetValueType(function), function,
+            call_arguments, 3, "string_replace");
     }
 
     LLVMTypeRef parameter_types[3] = {string_type, index_type, index_type};

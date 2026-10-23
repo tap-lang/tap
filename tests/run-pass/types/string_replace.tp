@@ -1,0 +1,81 @@
+fn returned_string(): String {
+    return "a-b-c";
+}
+
+fn identity<T>(value: T): T {
+    return value;
+}
+
+fn main(): i32 {
+    let value: String = "hello world";
+
+    // 基本替换
+    print("%s\n", value.replace("world", "tap"));
+    print("%s\n", value.replace("o", "0"));
+    print("%s\n", value.replace("l", "L"));
+
+    // 多次出现
+    print("%s\n", "aaa".replace("a", "b"));
+
+    // 不匹配
+    print("%s\n", value.replace("xyz", "123"));
+
+    // 替换为空串（删除）
+    print("%s\n", value.replace("o ", ""));  // "hell" + "world"
+
+    // from 为空串：返回原串副本
+    print("%s\n", value.replace("", "x"));
+
+    // 替换为更长的串
+    print("%s\n", "a.b.c".replace(".", "->"));
+
+    // 替换为更短的串
+    print("%s\n", "a->b->c".replace("->", "."));
+
+    // 非标识符接收者
+    print("%s\n", returned_string().replace("-", "+"));
+
+    // 泛型返回值
+    print("%s\n", identity("test").replace("t", "T"));
+
+    // UTF-8 子串替换
+    let utf8: String = "你好世界";
+    print("%s\n", utf8.replace("好", "的"));
+    print("%s\n", "haha".replace("ha", "嘿"));
+
+    // 数组元素
+    let values: [String; 2] = ["a.b", "c.d"];
+    print("%s %s\n", values[0].replace(".", "-"), values[1].replace(".", "/"));
+
+    // 结果与原串比较（不修改原串）
+    let original: String = "original";
+    let replaced: String = original.replace("original", "modified");
+    print("%s %s\n", original, replaced);
+
+    // 连续替换
+    print("%s\n", "a-b-c".replace("-", "+").replace("+", "_"));
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+hello tap
+hell0 w0rld
+heLLo worLd
+bbb
+hello world
+hellworld
+hello world
+a->b->c
+a.b.c
+a+b+c
+TesT
+你的世界
+嘿嘿
+a-b c/d
+original modified
+a_b_c
+- .exit
+0
+-- */

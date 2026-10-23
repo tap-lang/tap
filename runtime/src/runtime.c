@@ -336,6 +336,73 @@ String __tap_string_concat(String left, String right) {
     return string_view(result, length);
 }
 
+// 判断 value 是否包含 needle。needle 为空串时总返回 1。
+// 按字节匹配，不涉及 UTF-8 码点边界。
+int32_t __tap_string_contains(String value, String needle) {
+    if (needle.length == 0) return 1;
+    if (needle.length > value.length) return 0;
+    size_t limit = (size_t)(value.length - needle.length);
+    for (size_t i = 0; i <= limit; i++) {
+        if (memcmp(value.data + i, needle.data, (size_t)needle.length) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+// 判断 value 是否以 prefix 开头。
+int32_t __tap_string_starts_with(String value, String prefix) {
+    if (prefix.length > value.length) return 0;
+    if (prefix.length == 0) return 1;
+    return memcmp(value.data, prefix.data, (size_t)prefix.length) == 0 ? 1 : 0;
+}
+
+// 判断 value 是否以 suffix 结尾。
+int32_t __tap_string_ends_with(String value, String suffix) {
+    if (suffix.length > value.length) return 0;
+    if (suffix.length == 0) return 1;
+    return memcmp(value.data + (value.length - suffix.length),
+                  suffix.data, (size_t)suffix.length) == 0 ? 1 : 0;
+}
+
+// 把 value 中所有 from 的出现替换为 to。from 为空串时返回 value 的副本。
+// 结果由 Runtime 持有到进程退出。
+String __tap_string_replace(String value, String from, String to) {
+    // from 为空串：直接复制 value，避免无限循环。
+    if (from.length == 0)
+        return allocate_string_copy(value.data, (size_t)value.length);
+
+    // 先扫描一遍统计替换次数，算出结果长度，避免反复 realloc。
+    size_t from_len = (size_t)from.length;
+    size_t to_len = (size_t)to.length;
+    size_t match_count = 0;
+    size_t pos = 0;
+    while (pos + from_len <= (size_t)value.length) {
+        if (memcmp(value.data + pos, from.data, from_len) == 0) {
+            match_count++;
+            pos += from_len;
+        } else {
+            pos++;
+        }
+    }
+
+    size_t result_length = (size_t)value.length + match_count * (to_len - from_len);
+    char *result = allocate_owned_string(result_length);
+    size_t out = 0;
+    pos = 0;
+    while (pos < (size_t)value.length) {
+        if (pos + from_len <= (size_t)value.length &&
+            memcmp(value.data + pos, from.data, from_len) == 0) {
+            memcpy(result + out, to.data, to_len);
+            out += to_len;
+            pos += from_len;
+        } else {
+            result[out++] = value.data[pos++];
+        }
+    }
+    result[result_length] = '\0';
+    return string_view(result, result_length);
+}
+
 // 把有符号整数格式化为 Runtime 管理的十进制字符串。
 String __tap_format_i64(int64_t value) {
     char buffer[32];

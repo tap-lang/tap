@@ -56,6 +56,16 @@ TAP_RUNTIME_API String __tap_string_slice(
 TAP_RUNTIME_API int32_t __tap_string_compare(String left, String right);
 // 拼接两个字符串；结果由 Runtime 持有到进程退出。
 TAP_RUNTIME_API String __tap_string_concat(String left, String right);
+// 判断 value 是否包含 needle（按字节匹配）。needle 为空串时总是返回 1。
+TAP_RUNTIME_API int32_t __tap_string_contains(String value, String needle);
+// 判断 value 是否以 prefix 开头。prefix 长度超过 value 时返回 0。
+TAP_RUNTIME_API int32_t __tap_string_starts_with(String value, String prefix);
+// 判断 value 是否以 suffix 结尾。suffix 长度超过 value 时返回 0。
+TAP_RUNTIME_API int32_t __tap_string_ends_with(String value, String suffix);
+// 把 value 中所有 from 的出现替换为 to；结果由 Runtime 持有到进程退出。
+// from 为空串时返回 value 的副本（不无限插入）。
+TAP_RUNTIME_API String __tap_string_replace(
+    String value, String from, String to);
 // 把标量格式化为 Runtime 管理的字符串。
 TAP_RUNTIME_API String __tap_format_i64(int64_t value);
 TAP_RUNTIME_API String __tap_format_u64(uint64_t value);

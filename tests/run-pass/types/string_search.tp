@@ -1,0 +1,85 @@
+fn returned_string(): String {
+    return "hello world";
+}
+
+fn identity<T>(value: T): T {
+    return value;
+}
+
+fn main(): i32 {
+    let value: String = "hello world";
+
+    // contains
+    print("%d %d %d %d\n",
+          value.contains("lo wo"),
+          value.contains("xyz"),
+          value.contains(""),
+          "hello".contains("hello"));
+
+    // starts_with
+    print("%d %d %d %d\n",
+          value.starts_with("hello"),
+          value.starts_with("world"),
+          value.starts_with(""),
+          "hi".starts_with("hello"));
+
+    // ends_with
+    print("%d %d %d %d\n",
+          value.ends_with("world"),
+          value.ends_with("hello"),
+          value.ends_with(""),
+          "hi".ends_with("hello"));
+
+    // 非标识符接收者
+    print("%d %d %d\n",
+          returned_string().contains("world"),
+          returned_string().starts_with("hello"),
+          returned_string().ends_with("world"));
+
+    // 泛型返回值
+    print("%d %d\n",
+          identity("test").starts_with("te"),
+          identity("test").ends_with("st"));
+
+    // UTF-8 子串
+    let utf8: String = "你好世界";
+    print("%d %d %d\n",
+          utf8.contains("好世"),
+          utf8.starts_with("你好"),
+          utf8.ends_with("世界"));
+
+    // 数组元素
+    let values: [String; 2] = ["apple", "banana"];
+    print("%d %d\n",
+          values[0].contains("app"),
+          values[1].ends_with("nana"));
+
+    // 边界情况
+    let empty: String = "";
+    print("%d %d %d\n",
+          empty.contains(""),
+          empty.starts_with(""),
+          empty.ends_with(""));
+
+    print("%d %d %d\n",
+          empty.contains("x"),
+          empty.starts_with("x"),
+          empty.ends_with("x"));
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+1 0 1 1
+1 0 1 0
+1 0 1 0
+1 1 1
+1 1
+1 1 1
+1 1
+1 1 1
+0 0 0
+- .exit
+0
+-- */

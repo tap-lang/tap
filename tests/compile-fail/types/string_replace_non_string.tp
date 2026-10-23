@@ -1,0 +1,14 @@
+fn main(): i32 {
+    let value: String = "hello";
+    let result = value.replace("lo", 42);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'replace' argument 2 must be a String value
+--> tests/compile-fail/types/string_replace_non_string.tp:3:18
+-> 3      let result = value.replace("lo", 42);
+- .exit
+1
+-- */

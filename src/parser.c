@@ -1262,6 +1262,14 @@ static ASTNode *parse_factor(Parser *parser) {
                 internal_name = "__tap_builtin_string_byte_at";
             } else if (strcmp(member_name, "slice") == 0) {
                 internal_name = "__tap_builtin_string_slice";
+            } else if (strcmp(member_name, "contains") == 0) {
+                internal_name = "__tap_builtin_string_contains";
+            } else if (strcmp(member_name, "starts_with") == 0) {
+                internal_name = "__tap_builtin_string_starts_with";
+            } else if (strcmp(member_name, "ends_with") == 0) {
+                internal_name = "__tap_builtin_string_ends_with";
+            } else if (strcmp(member_name, "replace") == 0) {
+                internal_name = "__tap_builtin_string_replace";
             }
 
             if (internal_name && parser->current_token->type == TOKEN_LPAREN) {
