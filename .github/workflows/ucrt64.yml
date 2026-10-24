@@ -1,0 +1,82 @@
+name: UCRT64
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ucrt64-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Windows 2022 / MinGW-w64 UCRT64 / Release
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      - name: Install LLVM
+        # 直接装 MSYS2 源里的当前 LLVM（撰写时为 23.x），不锁版本、不降级。
+        # src/run.c 按 LLVM_VERSION_MAJOR >= 22 选择 lli 的 --dlopen=/--load=，
+        # 21 与 22+ 两条分支都维护；本工作流的职责就是跟踪 MSYS2 的新版 LLVM，
+        # 避免再出现「源里已是 23、仓库锁 21、每次手动 pacman -U 降级」的循环。
+        run: |
+          export PATH="/ucrt64/bin:$PATH"
+          pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-llvm
+
+      - name: Verify LLVM
+        # /ucrt64/bin 必须显式进 PATH：`msys2 {0}` shell 不一定带 UCRT64 环境，
+        # llvm-config/cmake/ninja/gcc 全在 /ucrt64/bin，缺了就是 exit 127。
+        # 主版本必须 >= 22：低于 22 会走到另一条兼容分支，本工作流就失去意义。
+        run: |
+          export PATH="/ucrt64/bin:$PATH"
+          command -v llvm-config || { echo "::error::llvm-config 不在 PATH"; ls -la /ucrt64/bin/llvm-config* 2>&1 || true; exit 1; }
+          llvm-config --version
+          test "$(llvm-config --version | cut -d. -f1)" -ge 22
+          llvm-config --cmakedir
+
+      - name: Configure
+        run: |
+          export PATH="/ucrt64/bin:$PATH"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=gcc \
+            -DLLVM_DIR="$(llvm-config --cmakedir)" \
+            -DBUILD_TESTS=ON
+
+      - name: Build
+        run: |
+          export PATH="/ucrt64/bin:$PATH"
+          cmake --build build --parallel 2
+
+      - name: Test
+        # lli 在 Windows 上没有可靠的 JIT 环境（ucrt 不导出 snprintf，JIT 解析不到；
+        # JIT 侧 printf 与 Runtime 的 vfprintf 还落两个 stdout 缓冲区），
+        # 和 Cygwin/MSVC 一致走 native 模式：每个用例生成真正的 .exe 再跑。
+        env:
+          TEST_JOBS: "4"
+          TEST_RUN_MODE: native
+        run: |
+          export PATH="/ucrt64/bin:$PATH"
+          sh tests/run-tests.sh ./build/tap.exe

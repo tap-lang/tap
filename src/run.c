@@ -744,8 +744,14 @@ int run_with_lli(CodeGenContext *context) {
         result = 1;
     } else {
         // lli 通过加载 Runtime 动态库向 extern 声明暴露符号。
-        char load_option[RUN_PATH_MAX + 8];
+        // LLVM 22 起 lli 的 --load= 更名为 --dlopen=（ORC JIT 改造），
+        // 按 LLVM 版本选参数名，21 与 22+ 都能用。
+        char load_option[RUN_PATH_MAX + 16];
+#if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR >= 22
+        snprintf(load_option, sizeof(load_option), "--dlopen=%s", runtime_shared_path);
+#else
         snprintf(load_option, sizeof(load_option), "--load=%s", runtime_shared_path);
+#endif
         char *const argv[] = {"lli", load_option, workspace.ir_file, NULL};
         result = run_process(argv);
     }

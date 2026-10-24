@@ -61,8 +61,8 @@ tests/compile-fail/lexer/unterminated_block_comment.stderr
 make test
 make test-native
 make test TEST_JOBS=8
-make test-by-c
-make test-native-by-c
+make testc
+make testc-native
 TEST_FILTER=module make test
 ./tests/run-tests.sh ./build/tap
 ./tests/run-tests.sh ./build/tap hello
@@ -72,7 +72,7 @@ TEST_FILTER=module make test
 带 `.args` 的用例和 `tests/run-pass/basics/hello.tp` 原生编译并链接，持续覆盖程序参数和链接路径。
 `make test-native` 会让全部运行用例生成原生可执行文件。可以用 `TEST_JOBS=N` 调整并行度，
 或设为 `1` 排查依赖执行顺序的问题；最终结果始终按文件名顺序输出。
-`test-by-c` 和 `test-native-by-c` 使用 `src/scripts/run-tests.c`，由 C 运行器负责测试发现、
+`testc` 和 `testc-native` 使用 `src/scripts/run-tests.c`，由 C 运行器负责测试发现、
 期望值解析、并发调度、进度显示和结果汇总，分别对应 fast 与 native 模式。
 
 `TEST_RUN_MODE` 环境变量可以直接选择运行方式（`fast` 走 `lli`，`native` 生成原生可执行文件），

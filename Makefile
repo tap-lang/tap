@@ -144,11 +144,11 @@ test-native: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
 	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=native sh tests/run-tests.sh $(TARGET)
 
 # 使用 C 测试运行器执行 fast 模式，避免 shell/awk/sed 的调度开销。
-test-by-c: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
+testc: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
 	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=fast $(TEST_RUNNER) $(TARGET)
 
 # 使用 C 测试运行器执行 native 模式。
-test-native-by-c: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
+testc-native: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
 	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=native $(TEST_RUNNER) $(TARGET)
 
 test_hello: $(TARGET)
