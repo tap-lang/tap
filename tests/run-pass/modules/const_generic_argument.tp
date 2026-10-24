@@ -1,0 +1,16 @@
+// 模块级 String 常量传给泛型函数：类型推断要能按完整名字（带模块前缀）找到常量。
+import modules.versioned;
+
+fn main(): i32 {
+    print("%s\n", versioned.version());
+    print("%s\n", versioned.VERSION);
+    return 0;
+}
+
+/** -- test
+- .stdout
+0.1.0
+0.1.0
+- .exit
+0
+-- */

@@ -1,0 +1,12 @@
+// 模块级 String 常量喂给泛型函数。回归用例：
+// `__tap_module_N.VERSION` 这种带模块前缀的名字曾经被 generics.c 的 identifier_type
+// 当成「枚举成员」，最后报 undefined enum type。
+pub const VERSION: String = "0.1.0";
+
+fn identity<T>(value: T): T {
+    return value;
+}
+
+pub fn version(): String {
+    return identity(VERSION);
+}
