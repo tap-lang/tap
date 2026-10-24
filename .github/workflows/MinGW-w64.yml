@@ -1,0 +1,80 @@
+name: MinGW-w64
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mingw-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 和 macOS/Linux/MSVC/Cygwin 统一用 LLVM 21。MSYS2 的 mingw-w64-llvm 现在已经是
+  # 23.x，而仓库里保留了历史包，所以显式下载 21.1.8-4 的三个包用 pacman -U 降级。
+  LLVM_PACKAGE_VERSION: "21.1.8-4"
+  MSYS2_MINGW64_REPO: https://repo.msys2.org/mingw/mingw64
+
+jobs:
+  build-and-test:
+    name: Windows 2022 / MinGW-w64 GCC / Release
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Install and pin LLVM 21
+        # 先装当前的 llvm 把依赖（zlib / zstd / libffi / libxml2 / libedit ...）带齐，
+        # 再降级到 21.1.8-4。pacman -U 不会自动解析依赖，直接降级会报 missing dependencies。
+        run: |
+          pacman -S --noconfirm --needed mingw-w64-x86_64-llvm
+          pacman -U --noconfirm \
+            "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-libs-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst" \
+            "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-tools-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst" \
+            "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst"
+
+      - name: Verify LLVM
+        # 主版本必须恰好是 21：LLVM 23 的 codegen 差异会让部分用例在 Windows 目标上
+        # 崩溃（Cygwin 上已经踩过 mixed_signedness.tp），不要拖到测试阶段才发现。
+        run: |
+          llvm-config --version
+          test "$(llvm-config --version | cut -d. -f1)" = "21"
+          llvm-config --cmakedir
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=gcc \
+            -DLLVM_DIR="$(llvm-config --cmakedir)" \
+            -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test
+        # MinGW 的 lli 没有可靠的 JIT 环境，直接走 native 模式（和 Cygwin/MSVC 一致），
+        # 每个用例生成真正的 .exe 再跑。
+        env:
+          TEST_JOBS: "4"
+          TEST_RUN_MODE: native
+        run: sh tests/run-tests.sh ./build/tap.exe
