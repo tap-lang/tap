@@ -854,6 +854,10 @@ static VarTypeNode *named_value_type(CodeGenContext *context, const char *name) 
                                      : create_var_type(symbol->type);
     }
 
+    // 顶层常量不在局部符号表里，但 `let x = CONST;` 的高层类型推断要走这里。
+    VarDeclNode *constant = find_global_constant(context, name);
+    if (constant && constant->type) return copy_var_type(constant->type);
+
     const char *dot = strrchr(name, '.');
     if (!dot || dot == name || !dot[1]) return NULL;
 

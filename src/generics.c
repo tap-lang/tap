@@ -1044,6 +1044,18 @@ static VarTypeNode *identifier_type(GenericContext *context, const char *name) {
     TypeSymbol *symbol = find_symbol(context, name);
     if (symbol) return clone_type(symbol->type);
 
+    // 模块里的顶层常量在泛型上下文里没有 TypeSymbol，名字又带模块前缀
+    // （`__tap_module_0.V`），会掉进下面「点号 = 枚举成员」的分支，最后被当成一个
+    // 不存在的枚举类型（`undefined enum type '__tap_module_0.V'`）。先按完整名字查常量。
+    for (ASTNode *node = context->program ? context->program->constants : NULL;
+         node; node = node->next) {
+        VarDeclNode *constant = (VarDeclNode *)node;
+        if (constant->name && constant->type &&
+            strcmp(constant->name, name) == 0) {
+            return clone_type(constant->type);
+        }
+    }
+
     // 模块私有枚举被改名成 `__tap_module_0.E` 后，成员引用变成 `__tap_module_0.E.B`
     // （两个点）。按**最后一个**点切分，才能取出正确的前缀；用 strchr 取第一个点会切错。
     const char *dot = strrchr(name, '.');
