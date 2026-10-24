@@ -1614,6 +1614,10 @@ static LLVMValueRef cast_value(CodeGenContext *context, LLVMValueRef value,
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression);
 static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *cast);
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call);
+static LLVMTypeRef function_tap_return_type(
+    CodeGenContext *context, FunctionNode *function);
+static LLVMTypeRef function_tap_param_type(
+    CodeGenContext *context, FunctionNode *function, unsigned index);
 static LLVMValueRef generate_variant_value(
     CodeGenContext *context, const char *struct_name,
     EnumNode *enum_node, EnumVariantNode *variant,
@@ -2495,14 +2499,66 @@ static LLVMValueRef generate_string_length(
     return string_length(context, string_value, "string_length");
 }
 
-static LLVMValueRef runtime_string_function(
+// 按 Runtime 的指针式 String ABI 声明并调用一个 C 函数。
+//
+// Runtime 的 C ABI 一律用指针传 String（见 tap_runtime.h 的说明）：String 参数降成
+// `ptr`，String 返回降成 `void` + 首个 `ptr` 出参。这样在 Win64 上不会踩到
+// 「16 字节结构体按引用传 / sret 返回」和 LLVM 裸聚合寄存器传参之间的差异。
+// return_type / parameter_types 传 tap 侧类型（String 是 `{ ptr, i64 }`）。
+static LLVMValueRef call_runtime_function(
     CodeGenContext *context, const char *name, LLVMTypeRef return_type,
-    LLVMTypeRef *parameter_types, unsigned parameter_count) {
-    LLVMValueRef function = LLVMGetNamedFunction(context->module, name);
-    if (function) return function;
+    LLVMValueRef *arguments, LLVMTypeRef *parameter_types, unsigned parameter_count) {
+    LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
+    LLVMTypeRef string_pointer = LLVMPointerType(string_type, 0);
+    int returns_string = return_type == string_type;
+    unsigned leading = returns_string ? 1 : 0;
+
+    unsigned lowered_count = parameter_count + leading;
+    LLVMTypeRef *lowered_types = malloc(
+        sizeof(LLVMTypeRef) * (lowered_count ? lowered_count : 1));
+    if (returns_string) lowered_types[0] = string_pointer;
+    for (unsigned i = 0; i < parameter_count; i++) {
+        lowered_types[i + leading] =
+            parameter_types[i] == string_type ? string_pointer : parameter_types[i];
+    }
     LLVMTypeRef function_type = LLVMFunctionType(
-        return_type, parameter_types, parameter_count, 0);
-    return LLVMAddFunction(context->module, name, function_type);
+        returns_string ? LLVMVoidTypeInContext(context->context) : return_type,
+        lowered_types, lowered_count, 0);
+    LLVMValueRef function = LLVMGetNamedFunction(context->module, name);
+    if (!function || LLVMGlobalGetValueType(function) != function_type) {
+        function = LLVMAddFunction(context->module, name, function_type);
+    }
+    free(lowered_types);
+
+    LLVMValueRef *lowered_arguments = malloc(
+        sizeof(LLVMValueRef) * (lowered_count ? lowered_count : 1));
+    unsigned index = 0;
+    LLVMValueRef result_slot = NULL;
+    if (returns_string) {
+        result_slot = LLVMBuildAlloca(context->builder, string_type, "runtime_string_out");
+        lowered_arguments[index++] = result_slot;
+    }
+    for (unsigned i = 0; i < parameter_count; i++) {
+        if (parameter_types[i] == string_type) {
+            LLVMValueRef slot = LLVMBuildAlloca(
+                context->builder, string_type, "runtime_string_arg");
+            LLVMBuildStore(context->builder, arguments[i], slot);
+            lowered_arguments[index++] = slot;
+        } else {
+            lowered_arguments[index++] = arguments[i];
+        }
+    }
+    LLVMTypeRef void_type = LLVMVoidTypeInContext(context->context);
+    int returns_void = returns_string || return_type == void_type;
+    LLVMValueRef call = LLVMBuildCall2(context->builder, function_type, function,
+                                       lowered_arguments, lowered_count,
+                                       returns_void ? "" : "runtime_call");
+    free(lowered_arguments);
+    if (returns_string) {
+        return LLVMBuildLoad2(context->builder, string_type, result_slot,
+                              "runtime_string_result");
+    }
+    return call;
 }
 
 // 生成显式标量转换。字符串转换通过 Runtime 的稳定 C ABI 完成，数值转换则使用 LLVM 原生指令。
@@ -2537,23 +2593,17 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
         LLVMTypeRef parameter_types[1] = {
             get_llvm_type(context, LITERAL_C_STRING)
         };
-        LLVMValueRef function = runtime_string_function(
+        return call_runtime_function(
             context, "__tap_string_from_c", get_llvm_type(context, LITERAL_STRING),
-            parameter_types, 1);
-        return LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            &value, 1, "string_from_c");
+            &value, parameter_types, 1);
     }
 
     if (source == LITERAL_STRING && is_integer_type(target)) {
         if (target == LITERAL_BOOL) {
             LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_STRING)};
-            LLVMValueRef function = runtime_string_function(
+            LLVMValueRef parsed = call_runtime_function(
                 context, "__tap_parse_bool", get_llvm_type(context, LITERAL_I32),
-                parameter_types, 1);
-            LLVMValueRef parsed = LLVMBuildCall2(
-                context->builder, LLVMGlobalGetValueType(function), function,
-                &value, 1, "parse_bool");
+                &value, parameter_types, 1);
             return LLVMBuildTrunc(context->builder, parsed,
                                   get_llvm_type(context, LITERAL_BOOL), "bool_cast");
         }
@@ -2565,14 +2615,12 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
             };
             const char *runtime_name = target == LITERAL_I128
                 ? "__tap_parse_i128" : "__tap_parse_u128";
-            LLVMValueRef function = runtime_string_function(
-                context, runtime_name, LLVMVoidTypeInContext(context->context),
-                parameter_types, 3);
             LLVMValueRef low_slot = create_entry_alloca(context, i64_type, "cast_i128_low");
             LLVMValueRef high_slot = create_entry_alloca(context, i64_type, "cast_i128_high");
             LLVMValueRef arguments[3] = {value, low_slot, high_slot};
-            LLVMBuildCall2(context->builder, LLVMGlobalGetValueType(function), function,
-                            arguments, 3, "");
+            call_runtime_function(context, runtime_name,
+                                  LLVMVoidTypeInContext(context->context),
+                                  arguments, parameter_types, 3);
             LLVMValueRef low = LLVMBuildLoad2(context->builder, i64_type, low_slot,
                                               "parsed_i128_low");
             LLVMValueRef high = LLVMBuildLoad2(context->builder, i64_type, high_slot,
@@ -2591,36 +2639,27 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
         enum LiteralType parsed_type = is_unsigned ? LITERAL_U64 : LITERAL_I64;
         const char *runtime_name = is_unsigned ? "__tap_parse_u64" : "__tap_parse_i64";
         LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_STRING)};
-        LLVMValueRef function = runtime_string_function(
+        LLVMValueRef parsed = call_runtime_function(
             context, runtime_name, get_llvm_type(context, parsed_type),
-            parameter_types, 1);
-        LLVMValueRef parsed = LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            &value, 1, "parse_integer");
+            &value, parameter_types, 1);
         return cast_integer(context, parsed, parsed_type, target);
     }
 
     if (source == LITERAL_CHAR && target == LITERAL_STRING) {
         LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_CHAR)};
-        LLVMValueRef function = runtime_string_function(
+        return call_runtime_function(
             context, "__tap_format_char", get_llvm_type(context, LITERAL_STRING),
-            parameter_types, 1);
-        return LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            &value, 1, "format_char");
+            &value, parameter_types, 1);
     }
     if (is_integer_type(source) && target == LITERAL_STRING) {
         if (source == LITERAL_BOOL) {
             LLVMTypeRef parameter_types[1] = {get_llvm_type(context, LITERAL_I32)};
-            LLVMValueRef function = runtime_string_function(
-                context, "__tap_format_bool", get_llvm_type(context, LITERAL_STRING),
-                parameter_types, 1);
             LLVMValueRef bool_as_i32 = LLVMBuildZExt(
                 context->builder, value, get_llvm_type(context, LITERAL_I32),
                 "bool_for_format");
-            return LLVMBuildCall2(
-                context->builder, LLVMGlobalGetValueType(function), function,
-                &bool_as_i32, 1, "format_bool");
+            return call_runtime_function(
+                context, "__tap_format_bool", get_llvm_type(context, LITERAL_STRING),
+                &bool_as_i32, parameter_types, 1);
         }
         if (source == LITERAL_I128 || source == LITERAL_U128) {
             LLVMTypeRef i64_type = get_llvm_type(context, LITERAL_U64);
@@ -2635,13 +2674,10 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
             LLVMTypeRef parameter_types[2] = {i64_type, i64_type};
             const char *runtime_name = source == LITERAL_I128
                 ? "__tap_format_i128" : "__tap_format_u128";
-            LLVMValueRef function = runtime_string_function(
-                context, runtime_name, get_llvm_type(context, LITERAL_STRING),
-                parameter_types, 2);
             LLVMValueRef arguments[2] = {low, high};
-            return LLVMBuildCall2(
-                context->builder, LLVMGlobalGetValueType(function), function,
-                arguments, 2, "format_i128");
+            return call_runtime_function(
+                context, runtime_name, get_llvm_type(context, LITERAL_STRING),
+                arguments, parameter_types, 2);
         }
         enum LiteralType format_type = is_unsigned_type(source)
             ? LITERAL_U64 : LITERAL_I64;
@@ -2649,12 +2685,9 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
             ? "__tap_format_u64" : "__tap_format_i64";
         LLVMValueRef formatted_value = cast_integer(context, value, source, format_type);
         LLVMTypeRef parameter_types[1] = {get_llvm_type(context, format_type)};
-        LLVMValueRef function = runtime_string_function(
+        return call_runtime_function(
             context, runtime_name, get_llvm_type(context, LITERAL_STRING),
-            parameter_types, 1);
-        return LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            &formatted_value, 1, "format_integer");
+            &formatted_value, parameter_types, 1);
     }
 
     if (source == LITERAL_STRING && target == LITERAL_STRING) return value;
@@ -2664,12 +2697,9 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
             ? "__tap_format_f64" : "__tap_format_f32";
         LLVMValueRef float_value = value;
         LLVMTypeRef parameter_types[1] = {get_llvm_type(context, format_type)};
-        LLVMValueRef function = runtime_string_function(
+        return call_runtime_function(
             context, runtime_name, get_llvm_type(context, LITERAL_STRING),
-            parameter_types, 1);
-        return LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            &float_value, 1, "format_float");
+            &float_value, parameter_types, 1);
     }
 
     if (target == LITERAL_STRING || source == LITERAL_STRING ||
@@ -2695,15 +2725,12 @@ static LLVMValueRef generate_string_comparison(
     CodeGenContext *context, BinaryOpNode *binary) {
     LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
     LLVMTypeRef parameter_types[2] = {string_type, string_type};
-    LLVMValueRef function = runtime_string_function(
-        context, "__tap_string_compare", get_llvm_type(context, LITERAL_I32),
-        parameter_types, 2);
     LLVMValueRef left = generate_expression(context, binary->left);
     LLVMValueRef right = generate_expression(context, binary->right);
     LLVMValueRef arguments[2] = {left, right};
-    LLVMValueRef result = LLVMBuildCall2(
-        context->builder, LLVMGlobalGetValueType(function), function,
-        arguments, 2, "string_compare");
+    LLVMValueRef result = call_runtime_function(
+        context, "__tap_string_compare", get_llvm_type(context, LITERAL_I32),
+        arguments, parameter_types, 2);
     LLVMValueRef zero = LLVMConstInt(get_llvm_type(context, LITERAL_I32), 0, 0);
 
     LLVMIntPredicate predicate;
@@ -2728,15 +2755,12 @@ static LLVMValueRef generate_string_concat(
     CodeGenContext *context, BinaryOpNode *binary) {
     LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
     LLVMTypeRef parameter_types[2] = {string_type, string_type};
-    LLVMValueRef function = runtime_string_function(
-        context, "__tap_string_concat", string_type, parameter_types, 2);
     LLVMValueRef arguments[2] = {
         generate_expression(context, binary->left),
         generate_expression(context, binary->right)
     };
-    return LLVMBuildCall2(
-        context->builder, LLVMGlobalGetValueType(function), function,
-        arguments, 2, "string_concat");
+    return call_runtime_function(
+        context, "__tap_string_concat", string_type, arguments, parameter_types, 2);
 }
 
 static LLVMValueRef generate_string_integer_argument(
@@ -2794,27 +2818,21 @@ static LLVMValueRef generate_string_method(
     }
     if (method == STRING_METHOD_CHAR_COUNT) {
         LLVMTypeRef parameter_types[1] = {string_type};
-        LLVMValueRef function = runtime_string_function(
+        return call_runtime_function(
             context, "__tap_string_char_count", get_llvm_type(context, LITERAL_UINT),
-            parameter_types, 1);
-        return LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            &receiver, 1, "string_char_count");
+            &receiver, parameter_types, 1);
     }
 
     LLVMTypeRef index_type = get_llvm_type(context, LITERAL_I64);
     if (method == STRING_METHOD_BYTE_AT) {
         LLVMTypeRef parameter_types[2] = {string_type, index_type};
-        LLVMValueRef function = runtime_string_function(
-            context, "__tap_string_byte_at", get_llvm_type(context, LITERAL_U8),
-            parameter_types, 2);
         LLVMValueRef call_arguments[2] = {
             receiver,
             generate_string_integer_argument(context, call, arguments, 1)
         };
-        return LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            call_arguments, 2, "string_byte");
+        return call_runtime_function(
+            context, "__tap_string_byte_at", get_llvm_type(context, LITERAL_U8),
+            call_arguments, parameter_types, 2);
     }
 
     // contains / starts_with / ends_with: (String, String) -> i32 (bool)
@@ -2826,20 +2844,13 @@ static LLVMValueRef generate_string_method(
             method == STRING_METHOD_STARTS_WITH ? "__tap_string_starts_with" :
             "__tap_string_ends_with";
         LLVMTypeRef parameter_types[2] = {string_type, string_type};
-        LLVMValueRef function = runtime_string_function(
-            context, runtime_name, get_llvm_type(context, LITERAL_I32),
-            parameter_types, 2);
         LLVMValueRef call_arguments[2] = {
             receiver,
             generate_string_string_argument(context, call, arguments, 1)
         };
-        const char *label =
-            method == STRING_METHOD_CONTAINS ? "string_contains" :
-            method == STRING_METHOD_STARTS_WITH ? "string_starts_with" :
-            "string_ends_with";
-        LLVMValueRef result = LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            call_arguments, 2, label);
+        LLVMValueRef result = call_runtime_function(
+            context, runtime_name, get_llvm_type(context, LITERAL_I32),
+            call_arguments, parameter_types, 2);
         return LLVMBuildTrunc(context->builder, result,
                               get_llvm_type(context, LITERAL_BOOL), "string_predicate");
     }
@@ -2847,29 +2858,25 @@ static LLVMValueRef generate_string_method(
     // replace: (String, String, String) -> String
     if (method == STRING_METHOD_REPLACE) {
         LLVMTypeRef parameter_types[3] = {string_type, string_type, string_type};
-        LLVMValueRef function = runtime_string_function(
-            context, "__tap_string_replace", string_type, parameter_types, 3);
         LLVMValueRef from_arg = generate_string_string_argument(
             context, call, arguments, 1);
         LLVMValueRef to_arg = generate_string_string_argument(
             context, call, arguments->next, 2);
         LLVMValueRef call_arguments[3] = {receiver, from_arg, to_arg};
-        return LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(function), function,
-            call_arguments, 3, "string_replace");
+        return call_runtime_function(
+            context, "__tap_string_replace", string_type,
+            call_arguments, parameter_types, 3);
     }
 
     LLVMTypeRef parameter_types[3] = {string_type, index_type, index_type};
-    LLVMValueRef function = runtime_string_function(
-        context, "__tap_string_slice", string_type, parameter_types, 3);
     LLVMValueRef start = generate_string_integer_argument(
         context, call, arguments, 1);
     LLVMValueRef end = generate_string_integer_argument(
         context, call, arguments->next, 2);
     LLVMValueRef call_arguments[3] = {receiver, start, end};
-    return LLVMBuildCall2(
-        context->builder, LLVMGlobalGetValueType(function), function,
-        call_arguments, 3, "string_slice");
+    return call_runtime_function(
+        context, "__tap_string_slice", string_type,
+        call_arguments, parameter_types, 3);
 }
 
 // 生成结构体方法调用；语句形式可在返回同类型结构体时自动写回接收者。
@@ -3089,13 +3096,29 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         exit(1);
     }
 
-    LLVMValueRef *arguments = count ? malloc(sizeof(LLVMValueRef) * count) : NULL;
+    // extern 边界的 String 走指针 ABI（见 tap_runtime.h）：参数 alloca 后传地址，
+    // 返回值用首参出参再 load。tap 内部函数不 lowering，两边都按值传结构体。
+    LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
+    int lower_string = function->is_extern;
+    int returns_string = lower_string &&
+        function_tap_return_type(context, function) == string_type;
+
+    unsigned capacity = count + (returns_string ? 1 : 0);
+    LLVMValueRef *arguments = capacity ? malloc(sizeof(LLVMValueRef) * capacity) : NULL;
+    unsigned argument_count = 0;
+    LLVMValueRef string_result_slot = NULL;
+    if (returns_string) {
+        string_result_slot = LLVMBuildAlloca(
+            context->builder, string_type, "extern_string_out");
+        arguments[argument_count++] = string_result_slot;
+    }
+
     ASTNode *argument = call->arguments;
     for (unsigned i = 0; i < count; i++, argument = argument->next) {
         // 超出具名参数范围的实参属于变参部分：没有声明类型可校验，一律按
         // C 的默认实参提升规则生成（float → double，窄整数 → i32）。
         if (is_variadic_call && i >= expected_count) {
-            arguments[i] = promote_variadic_argument(context, argument);
+            arguments[argument_count++] = promote_variadic_argument(context, argument);
             continue;
         }
         const VarTypeNode *param_type = function_param_var_type(function, i);
@@ -3113,17 +3136,31 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
             free(arguments);
             exit(1);
         }
-        arguments[i] = erased_pointer_argument
+        LLVMValueRef value = erased_pointer_argument
             ? generate_expression(context, argument)
             : param_type
             ? generate_expression_for_type(context, argument, param_type)
             : generate_expression_as(context, argument, function_param_type(function, i));
+        if (lower_string && function_tap_param_type(context, function, i) == string_type) {
+            LLVMValueRef slot = LLVMBuildAlloca(
+                context->builder, string_type, "extern_string_arg");
+            LLVMBuildStore(context->builder, value, slot);
+            value = slot;
+        }
+        arguments[argument_count++] = value;
     }
 
     LLVMTypeRef function_type = LLVMGlobalGetValueType(llvm_function);
+    int call_returns_void = LLVMGetReturnType(function_type) ==
+        LLVMVoidTypeInContext(context->context);
     LLVMValueRef value = LLVMBuildCall2(context->builder, function_type, llvm_function,
-                                        arguments, count, "call_result");
+                                        arguments, argument_count,
+                                        call_returns_void ? "" : "call_result");
     free(arguments);
+    if (returns_string) {
+        return LLVMBuildLoad2(context->builder, string_type, string_result_slot,
+                              "extern_string_result");
+    }
     return value;
 }
 
@@ -3409,13 +3446,10 @@ static LLVMValueRef generate_auto_format_print(
     }
     if (type == LITERAL_CHAR) {
         LLVMTypeRef char_type = get_llvm_type(context, LITERAL_CHAR);
-        LLVMValueRef formatter = runtime_string_function(
-            context, "__tap_format_char", get_llvm_type(context, LITERAL_STRING),
-            &char_type, 1);
         LLVMValueRef value = generate_expression(context, first);
-        LLVMValueRef formatted = LLVMBuildCall2(
-            context->builder, LLVMGlobalGetValueType(formatter), formatter,
-            &value, 1, "format_char");
+        LLVMValueRef formatted = call_runtime_function(
+            context, "__tap_format_char", get_llvm_type(context, LITERAL_STRING),
+            &value, &char_type, 1);
         LLVMValueRef arguments[2] = {
             LLVMBuildGlobalStringPtr(context->builder, "%s", "format_string"),
             string_data(context, formatted, "formatted_char_data")
@@ -4577,6 +4611,26 @@ static unsigned function_param_count(FunctionNode *function) {
 }
 
 // 根据函数签名创建 LLVM 函数类型。
+// 函数在 tap 语言层面的返回类型（未做 extern 指针化 lowering）。
+static LLVMTypeRef function_tap_return_type(
+    CodeGenContext *context, FunctionNode *function) {
+    return function->return_type &&
+           (function->return_type->is_array ||
+            function->return_type->struct_name ||
+            function->return_type->is_pointer)
+        ? get_llvm_var_type(context, function->return_type)
+        : get_llvm_type(context, function_return_type(function));
+}
+
+// 参数在 tap 语言层面的类型（未做 extern 指针化 lowering）。
+static LLVMTypeRef function_tap_param_type(
+    CodeGenContext *context, FunctionNode *function, unsigned index) {
+    const VarTypeNode *param_type = function_param_var_type(function, index);
+    return param_type
+        ? get_llvm_var_type(context, param_type)
+        : get_llvm_type(context, function_param_type(function, index));
+}
+
 static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *function) {
     for (ASTNode *type = function->param_types; type; type = type->next) {
         if (((VarTypeNode *)type)->is_array) {
@@ -4585,22 +4639,29 @@ static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *f
         }
     }
     unsigned count = function_param_count(function);
-    LLVMTypeRef *params = count ? malloc(sizeof(LLVMTypeRef) * count) : NULL;
+    LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
+    // extern 边界走 Runtime 的指针式 String ABI（见 tap_runtime.h）：
+    // String 参数降成 `ptr`、String 返回降成 `void` + 首个 `ptr` 出参。
+    // tap 内部函数两端都是自己生成的，仍按值传结构体，避免不必要的 alloca。
+    int lower_string = function->is_extern;
+    LLVMTypeRef return_type = function_tap_return_type(context, function);
+    int returns_string = lower_string && return_type == string_type;
+    unsigned leading = returns_string ? 1 : 0;
+    unsigned total = count + leading;
+
+    LLVMTypeRef *params = total ? malloc(sizeof(LLVMTypeRef) * total) : NULL;
+    if (returns_string) params[0] = LLVMPointerType(string_type, 0);
     for (unsigned i = 0; i < count; i++) {
-        const VarTypeNode *param_type = function_param_var_type(function, i);
-        params[i] = param_type
-            ? get_llvm_var_type(context, param_type)
-            : get_llvm_type(context, function_param_type(function, i));
+        LLVMTypeRef type = function_tap_param_type(context, function, i);
+        params[i + leading] = (lower_string && type == string_type)
+            ? LLVMPointerType(string_type, 0)
+            : type;
     }
-    LLVMTypeRef return_type = function->return_type &&
-                              (function->return_type->is_array ||
-                               function->return_type->struct_name ||
-                               function->return_type->is_pointer)
-        ? get_llvm_var_type(context, function->return_type)
-        : get_llvm_type(context, function_return_type(function));
     // 第 4 个参数是 is_var_arg：只有 extern 声明可以带 `...`（Parser 已强制），
     // 变参函数的 LLVM 类型末尾固定跟 `...`，调用时多出的实参按默认提升传。
-    LLVMTypeRef type = LLVMFunctionType(return_type, params, count, function->is_variadic);
+    LLVMTypeRef type = LLVMFunctionType(
+        returns_string ? LLVMVoidTypeInContext(context->context) : return_type,
+        params, total, function->is_variadic);
     free(params);
     return type;
 }

@@ -42,9 +42,33 @@ Runtime 的公开 ABI 声明位于 [`runtime/include/tap_runtime.h`](../runtime/
 `c_string` 则直接对应 `const char *`。`String` 传入 `c_string` 参数时隐式提取 `data`；
 `c_string` 转回 `String` 必须显式使用 `as String`，由 `__tap_string_from_c` 扫描长度。
 
+### String 跨 C ABI 一律按指针传
+
+`String` 是 16 字节结构体。**Win64 的 C ABI 把这种大小的结构体参数按引用传（`byval`）、
+返回值走 `sret` 隐藏指针**；而 LLVM 对 IR 里裸的 `{ ptr, i64 }` 聚合是按寄存器传的
+（参数 `RCX:RDX`、返回 `RAX:RDX`）。C ABI 的 lowering 由前端负责，后端不会替裸聚合补
+`byval`/`sret`。SysV（Linux x86-64）和 AAPCS64（macOS ARM64）上两者恰好一致，Win64 上
+则对不上——返回的 `length` 是垃圾、参数被按值读，表现为乱码或段错误。
+
+因此 Runtime 的 C ABI **一律按指针传 String**：
+
+- 入参：`const String *value`
+- 返回：`void f(String *out, ...)`，`out` 是第一个参数，**无条件写入**（失败写空串）
+
+指针在所有目标 ABI 上都是同一个整数寄存器/槽位，所以这份 ABI 是可移植的。编译器只在
+**extern 边界**做这个 lowering；tap 内部函数仍按值传结构体（两端都是 tap 生成的，LLVM
+对裸聚合的处理自洽），`std/*.tp` 里的 `extern fn` 写法保持原样。
+
+下面表格写的是 **tap 语言层面的签名**，对应的 C 声明按上面的规则转换，例如：
+
+```c
+// tap: extern fn __tap_string_concat(left: String, right: String): String;
+void __tap_string_concat(String *out, const String *left, const String *right);
+```
+
 内建字符串方法、比较运算符和 `+` 拼接由编译器生成对以下 Runtime ABI 的调用：
 
-| C ABI | 行为 |
+| C ABI（tap 侧签名） | 行为 |
 |---|---|
 | `__tap_string_byte_at(value, index): u8` | 读取 UTF-8 原始字节；越界时终止程序 |
 | `__tap_string_slice(value, start, end): String` | 复制 `[start, end)` 字节区间；无效边界时终止程序 |

@@ -129,8 +129,8 @@ static String empty_string(void) {
     return string_view("", 0);
 }
 
-String __tap_string_from_c(const char *value) {
-    return string_from_c(value);
+void __tap_string_from_c(String *out, const char *value) {
+    *out = string_from_c(value);
 }
 
 // 系统 API 仍然接收 C 字符串。tap 字符串保留尾部 NUL，但内嵌 NUL 必须拒绝，
@@ -209,19 +209,23 @@ int32_t __tap_argc(void) {
     return saved_argc;
 }
 
-String __tap_arg(int32_t index) {
+void __tap_arg(String *out, int32_t index) {
     if (index < 0 || index >= saved_argc || !saved_argv || !saved_argv[index]) {
-        return empty_string();
+        *out = empty_string();
+        return;
     }
-    return string_from_c(saved_argv[index]);
+    *out = string_from_c(saved_argv[index]);
 }
 
 // 获取指定名称的环境变量；不存在时返回空字符串，方便 tap 侧直接当 String 使用。
-String __tap_env_var(String name) {
-    const char *name_data = require_c_string(name, "environment variable name");
-    if (!name_data || name.length == 0) return empty_string();
+void __tap_env_var(String *out, const String *name) {
+    const char *name_data = require_c_string(*name, "environment variable name");
+    if (!name_data || name->length == 0) {
+        *out = empty_string();
+        return;
+    }
     const char *value = getenv(name_data);
-    return value ? string_from_c(value) : empty_string();
+    *out = value ? string_from_c(value) : empty_string();
 }
 
 // 返回当前进程环境变量数量。
@@ -235,29 +239,35 @@ int32_t __tap_envc(void) {
 }
 
 // 按索引返回环境变量原始条目，格式为 NAME=VALUE；越界时返回空字符串。
-String __tap_env(int32_t index) {
-    if (index < 0 || !TAP_ENVIRON) return empty_string();
-    for (int32_t current = 0; current <= index; current++) {
-        if (!TAP_ENVIRON[current]) return empty_string();
+void __tap_env(String *out, int32_t index) {
+    if (index < 0 || !TAP_ENVIRON) {
+        *out = empty_string();
+        return;
     }
-    return string_from_c(TAP_ENVIRON[index]);
+    for (int32_t current = 0; current <= index; current++) {
+        if (!TAP_ENVIRON[current]) {
+            *out = empty_string();
+            return;
+        }
+    }
+    *out = string_from_c(TAP_ENVIRON[index]);
 }
 
 // 按 UTF-8 原始字节读取；负数或超过 length 的索引均为错误。
-uint8_t __tap_string_byte_at(String value, int64_t index) {
-    if (index < 0 || (uint64_t)index >= value.length) {
+uint8_t __tap_string_byte_at(const String *value, int64_t index) {
+    if (index < 0 || (uint64_t)index >= value->length) {
         fprintf(stderr, "String byte index out of bounds: index=%lld, length=%llu\n",
-                (long long)index, (unsigned long long)value.length);
+                (long long)index, (unsigned long long)value->length);
         exit(1);
     }
-    return (uint8_t)(unsigned char)value.data[index];
+    return (uint8_t)(unsigned char)value->data[index];
 }
 
 // 统计 UTF-8 码点数量。遇到格式错误的字节时把它当作一个独立字符，
 // 这样即使字符串来自未经校验的原始字节，也不会越界或陷入死循环。
-uint64_t __tap_string_char_count(String value) {
-    const unsigned char *bytes = (const unsigned char *)value.data;
-    size_t length = (size_t)value.length;
+uint64_t __tap_string_char_count(const String *value) {
+    const unsigned char *bytes = (const unsigned char *)value->data;
+    size_t length = (size_t)value->length;
     size_t offset = 0;
     uint64_t count = 0;
     while (offset < length) {
@@ -296,32 +306,34 @@ uint64_t __tap_string_char_count(String value) {
 }
 
 // 复制半开区间 [start, end)，结果由 Runtime 持有到进程退出。
-String __tap_string_slice(String value, int64_t start, int64_t end) {
-    if (start < 0 || end < start || (uint64_t)end > value.length) {
+void __tap_string_slice(
+    String *out, const String *value, int64_t start, int64_t end) {
+    if (start < 0 || end < start || (uint64_t)end > value->length) {
         fprintf(stderr,
                 "String slice out of bounds: start=%lld, end=%lld, length=%llu\n",
-                (long long)start, (long long)end, (unsigned long long)value.length);
+                (long long)start, (long long)end, (unsigned long long)value->length);
         exit(1);
     }
 
     size_t slice_length = (size_t)(end - start);
-    return allocate_string_copy(value.data + start, slice_length);
+    *out = allocate_string_copy(value->data + start, slice_length);
 }
 
 // 按无符号 UTF-8 字节序比较；共同前缀相同时短串排在前面。
-int32_t __tap_string_compare(String left, String right) {
-    size_t common = (size_t)(left.length < right.length ? left.length : right.length);
-    int result = common > 0 ? memcmp(left.data, right.data, common) : 0;
+int32_t __tap_string_compare(const String *left, const String *right) {
+    size_t common = (size_t)(left->length < right->length ? left->length : right->length);
+    int result = common > 0 ? memcmp(left->data, right->data, common) : 0;
     if (result == 0) {
-        result = left.length < right.length ? -1 : left.length > right.length ? 1 : 0;
+        result = left->length < right->length ? -1 : left->length > right->length ? 1 : 0;
     }
     return result < 0 ? -1 : result > 0 ? 1 : 0;
 }
 
 // 拼接两个以 NUL 结尾的字符串；结果由 Runtime 持有到进程退出。
-String __tap_string_concat(String left, String right) {
-    size_t left_length = (size_t)left.length;
-    size_t right_length = (size_t)right.length;
+void __tap_string_concat(
+    String *out, const String *left, const String *right) {
+    size_t left_length = (size_t)left->length;
+    size_t right_length = (size_t)right->length;
     if (left_length > SIZE_MAX - 1 ||
         right_length > SIZE_MAX - 1 - left_length) {
         fprintf(stderr, "string concatenation is too long\n");
@@ -330,54 +342,57 @@ String __tap_string_concat(String left, String right) {
 
     size_t length = left_length + right_length;
     char *result = allocate_owned_string(length);
-    memcpy(result, left.data, left_length);
-    memcpy(result + left_length, right.data, right_length);
+    memcpy(result, left->data, left_length);
+    memcpy(result + left_length, right->data, right_length);
     result[length] = '\0';
-    return string_view(result, length);
+    *out = string_view(result, length);
 }
 
 // 判断 value 是否包含 needle。needle 为空串时总返回 1。
 // 按字节匹配，不涉及 UTF-8 码点边界。
-int32_t __tap_string_contains(String value, String needle) {
-    if (needle.length == 0) return 1;
-    if (needle.length > value.length) return 0;
-    size_t limit = (size_t)(value.length - needle.length);
+int32_t __tap_string_contains(const String *value, const String *needle) {
+    if (needle->length == 0) return 1;
+    if (needle->length > value->length) return 0;
+    size_t limit = (size_t)(value->length - needle->length);
     for (size_t i = 0; i <= limit; i++) {
-        if (memcmp(value.data + i, needle.data, (size_t)needle.length) == 0)
+        if (memcmp(value->data + i, needle->data, (size_t)needle->length) == 0)
             return 1;
     }
     return 0;
 }
 
 // 判断 value 是否以 prefix 开头。
-int32_t __tap_string_starts_with(String value, String prefix) {
-    if (prefix.length > value.length) return 0;
-    if (prefix.length == 0) return 1;
-    return memcmp(value.data, prefix.data, (size_t)prefix.length) == 0 ? 1 : 0;
+int32_t __tap_string_starts_with(const String *value, const String *prefix) {
+    if (prefix->length > value->length) return 0;
+    if (prefix->length == 0) return 1;
+    return memcmp(value->data, prefix->data, (size_t)prefix->length) == 0 ? 1 : 0;
 }
 
 // 判断 value 是否以 suffix 结尾。
-int32_t __tap_string_ends_with(String value, String suffix) {
-    if (suffix.length > value.length) return 0;
-    if (suffix.length == 0) return 1;
-    return memcmp(value.data + (value.length - suffix.length),
-                  suffix.data, (size_t)suffix.length) == 0 ? 1 : 0;
+int32_t __tap_string_ends_with(const String *value, const String *suffix) {
+    if (suffix->length > value->length) return 0;
+    if (suffix->length == 0) return 1;
+    return memcmp(value->data + (value->length - suffix->length),
+                  suffix->data, (size_t)suffix->length) == 0 ? 1 : 0;
 }
 
 // 把 value 中所有 from 的出现替换为 to。from 为空串时返回 value 的副本。
 // 结果由 Runtime 持有到进程退出。
-String __tap_string_replace(String value, String from, String to) {
+void __tap_string_replace(
+    String *out, const String *value, const String *from, const String *to) {
     // from 为空串：直接复制 value，避免无限循环。
-    if (from.length == 0)
-        return allocate_string_copy(value.data, (size_t)value.length);
+    if (from->length == 0) {
+        *out = allocate_string_copy(value->data, (size_t)value->length);
+        return;
+    }
 
     // 先扫描一遍统计替换次数，算出结果长度，避免反复 realloc。
-    size_t from_len = (size_t)from.length;
-    size_t to_len = (size_t)to.length;
+    size_t from_len = (size_t)from->length;
+    size_t to_len = (size_t)to->length;
     size_t match_count = 0;
     size_t pos = 0;
-    while (pos + from_len <= (size_t)value.length) {
-        if (memcmp(value.data + pos, from.data, from_len) == 0) {
+    while (pos + from_len <= (size_t)value->length) {
+        if (memcmp(value->data + pos, from->data, from_len) == 0) {
             match_count++;
             pos += from_len;
         } else {
@@ -385,44 +400,44 @@ String __tap_string_replace(String value, String from, String to) {
         }
     }
 
-    size_t result_length = (size_t)value.length + match_count * (to_len - from_len);
+    size_t result_length = (size_t)value->length + match_count * (to_len - from_len);
     char *result = allocate_owned_string(result_length);
-    size_t out = 0;
+    size_t written = 0;
     pos = 0;
-    while (pos < (size_t)value.length) {
-        if (pos + from_len <= (size_t)value.length &&
-            memcmp(value.data + pos, from.data, from_len) == 0) {
-            memcpy(result + out, to.data, to_len);
-            out += to_len;
+    while (pos < (size_t)value->length) {
+        if (pos + from_len <= (size_t)value->length &&
+            memcmp(value->data + pos, from->data, from_len) == 0) {
+            memcpy(result + written, to->data, to_len);
+            written += to_len;
             pos += from_len;
         } else {
-            result[out++] = value.data[pos++];
+            result[written++] = value->data[pos++];
         }
     }
     result[result_length] = '\0';
-    return string_view(result, result_length);
+    *out = string_view(result, result_length);
 }
 
 // 把有符号整数格式化为 Runtime 管理的十进制字符串。
-String __tap_format_i64(int64_t value) {
+void __tap_format_i64(String *out, int64_t value) {
     char buffer[32];
     int length = snprintf(buffer, sizeof(buffer), "%lld", (long long)value);
     if (length < 0 || (size_t)length >= sizeof(buffer)) {
         fprintf(stderr, "failed to format integer\n");
         exit(1);
     }
-    return allocate_string_copy(buffer, (size_t)length);
+    *out = allocate_string_copy(buffer, (size_t)length);
 }
 
 // 把无符号整数格式化为 Runtime 管理的十进制字符串。
-String __tap_format_u64(uint64_t value) {
+void __tap_format_u64(String *out, uint64_t value) {
     char buffer[32];
     int length = snprintf(buffer, sizeof(buffer), "%llu", (unsigned long long)value);
     if (length < 0 || (size_t)length >= sizeof(buffer)) {
         fprintf(stderr, "failed to format integer\n");
         exit(1);
     }
-    return allocate_string_copy(buffer, (size_t)length);
+    *out = allocate_string_copy(buffer, (size_t)length);
 }
 
 // 128 位无符号数的四个 32 位小端 limb。手工实现十进制除法和乘法，
@@ -499,27 +514,27 @@ static String format_u128_limbs(const uint32_t input[4], int negative) {
     return string_view(result, total);
 }
 
-String __tap_format_u128(uint64_t low, uint64_t high) {
+void __tap_format_u128(String *out, uint64_t low, uint64_t high) {
     uint32_t limbs[4];
     u128_from_halves(low, high, limbs);
-    return format_u128_limbs(limbs, 0);
+    *out = format_u128_limbs(limbs, 0);
 }
 
-String __tap_format_i128(uint64_t low, uint64_t high) {
+void __tap_format_i128(String *out, uint64_t low, uint64_t high) {
     uint32_t limbs[4];
     u128_from_halves(low, high, limbs);
     int negative = (limbs[3] & UINT32_C(0x80000000)) != 0;
     if (negative) u128_twos_complement(limbs);
-    return format_u128_limbs(limbs, negative);
+    *out = format_u128_limbs(limbs, negative);
 }
 
 // 把布尔值格式化为 `true` 或 `false`。
-String __tap_format_bool(int32_t value) {
-    return value ? string_view("true", 4) : string_view("false", 5);
+void __tap_format_bool(String *out, int32_t value) {
+    *out = value ? string_view("true", 4) : string_view("false", 5);
 }
 
 // 把 Unicode 码点编码为 Runtime 管理的 UTF-8 字符串。
-String __tap_format_char(uint32_t value) {
+void __tap_format_char(String *out, uint32_t value) {
     if (value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
         fprintf(stderr, "invalid Unicode code point U+%04X\n", value);
         exit(1);
@@ -542,7 +557,7 @@ String __tap_format_char(uint32_t value) {
         result[3] = (char)(0x80 | (value & 0x3F));
     }
     result[length] = '\0';
-    return string_view(result, length);
+    *out = string_view(result, length);
 }
 
 static void invalid_numeric_string(const char *kind, String value) {
@@ -553,21 +568,21 @@ static void invalid_numeric_string(const char *kind, String value) {
 }
 
 // 手工解析无符号十进制整数，避免 strtoull 在不同平台上的 errno 行为差异。
-uint64_t __tap_parse_u64(String value) {
-    const char *text = require_c_string(value, "numeric string");
-    if (!text || value.length == 0) invalid_numeric_string("unsigned integer", value);
+uint64_t __tap_parse_u64(const String *value) {
+    const char *text = require_c_string(*value, "numeric string");
+    if (!text || value->length == 0) invalid_numeric_string("unsigned integer", *value);
     const char *cursor = text;
     if (*cursor == '+') cursor++;
-    if (!*cursor) invalid_numeric_string("unsigned integer", value);
+    if (!*cursor) invalid_numeric_string("unsigned integer", *value);
 
     uint64_t result = 0;
     for (; *cursor; cursor++) {
         if (*cursor < '0' || *cursor > '9') {
-            invalid_numeric_string("unsigned integer", value);
+            invalid_numeric_string("unsigned integer", *value);
         }
         uint64_t digit = (uint64_t)(*cursor - '0');
         if (result > (UINT64_MAX - digit) / 10) {
-            invalid_numeric_string("unsigned integer", value);
+            invalid_numeric_string("unsigned integer", *value);
         }
         result = result * 10 + digit;
     }
@@ -575,16 +590,16 @@ uint64_t __tap_parse_u64(String value) {
 }
 
 // 手工解析有符号十进制整数，同时接受 i64 的最小值。
-int64_t __tap_parse_i64(String value) {
-    const char *text = require_c_string(value, "numeric string");
-    if (!text || value.length == 0) invalid_numeric_string("integer", value);
+int64_t __tap_parse_i64(const String *value) {
+    const char *text = require_c_string(*value, "numeric string");
+    if (!text || value->length == 0) invalid_numeric_string("integer", *value);
     const char *cursor = text;
     int negative = 0;
     if (*cursor == '-' || *cursor == '+') {
         negative = *cursor == '-';
         cursor++;
     }
-    if (!*cursor) invalid_numeric_string("integer", value);
+    if (!*cursor) invalid_numeric_string("integer", *value);
 
     const uint64_t positive_limit = UINT64_C(9223372036854775807);
     const uint64_t negative_limit = UINT64_C(9223372036854775808);
@@ -592,11 +607,11 @@ int64_t __tap_parse_i64(String value) {
     uint64_t magnitude = 0;
     for (; *cursor; cursor++) {
         if (*cursor < '0' || *cursor > '9') {
-            invalid_numeric_string("integer", value);
+            invalid_numeric_string("integer", *value);
         }
         uint64_t digit = (uint64_t)(*cursor - '0');
         if (magnitude > (limit - digit) / 10) {
-            invalid_numeric_string("integer", value);
+            invalid_numeric_string("integer", *value);
         }
         magnitude = magnitude * 10 + digit;
     }
@@ -605,9 +620,9 @@ int64_t __tap_parse_i64(String value) {
     return -(int64_t)magnitude;
 }
 
-static void parse_u128_limbs(String value, uint32_t limbs[4], int is_signed) {
-    const char *text = require_c_string(value, "numeric string");
-    if (!text || value.length == 0) invalid_numeric_string("integer", value);
+static void parse_u128_limbs(const String *value, uint32_t limbs[4], int is_signed) {
+    const char *text = require_c_string(*value, "numeric string");
+    if (!text || value->length == 0) invalid_numeric_string("integer", *value);
     const char *cursor = text;
     int negative = 0;
     if (*cursor == '+' || *cursor == '-') {
@@ -615,13 +630,13 @@ static void parse_u128_limbs(String value, uint32_t limbs[4], int is_signed) {
         cursor++;
     }
     if (!*cursor || (negative && !is_signed)) {
-        invalid_numeric_string(is_signed ? "integer" : "unsigned integer", value);
+        invalid_numeric_string(is_signed ? "integer" : "unsigned integer", *value);
     }
 
     memset(limbs, 0, sizeof(uint32_t) * 4);
     for (; *cursor; cursor++) {
         if (*cursor < '0' || *cursor > '9' || u128_mul10_add(limbs, (uint32_t)(*cursor - '0'))) {
-            invalid_numeric_string(is_signed ? "integer" : "unsigned integer", value);
+            invalid_numeric_string(is_signed ? "integer" : "unsigned integer", *value);
         }
     }
 
@@ -630,52 +645,52 @@ static void parse_u128_limbs(String value, uint32_t limbs[4], int is_signed) {
     if (is_signed) {
         limit[3] = negative ? UINT32_C(0x80000000) : UINT32_C(0x7fffffff);
         if (u128_compare(limbs, limit) > 0) {
-            invalid_numeric_string("integer", value);
+            invalid_numeric_string("integer", *value);
         }
     }
     if (negative) u128_twos_complement(limbs);
 }
 
-void __tap_parse_u128(String value, uint64_t *low, uint64_t *high) {
+void __tap_parse_u128(const String *value, uint64_t *low, uint64_t *high) {
     uint32_t limbs[4];
     parse_u128_limbs(value, limbs, 0);
     u128_to_halves(limbs, low, high);
 }
 
-void __tap_parse_i128(String value, uint64_t *low, uint64_t *high) {
+void __tap_parse_i128(const String *value, uint64_t *low, uint64_t *high) {
     uint32_t limbs[4];
     parse_u128_limbs(value, limbs, 1);
     u128_to_halves(limbs, low, high);
 }
 
 // 解析布尔文本；同时接受 true/false 和 1/0，比较大小写敏感。
-int32_t __tap_parse_bool(String value) {
-    if ((value.length == 4 && memcmp(value.data, "true", 4) == 0) ||
-        (value.length == 1 && value.data[0] == '1')) return 1;
-    if ((value.length == 5 && memcmp(value.data, "false", 5) == 0) ||
-        (value.length == 1 && value.data[0] == '0')) return 0;
-    invalid_numeric_string("boolean", value);
+int32_t __tap_parse_bool(const String *value) {
+    if ((value->length == 4 && memcmp(value->data, "true", 4) == 0) ||
+        (value->length == 1 && value->data[0] == '1')) return 1;
+    if ((value->length == 5 && memcmp(value->data, "false", 5) == 0) ||
+        (value->length == 1 && value->data[0] == '0')) return 0;
+    invalid_numeric_string("boolean", *value);
     return 0;
 }
 
 // ByteVec.extend 的批量复制入口；调用方保证源长度和目标容量均足够。
 int32_t __tap_string_copy_bytes(
-    String value, uint8_t *destination, size_t length) {
-    if ((uint64_t)length > value.length) return -1;
-    memcpy(destination, value.data, length);
+    const String *value, uint8_t *destination, size_t length) {
+    if ((uint64_t)length > value->length) return -1;
+    memcpy(destination, value->data, length);
     return 0;
 }
 
 // 复制 ByteVec 的有效字节并补兼容 C API 的尾部 NUL；length 仍保留内嵌 NUL。
-String __tap_bytes_to_string(const uint8_t *data, size_t length) {
-    return allocate_string_copy(data, length);
+void __tap_bytes_to_string(String *out, const uint8_t *data, size_t length) {
+    *out = allocate_string_copy(data, length);
 }
 
 // 把 double 渲染成十进制字符串。先用 %.15g，再逐步提高精度直到结果能往返：
 // 这样 0.1 输出 "0.1"，而圆周率输出 "3.141592653589793"。
 // 精确的十进制展开需要大整数算法，交给 C 库的转换更可靠。
 // 非有限值输出 "inf" / "-inf" / "nan"，调用方需要自行处理（JSON 没有这些写法）。
-String __tap_format_f64(double value) {
+void __tap_format_f64(String *out, double value) {
     char buffer[64];
 
     // NaN 的符号位没有意义，而且各平台 0.0/0.0 产生的默认 NaN 符号并不一致
@@ -691,12 +706,12 @@ String __tap_format_f64(double value) {
     }
 
     size_t length = strlen(buffer);
-    return allocate_string_copy(buffer, length);
+    *out = allocate_string_copy(buffer, length);
 }
 
 // 与 f64 版本相同，但按 float 的有效精度寻找最短往返表示，避免
 // `3.14 as String` 先提升成 double 后暴露出 f32 的二进制尾数。
-String __tap_format_f32(float value) {
+void __tap_format_f32(String *out, float value) {
     char buffer[64];
     if (value != value) {
         snprintf(buffer, sizeof(buffer), "nan");
@@ -707,7 +722,7 @@ String __tap_format_f32(float value) {
         }
     }
     size_t length = strlen(buffer);
-    return allocate_string_copy(buffer, length);
+    *out = allocate_string_copy(buffer, length);
 }
 
 // 分配堆内存；size 为 0 时仍申请 1 字节，避免不同 C 库对 malloc(0) 的差异。
@@ -825,9 +840,9 @@ static void file_unregister(FILE *file) {
 
 // 打开文件；失败返回 NULL。mode 与 C 的 fopen 一致，调用方应带 b
 //（"rb" 读 / "wb" 写 / "ab" 追加），否则 Windows 会把 \n 翻译成 \r\n。
-void *__tap_file_open(String path, String mode) {
-    const char *path_data = require_c_string(path, "file path");
-    const char *mode_data = require_c_string(mode, "file mode");
+void *__tap_file_open(const String *path, const String *mode) {
+    const char *path_data = require_c_string(*path, "file path");
+    const char *mode_data = require_c_string(*mode, "file mode");
     if (!path_data || !mode_data) return NULL;
     FILE *file = fopen(path_data, mode_data);
     if (!file) return NULL;
@@ -846,10 +861,13 @@ int32_t __tap_file_is_open(void *handle) {
 
 // 读取最多 count 个字节，返回 Runtime 管理的字符串。
 // 已到末尾、句柄无效或读取失败时返回空字符串，用 __tap_file_eof 区分。
-String __tap_file_read(void *handle, uint64_t count) {
+void __tap_file_read(String *out, void *handle, uint64_t count) {
     FILE *file = (FILE *)handle;
     // 传空串而不是 NULL：长度为 0 时 bytes_to_string 仍会走一次 memcpy。
-    if (file_slot_of(file) < 0) return __tap_bytes_to_string((const uint8_t *)"", 0);
+    if (file_slot_of(file) < 0) {
+        __tap_bytes_to_string(out, (const uint8_t *)"", 0);
+        return;
+    }
 
     uint8_t *buffer = malloc((size_t)count + 1);
     if (!buffer) {
@@ -857,19 +875,18 @@ String __tap_file_read(void *handle, uint64_t count) {
         exit(1);
     }
     size_t received = fread(buffer, 1, (size_t)count, file);
-    String result = __tap_bytes_to_string(buffer, received);
+    __tap_bytes_to_string(out, buffer, received);
     free(buffer);
-    return result;
 }
 
 // 写入字符串的全部字节，返回实际写入的字节数；句柄无效或失败返回 -1。
-int64_t __tap_file_write(void *handle, String data) {
+int64_t __tap_file_write(void *handle, const String *data) {
     FILE *file = (FILE *)handle;
-    if (file_slot_of(file) < 0 || !data.data) return -1;
+    if (file_slot_of(file) < 0 || !data->data) return -1;
 
-    size_t length = (size_t)data.length;
+    size_t length = (size_t)data->length;
     if (length == 0) return 0;
-    size_t written = fwrite(data.data, 1, length, file);
+    size_t written = fwrite(data->data, 1, length, file);
     if (written != length) return -1;
     return (int64_t)written;
 }
@@ -890,8 +907,8 @@ int32_t __tap_file_eof(void *handle) {
 }
 
 // 删除文件；成功返回 0，失败返回 -1。
-int32_t __tap_file_remove(String path) {
-    const char *path_data = require_c_string(path, "file path");
+int32_t __tap_file_remove(const String *path) {
+    const char *path_data = require_c_string(*path, "file path");
     if (!path_data) return -1;
     return remove(path_data) == 0 ? 0 : -1;
 }
@@ -914,16 +931,16 @@ extern int pclose(FILE *stream);
 // 运行一条 shell 命令，返回 wait status。0 表示命令成功退出；非 0 表示命令不存在、
 // 非零退出或被信号打断。调用方判断「成不成功」用 `status != 0`。
 // （POSIX 下是被 << 8 编码过的 wait status，Windows 下是直接退出码。）
-int32_t __tap_system(String command) {
-    const char *command_data = require_c_string(command, "system command");
+int32_t __tap_system(const String *command) {
+    const char *command_data = require_c_string(*command, "system command");
     if (!command_data) return -1;
     return (int32_t)system(command_data);
 }
 
 // 打开管道，返回不透明句柄（只读 "r" / 只写 "w"）；失败返回 NULL。
-void *__tap_popen(String command, String mode) {
-    const char *command_data = require_c_string(command, "popen command");
-    const char *mode_data = require_c_string(mode, "popen mode");
+void *__tap_popen(const String *command, const String *mode) {
+    const char *command_data = require_c_string(*command, "popen command");
+    const char *mode_data = require_c_string(*mode, "popen mode");
     if (!command_data || !mode_data) return NULL;
     return TAP_POPEN(command_data, mode_data);
 }
@@ -938,9 +955,12 @@ int32_t __tap_pclose(void *stream) {
 // 和 __tap_file_read 的区别：不做 open_files 表登记校验，因为 popen 返回的
 // FILE* 没进过表；POSIX/Cygwin 直接对底层描述符做一次 read，Windows 用 fread，
 // 管道读取专用。读取失败或到末尾时返回空串。
-String __tap_stream_read(void *stream, uint64_t count) {
+void __tap_stream_read(String *out, void *stream, uint64_t count) {
     FILE *file = (FILE *)stream;
-    if (!file) return __tap_bytes_to_string((const uint8_t *)"", 0);
+    if (!file) {
+        __tap_bytes_to_string(out, (const uint8_t *)"", 0);
+        return;
+    }
 
     // fread() is allowed to wait until all requested elements are available.
     // That behavior is particularly troublesome for Cygwin pipes: a command
@@ -965,9 +985,8 @@ String __tap_stream_read(void *stream, uint64_t count) {
         if (result > 0) received = (size_t)result;
     }
 #endif
-    String result = __tap_bytes_to_string(buffer, received);
+    __tap_bytes_to_string(out, buffer, received);
     free(buffer);
-    return result;
 }
 
 // 句柄是否为空指针：NULL 返回 1，否则 0。popen 失败时调用方用它判断。
@@ -1089,8 +1108,8 @@ static int directory_append(
 }
 
 // 打开目录准备遍历；失败返回 NULL。条目里不含 "." 和 ".."。
-void *__tap_dir_open(String path) {
-    const char *path_data = require_c_string(path, "directory path");
+void *__tap_dir_open(const String *path) {
+    const char *path_data = require_c_string(*path, "directory path");
     if (!path_data) return NULL;
 
     TapDirectory *directory = calloc(1, sizeof(TapDirectory));
@@ -1104,7 +1123,7 @@ void *__tap_dir_open(String path) {
     }
 
 #ifdef _WIN32
-    size_t path_length = (size_t)path.length;
+    size_t path_length = (size_t)path->length;
     char *pattern = malloc(path_length + 3);
     if (!pattern) {
         free_directory(directory, 0);
@@ -1157,10 +1176,13 @@ void *__tap_dir_open(String path) {
 }
 
 // 取下一条目名；已到末尾返回空字符串。名字由 Runtime 持有，调用方不要释放。
-String __tap_dir_next(void *handle) {
+void __tap_dir_next(String *out, void *handle) {
     TapDirectory *directory = (TapDirectory *)handle;
-    if (!directory || directory->index >= directory->count) return empty_string();
-    return string_from_c(directory->names[directory->index++]);
+    if (!directory || directory->index >= directory->count) {
+        *out = empty_string();
+        return;
+    }
+    *out = string_from_c(directory->names[directory->index++]);
 }
 
 // 句柄是否有效。tap 没有空指针字面量，有效性只能由 Runtime 判断。
@@ -1176,8 +1198,8 @@ int32_t __tap_dir_close(void *handle) {
 }
 
 // path 是不是目录；不存在或不是目录都返回 0。
-int32_t __tap_path_is_directory(String path) {
-    const char *path_data = require_c_string(path, "path");
+int32_t __tap_path_is_directory(const String *path) {
+    const char *path_data = require_c_string(*path, "path");
     if (!path_data) return 0;
 #ifdef _WIN32
     DWORD attributes = GetFileAttributesA(path_data);
@@ -1192,9 +1214,9 @@ int32_t __tap_path_is_directory(String path) {
 
 // 建符号链接：link_path 指向 target。成功返回 0。
 // Windows 上需要管理员权限或开启开发者模式，失败时调用方应回退到复制。
-int32_t __tap_symlink(String target, String link_path) {
-    const char *target_data = require_c_string(target, "symlink target");
-    const char *link_data = require_c_string(link_path, "symlink path");
+int32_t __tap_symlink(const String *target, const String *link_path) {
+    const char *target_data = require_c_string(*target, "symlink target");
+    const char *link_data = require_c_string(*link_path, "symlink path");
     if (!target_data || !link_data) return -1;
 #ifdef _WIN32
     // Windows 的参数顺序和 POSIX 相反，目录链接还要额外标志。
@@ -1213,8 +1235,8 @@ int32_t __tap_symlink(String target, String link_path) {
 }
 
 // 建目录（已存在算成功）。成功返回 0。
-int32_t __tap_make_directory(String path) {
-    const char *path_data = require_c_string(path, "directory path");
+int32_t __tap_make_directory(const String *path) {
+    const char *path_data = require_c_string(*path, "directory path");
     if (!path_data) return -1;
 #ifdef _WIN32
     if (_mkdir(path_data) == 0) return 0;
@@ -1225,8 +1247,8 @@ int32_t __tap_make_directory(String path) {
 }
 
 // 删除一个条目：文件用 remove，空目录也能删掉。成功返回 0。
-int32_t __tap_remove_entry(String path) {
-    const char *path_data = require_c_string(path, "path");
+int32_t __tap_remove_entry(const String *path) {
+    const char *path_data = require_c_string(*path, "path");
     if (!path_data) return -1;
 #ifdef _WIN32
     if (RemoveDirectoryA(path_data)) return 0;
@@ -1237,10 +1259,10 @@ int32_t __tap_remove_entry(String path) {
 // 打印错误信息并以状态 1 终止程序，用于调用方无法合理恢复的情况。
 // 前缀用 `panic: ` 和编译期诊断的 `error: ` 区分开。
 // 函数不会返回；返回值只是为了让 tap 侧能把它当普通调用使用。
-int32_t __tap_panic(String message) {
+int32_t __tap_panic(const String *message) {
     fprintf(stderr, "panic: %.*s\n",
-            message.length > INT_MAX ? INT_MAX : (int)message.length,
-            message.data ? message.data : "(no message)");
+            message->length > INT_MAX ? INT_MAX : (int)message->length,
+            message->data ? message->data : "(no message)");
     exit(1);
     return 0;
 }
@@ -1370,9 +1392,9 @@ int64_t __tap_socket_send(int64_t handle, const uint8_t *buffer, uint64_t length
 }
 
 // 发送字符串的全部字节（不含结尾 NUL）；返回实际发出的字节数，失败返回 -1。
-int64_t __tap_socket_send_text(int64_t handle, String data) {
-    if (handle < 0 || !data.data) return -1;
-    return __tap_socket_send(handle, (const uint8_t *)data.data, data.length);
+int64_t __tap_socket_send_text(int64_t handle, const String *data) {
+    if (handle < 0 || !data->data) return -1;
+    return __tap_socket_send(handle, (const uint8_t *)data->data, data->length);
 }
 
 int32_t __tap_socket_close(int64_t handle) {
