@@ -14,7 +14,7 @@ fn main(){
 ## 依赖
 
 - **C 编译器**：GCC 或 Clang  
-- **LLVM**：**21**（CMake 与 Makefile 均会链接 `libLLVM`）
+- **LLVM**：**>= 21**（CMake 与 Makefile 均会链接 `libLLVM`）
 - **构建**：GNU Make 或 CMake ≥ 3.10  
 
 
