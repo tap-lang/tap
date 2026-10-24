@@ -16,7 +16,9 @@ env:
   # Cygwin 镜像同时保留多个 LLVM 版本（当前有 20/21/22/23）。setup.exe 支持
   # `-P pkg=version` 钉版本，所以下面直接把 LLVM 相关包钉在 21.1.8-2，和
   # macOS/Linux/MSVC 用的 21.x 保持一致。不钉的话 `allow-test-packages` 会拿到
-  # 最新的 23.1.1，LLVM 23 的 codegen 差异会让部分用例在 Cygwin 上崩溃。
+  # 最新的 23.1.1，各平台后端版本不一致难以归因。（注意：mixed_signedness.tp 的
+  # 崩溃不是 LLVM 版本的锅，而是 Cygwin libgcc 的 __divti3 与 LLVM Win64 libcall
+  # 约定不符，已在 runtime.c 里自带约定匹配的 __divti3 修复。）
   LLVM_VERSION: "21.1.8-2"
   CYGWIN_ROOT: D:\cygwin64
 

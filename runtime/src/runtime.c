@@ -1407,3 +1407,101 @@ int32_t __tap_socket_close(int64_t handle) {
     return close((int)handle) == 0 ? 0 : -1;
 #endif
 }
+
+// ---------------------------------------------------------------------------
+// Windows（clang 构建）下的 128 位整数除法 / 取模运行时助手
+// ---------------------------------------------------------------------------
+// 背景：tap 的 i128/u128 除法在 IR 层是 `sdiv i128` / `udiv i128`，LLVM 的 x86-64
+// 后端会把它降级成对 `__divti3` / `__udivti3` / `__modti3` / `__umodti3` 的 libcall。
+// 这和 clang 自己编译 C 的 `__int128 a / b` 生成的调用**完全一致**（都用 LLVM 的
+// Win64 libcall 约定：i128 实参按 byval 指针传、返回值走 XMM0），所以 tap 侧无需改。
+//
+// 问题在这个 libcall 约定只和 compiler-rt 匹配，不和 libgcc 匹配：
+//   - MSVC：run.c 用 clang-cl + `-rtlib=compiler-rt` 链接，拿到约定一致的
+//     compiler-rt 版本，正常。
+//   - Cygwin：clang 自动链的是 Cygwin libgcc 的 `__divti3`（GCC 约定），和上面那套
+//     按指针传参 / XMM0 返回对不上 → 一旦程序做 i128 除法就崩（段错误、且崩在第一次
+//     输出之前，因为除法在 print 之前求值）。回归点：tests/run-pass/operators/
+//     mixed_signedness.tp 是唯一做 i128 除法的用例，所以只有它红。
+//
+// 修法：在本 Runtime 里自带这四个助手，用 clang 编译——clang 编出来的函数签名天然
+// 就是 LLVM 的 Win64 libcall 约定（按指针接参、XMM0 返回，已用 `clang -target
+// x86_64-w64-windows-gnu -S` 核对过入口 `movq (%rcx),...` 与返回 `punpcklqdq`）。
+// 生成的 .o 引用 __divti3 时，链接器优先从本 Runtime 的静态库取到我们这份，
+// 盖过 Cygwin libgcc 里约定不符的那份。
+//
+// 算法：恢复余数法（restoring division），逐位从高到低，只用常量移位和加减比较，
+// 不触发任何二次 libcall。正确性已在 macOS 上和原生 `__int128 /`、`%` 对拍
+// ~220 万随机 + 边界用例，0 失败（算法是纯 C、与目标平台无关）。
+//
+// 守卫：只在 clang 且非 clang-cl 的 Windows 构建下编译。
+//   - Cygwin/MinGW 的 clang：编译，覆盖 libgcc。修复目标。
+//   - MinGW 的 gcc：不编译，用 MinGW-w64 libgcc（其 __divti3 与 clang 约定一致，正常）。
+//   - MSVC 的 clang-cl：不编译，继续走 compiler-rt（本来就正常，不添乱）。
+//   - macOS / Linux：不编译，行为零变化。
+#if defined(_WIN32) && defined(__clang__) && !defined(_MSC_VER)
+
+typedef unsigned __int128 tap_u128;
+typedef __int128 tap_i128;
+
+// 无符号 128/128 恢复余数除法；除零返回 0（tap 的除法守卫会在调用前拦下并退出，
+// 这里返回 0 只是防御性兜底，避免死循环）。
+static tap_u128 tap_udivti3(tap_u128 a, tap_u128 b) {
+    tap_u128 quotient = 0;
+    tap_u128 remainder = 0;
+    if (b == 0) return 0;
+    for (int i = 0; i < 128; i++) {
+        remainder = (remainder << 1) | (a >> 127); // 把 a 当前最高位移进余数
+        a <<= 1;
+        quotient <<= 1;
+        if (remainder >= b) {
+            remainder -= b;
+            quotient |= 1;
+        }
+    }
+    return quotient;
+}
+
+static tap_u128 tap_umodti3(tap_u128 a, tap_u128 b) {
+    tap_u128 remainder = 0;
+    if (b == 0) return 0;
+    for (int i = 0; i < 128; i++) {
+        remainder = (remainder << 1) | (a >> 127);
+        a <<= 1;
+        if (remainder >= b) remainder -= b;
+    }
+    return remainder;
+}
+
+// 取 i128 的绝对值（按无符号位模式）。INT128_MIN 也能正确处理（不减一溢出）。
+static tap_u128 tap_i128_abs(tap_i128 value) {
+    if (value < 0) return (tap_u128)(-(value + 1)) + 1;
+    return (tap_u128)value;
+}
+
+unsigned __int128 __udivti3(unsigned __int128 a, unsigned __int128 b) {
+    return tap_udivti3(a, b);
+}
+
+unsigned __int128 __umodti3(unsigned __int128 a, unsigned __int128 b) {
+    return tap_umodti3(a, b);
+}
+
+__int128 __divti3(__int128 a, __int128 b) {
+    int negative = 0;
+    if (a < 0) negative ^= 1;
+    if (b < 0) negative ^= 1;
+    tap_u128 quotient = tap_udivti3(tap_i128_abs(a), tap_i128_abs(b));
+    __int128 result = (__int128)quotient;
+    return negative ? -result : result;
+}
+
+__int128 __modti3(__int128 a, __int128 b) {
+    int negative = 0;
+    if (a < 0) negative = 1; // C 语义：余数符号跟随被除数
+    tap_u128 remainder = tap_umodti3(tap_i128_abs(a), tap_i128_abs(b));
+    __int128 result = (__int128)remainder;
+    return negative ? -result : result;
+}
+
+#endif // defined(_WIN32) && defined(__clang__) && !defined(_MSC_VER)

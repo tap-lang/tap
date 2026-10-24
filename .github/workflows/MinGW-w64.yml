@@ -57,8 +57,10 @@ jobs:
             "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-lld-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst"
 
       - name: Verify LLVM
-        # 主版本必须恰好是 21：LLVM 23 的 codegen 差异会让部分用例在 Windows 目标上
-        # 崩溃（Cygwin 上已经踩过 mixed_signedness.tp），不要拖到测试阶段才发现。
+        # 主版本必须恰好是 21：和 macOS/Linux/MSVC/Cygwin 统一，避免各平台后端版本
+        # 不一致难以归因。（mixed_signedness.tp 曾是 Cygwin 上唯一的 i128 除法用例，
+        # 崩因是 libgcc 的 __divti3 与 LLVM Win64 libcall 约定不符，已在 runtime.c
+        # 修复；和 LLVM 版本无关。）
         run: |
           llvm-config --version
           test "$(llvm-config --version | cut -d. -f1)" = "21"

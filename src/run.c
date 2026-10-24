@@ -602,9 +602,14 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     //
     // 不能加 `-rtlib=compiler-rt`：Cygwin 的 clang 包不随附 compiler-rt，
     // `clang -print-resource-dir` 是 /usr/lib/clang/21，但下面只有 include、没有 lib，
-    // 链接时会直接报 `cannot find .../libclang_rt.builtins.a`。Cygwin 的默认 rtlib 是
-    // GCC 的 libgcc，其中提供了 LLVM 为 i128 除法/取模生成的 __divti3/__modti3，
-    // 实测 i128 结果正确，所以这里保持默认。
+    // 链接时会直接报 `cannot find .../libclang_rt.builtins.a`。
+    //
+    // i128 除法/取模：LLVM 的 Win64 后端把 `sdiv i128` 降级成 __divti3/__modti3 libcall，
+    // 约定是「按 byval 指针传参、XMM0 返回」，只和 compiler-rt 匹配；Cygwin 默认 rtlib 是
+    // libgcc，它的 __divti3 是 GCC 约定，对不上 → 一做 i128 除法就段错误（崩在首次输出前，
+    // 回归点 tests/run-pass/operators/mixed_signedness.tp）。这里不依赖 libgcc 的那份：
+    // Runtime（runtime.c）在 clang 构建的 Windows 下自带了约定匹配的 __divti3/__udivti3/
+    // __modti3/__umodti3，链接静态库时优先取我们这份、盖过 libgcc。见 runtime.c 末尾注释。
     //
     // 也不加 `-no-pie`：Cygwin 的 clang 驱动不认这个参数（报 unused），Cygwin 目标本身
     // 就是非 PIE 的。
