@@ -49,6 +49,7 @@ jobs:
         # mingw-w64-x86_64-lld 22，而 lld 22 要求 llvm-libs=22，所以降级必须把 lld 一并
         # 降到 21，否则报「breaks dependency 'llvm-libs=22.1.8' required by lld」。
         run: |
+          export PATH="/mingw64/bin:$PATH"
           pacman -S --noconfirm --needed mingw-w64-x86_64-llvm
           pacman -U --noconfirm \
             "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-libs-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst" \
@@ -61,13 +62,18 @@ jobs:
         # 不一致难以归因。（mixed_signedness.tp 曾是 Cygwin 上唯一的 i128 除法用例，
         # 崩因是 libgcc 的 __divti3 与 LLVM Win64 libcall 约定不符，已在 runtime.c
         # 修复；和 LLVM 版本无关。）
+        # /mingw64/bin 必须显式进 PATH：`msys2 {0}` shell 不一定带 MINGW64 环境，
+        # llvm-config/cmake/ninja/gcc 全在 /mingw64/bin，缺了就是 exit 127。
         run: |
+          export PATH="/mingw64/bin:$PATH"
+          command -v llvm-config || { echo "::error::llvm-config 不在 PATH"; ls -la /mingw64/bin/llvm-config* 2>&1 || true; exit 1; }
           llvm-config --version
           test "$(llvm-config --version | cut -d. -f1)" = "21"
           llvm-config --cmakedir
 
       - name: Configure
         run: |
+          export PATH="/mingw64/bin:$PATH"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=gcc \
@@ -75,12 +81,16 @@ jobs:
             -DBUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel 2
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          cmake --build build --parallel 2
 
       - name: Test
         # MinGW 的 lli 没有可靠的 JIT 环境，直接走 native 模式（和 Cygwin/MSVC 一致），
-        # 每个用例生成真正的 .exe 再跑。
+        # 每个用例生成真正的 .exe 再跑。/mingw64/bin 进 PATH 也保证 tap 链接时能找到 gcc。
         env:
           TEST_JOBS: "4"
           TEST_RUN_MODE: native
-        run: sh tests/run-tests.sh ./build/tap.exe
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          sh tests/run-tests.sh ./build/tap.exe
