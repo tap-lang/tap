@@ -45,12 +45,16 @@ jobs:
       - name: Install and pin LLVM 21
         # 先装当前的 llvm 把依赖（zlib / zstd / libffi / libxml2 / libedit ...）带齐，
         # 再降级到 21.1.8-4。pacman -U 不会自动解析依赖，直接降级会报 missing dependencies。
+        # 注意：MSYS2 现在 mingw-w64-x86_64-llvm 已是 22.x，`pacman -S` 会顺带装进
+        # mingw-w64-x86_64-lld 22，而 lld 22 要求 llvm-libs=22，所以降级必须把 lld 一并
+        # 降到 21，否则报「breaks dependency 'llvm-libs=22.1.8' required by lld」。
         run: |
           pacman -S --noconfirm --needed mingw-w64-x86_64-llvm
           pacman -U --noconfirm \
             "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-libs-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst" \
             "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-tools-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst" \
-            "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst"
+            "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-llvm-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst" \
+            "$MSYS2_MINGW64_REPO/mingw-w64-x86_64-lld-$LLVM_PACKAGE_VERSION-any.pkg.tar.zst"
 
       - name: Verify LLVM
         # 主版本必须恰好是 21：LLVM 23 的 codegen 差异会让部分用例在 Windows 目标上
