@@ -13,9 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # 仅作为 Cygwin 缓存键的版本标记：Cygwin 侧实际安装的 LLVM 版本由下面的
-  # packages 列表决定（稳定版仓库仍是 LLVM 20.x，需要 test 包才能拿到 21）。
-  LLVM_RELEASE: "21.1.8"
+  # Cygwin 镜像同时保留多个 LLVM 版本（当前有 20/21/22/23）。setup.exe 支持
+  # `-P pkg=version` 钉版本，所以下面直接把 LLVM 相关包钉在 21.1.8-2，和
+  # macOS/Linux/MSVC 用的 21.x 保持一致。不钉的话 `allow-test-packages` 会拿到
+  # 最新的 23.1.1，LLVM 23 的 codegen 差异会让部分用例在 Cygwin 上崩溃。
+  LLVM_VERSION: "21.1.8-2"
   CYGWIN_ROOT: D:\cygwin64
 
 jobs:
@@ -37,22 +39,24 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CYGWIN_ROOT }}
-          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v2
+          # 版本后缀从 v2 升到 v3：旧缓存里是 LLVM 23，必须重建。
+          key: cygwin-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Prepare Cygwin
         if: steps.cygwin-cache.outputs.cache-hit != 'true'
         uses: cygwin/cygwin-install-action@v6
         with:
           install-dir: ${{ env.CYGWIN_ROOT }}
-          # Stable Cygwin still ships LLVM 20.x; this repo requires LLVM >= 21.
+          # LLVM 相关包钉死在 21.1.8-2（setup.exe 的 `-P pkg=version` 语法）。
+          # 其余包跟随镜像最新版。
           allow-test-packages: 'true'
           packages: |
-            clang
+            clang=${{ env.LLVM_VERSION }}
             cmake
             ninja
-            llvm
-            libllvm-devel
-            libpolly-devel
+            llvm=${{ env.LLVM_VERSION }}
+            libllvm-devel=${{ env.LLVM_VERSION }}
+            libpolly-devel=${{ env.LLVM_VERSION }}
             zlib-devel
             libzstd-devel
             libxml2-devel
@@ -60,9 +64,9 @@ jobs:
             git
 
       - name: Verify LLVM
-        # Cygwin 的 LLVM 来自 test packages，具体版本由镜像决定，无法像 msvc.yml 那样钉死。
-        # 因此这里显式记录版本并按 CMake 的同一条规则断言（主版本 >= 21）：拿到 20.x 或
-        # 过期的缓存时直接失败，而不是在后续测试里表现为难以定位的偶发错误。
+        # 断言「主版本恰好是 21」，而不是之前的 >= 21：Cygwin 镜像会同时保留
+        # 20/21/22/23，allow-test-packages 默认取最新（23），那样就和其它平台
+        # 用的 21.x 不一致了。版本对不上直接失败，不要拖到测试阶段。
         shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
         run: >-
           export PATH=/usr/bin:$(cygpath "${SYSTEMROOT}")/system32 &&
@@ -70,14 +74,14 @@ jobs:
           test -f /usr/lib/cmake/llvm/LLVMConfig.cmake &&
           llvm_version=$(llvm-config --version) &&
           echo "Cygwin LLVM version: ${llvm_version}" &&
-          test "${llvm_version%%.*}" -ge 21
+          test "${llvm_version%%.*}" -eq 21
 
       - name: Save Cygwin cache
         if: steps.cygwin-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CYGWIN_ROOT }}
-          key: cygwin-${{ env.LLVM_RELEASE }}-${{ runner.os }}-${{ runner.arch }}-v2
+          key: cygwin-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Configure
         shell: D:\cygwin64\bin\bash.exe --noprofile --norc -o igncr -eo pipefail '{0}'
