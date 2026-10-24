@@ -522,7 +522,22 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     }
 
     int result = 0;
-#ifdef _WIN32
+#if defined(_WIN32) && defined(__MINGW32__)
+    // MinGW-w64（目标三元组 x86_64-w64-windows-gnu）：用 GNU 驱动链接。
+    // 不能用 clang-cl —— 它按 MSVC 目标去找 MSVC 的 CRT 和 .lib，和 MinGW 的
+    // msvcrt/UCRT + libgcc 体系对不上。i128 的 __divti3 由 libgcc 提供，不用显式
+    // 指定；winsock 符号在 ws2_32 里。MinGW 没有独立的 libm（pow 在 CRT 里）。
+    const char *linker = "gcc";
+    char *const dynamic_argv[] = {
+        (char *)linker, (char *)object_file, runtime_static_path,
+        "-o", (char *)exe_file, (char *)"-lws2_32", NULL
+    };
+    char *const static_argv[] = {
+        (char *)linker, (char *)"-static", (char *)object_file, runtime_static_path,
+        "-o", (char *)exe_file, (char *)"-lws2_32", NULL
+    };
+    result = run_process(static_link ? static_argv : dynamic_argv);
+#elif defined(_WIN32)
     // Match the Runtime's static MSVC CRT so generated objects and Runtime use one CRT.
     char output_option[RUN_PATH_MAX + 4];
     int output_length = snprintf(output_option, sizeof(output_option), "/Fe%s", exe_file);

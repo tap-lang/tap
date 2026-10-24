@@ -107,7 +107,9 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 
 指数是小数或负数时没法用快速幂算，必须走 libm。**这是 Runtime 里唯一需要 `-lm` 的符号**：
 macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的链接命令显式带了 `-lm`
-（放在目标文件之后），因为 glibc 2.34 之前 libm 是独立的。
+（放在目标文件之后），因为 glibc 2.34 之前 libm 是独立的。Windows 的 msvcrt/UCRT 自带
+`pow`，MSVC（clang-cl）和 MinGW（gcc）都不需要 `-lm`；MinGW 额外要 `-lws2_32` 提供
+winsock 符号，MSVC 则是 `ws2_32.lib`。
 
 ## 标准流输出 ABI
 

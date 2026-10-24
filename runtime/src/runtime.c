@@ -11,6 +11,8 @@
 
 #ifdef _WIN32
 #include <conio.h>
+// _mkdir 声明在 direct.h 里。MSVC 的 io.h 会顺带带进来，MinGW 不保证，显式包含。
+#include <direct.h>
 #include <io.h>
 // winsock2.h 必须先于 windows.h：windows.h 会拉进老的 winsock.h，两者一起用会冲突。
 #include <winsock2.h>

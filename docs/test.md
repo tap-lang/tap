@@ -91,4 +91,10 @@ Cygwin 的 `lli` 有两个限制，导致 `fast` 模式固定有 5 个用例失�
   的 `[String; 256]`（8KB 栈数组）就会触发。
 
 这两个问题都出自 `lli`，无法在 tap 侧规避，因此 `.github/workflows/cygwin.yml`
-固定使用 `TEST_RUN_MODE=native`（实测 88/88 全过）。
+固定使用 `TEST_RUN_MODE=native`。
+
+### MinGW-w64 也走 native 模式
+
+`.github/workflows/MinGW-w64.yml` 同样固定 `TEST_RUN_MODE=native`：MinGW 的 `lli` 依赖
+MSYS2 运行时的 JIT 环境，行为不稳定；直接生成真正的 `.exe` 再跑更接近用户实际场景，
+也能顺带验证 gcc 链接（`-lws2_32`、libgcc 的 `__divti3`）。

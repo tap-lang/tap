@@ -17,6 +17,12 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
+# MinGW-w64 的 _WIN32_WINNT 默认值随版本变化；显式定到 Vista+，保证
+# GetTickCount64 / CreateSymbolicLinkA 等声明可见（src/run.c、runtime.c 用到）。
+if(MINGW)
+    add_definitions(-D_WIN32_WINNT=0x0601)
+endif()
+
 # 设置编译器
 # set(CMAKE_C_COMPILER "clang")
 # set(CMAKE_CXX_COMPILER "clang++")

@@ -7,6 +7,7 @@ Clang 使用 target triple 来指定目标平台，格式为：`架构-供应商
 - `arm64-apple-darwin`：64 位 macOS 平台
 - `x86-64-apple-darwin`：64 位 macOS 平台
 - `x86_64-pc-windows-cygnus` 64 位 Windows 平台，使用 Cygwin
+- `x86_64-w64-windows-gnu`：64 位 Windows 平台，使用 MinGW-w64（原生 PE，不依赖 POSIX 层）
 
 ### 查看支持的 Target
 ```sh
