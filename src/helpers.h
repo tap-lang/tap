@@ -9,6 +9,10 @@
 
 // 「不返回」标注。诊断出口内部是 exit(1)，标出来之后调用方的控制流分析才正确 ——
 // 否则 `if (bad) report_error(...);` 后面会被认为存在「没 return」的路径。
+//
+// 必须写在**返回类型前面**：GCC/Clang 的 `__attribute__` 两种位置都接受，但 MSVC 的
+// `__declspec(noreturn)` 放在参数列表后面会被当成参数的一部分，报
+// `C2085: not in formal parameter list`。
 #if defined(__GNUC__) || defined(__clang__)
 #define TAP_NORETURN __attribute__((noreturn))
 #elif defined(_MSC_VER)
@@ -25,22 +29,22 @@ void print_diagnostic(FILE *output, const char *level, const char *filename,
 // 变参版本：供需要转发 va_list 的包装函数使用。
 void vprint_diagnostic(FILE *output, const char *level, const char *filename,
                        int line, int column, const char *format, va_list arguments);
-// 用节点自带的位置打印诊断。节点没有位置信息时退化成 <unknown>:0:0。
+// 用节点自带的位置打印诊断。节点没有位置信息时只输出一句话，不打位置行。
 void print_node_diagnostic(FILE *output, const char *level,
                            const ASTNode *node, const char *format, ...);
 
 // 报告一条语义错误并终止编译。
 //
-// node 用于取源码位置，可以传 NULL（位置退化成 <unknown>:0:0）。
+// node 用于取源码位置，可以传 NULL（此时只输出一句话，不打位置行）。
 //
 // 这是所有语义诊断的**统一出口**：格式、位置、源码上下文只有一份实现。
 // 以前是散在各处的 `fprintf(stderr, "error: ..."); exit(1);`，格式靠手写、
 // 大部分不带位置。将来要改成「累积错误」或「结构化诊断（JSON）」，只改这里。
-void report_error(const ASTNode *node, const char *format, ...) TAP_NORETURN;
+TAP_NORETURN void report_error(const ASTNode *node, const char *format, ...);
 
 // 无位置版本：只跟名字或常量有关、拿不到节点时用。
-void report_error_at(const char *filename, int line, int column,
-                     const char *format, ...) TAP_NORETURN;
+TAP_NORETURN void report_error_at(const char *filename, int line, int column,
+                                  const char *format, ...);
 void print_code_line(FILE *output, const char *source_code, int line, int context_lines);
 
 #endif
