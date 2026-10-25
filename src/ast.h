@@ -93,10 +93,24 @@ enum BinaryOpType {
     OP_SHIFT_RIGHT                  // 右移 >>
 };
 
+// 源码位置。
+//
+// file 指向 Lexer 持有的文件名，节点不拥有它，free_ast 不释放；同一个文件里的
+// 所有节点共享同一个指针。line / column 从 1 开始，全 0 表示位置未知。
+//
+// 位置统一放在 ASTNode 里，而不是让每个节点各存一份三字段：诊断代码只需要
+// `node->loc`，不必先知道具体节点类型。
+typedef struct {
+    const char *file;
+    uint32_t line;
+    uint32_t column;
+} SourceLoc;
+
 // 基础AST节点结构
 typedef struct ASTNode {
     enum NodeType type;             // 节点类型
     struct ASTNode *next;           // 用于链表结构
+    SourceLoc loc;                  // 源码位置；未知时全 0
 } ASTNode;
 
 // 程序节点
@@ -413,6 +427,13 @@ typedef struct {
     int line;
     int column;
 } ImplNode;
+
+// 把源文件名登记成进程级常量，同一个路径只保留一份，返回的指针永久有效。
+//
+// SourceLoc.file 需要在整个编译过程里保持有效，而 Lexer 的 filename 是借用的
+// （module.c / prelude.c 解析完就释放路径）。节点又不能各自 strdup 一份，
+// 所以统一走这里。
+const char *intern_source_file(const char *path);
 
 // 创建节点的函数声明
 ProgramNode *create_program();

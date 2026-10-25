@@ -1,0 +1,21 @@
+// bool 不是整数：同一次调用的两个实参不能把 T 同时绑定成 bool 和 i32。
+//
+// 修复前 `scalar_types_unifiable`（旧名 scalar_types_compatible）把 bool 算进整数，
+// 于是 `pair(true, 7)` 推断出 T=bool，`7` 被当成 bool 用，最后报出来的是下游的
+// 「initializer type mismatch for 'x'」—— 位置和原因都指错了方向。
+fn pair<T>(a: T, b: T): T {
+    return b;
+}
+
+fn main(): i32 {
+    let x: i32 = pair(true, 7);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot infer compatible generic arguments for 'pair'
+bool_int_generic_arguments.tp:11:18
+- .exit
+1
+-- */

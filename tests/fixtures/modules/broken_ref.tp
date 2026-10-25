@@ -1,0 +1,7 @@
+// 供 compile-fail/modules/module_undefined_variable.tp 使用。
+//
+// 模块内部的未定义引用：诊断位置必须指向这个文件（模块源文件），而不是入口文件。
+// module.c 解析完就会释放模块路径字符串，所以节点的位置必须走 intern 表。
+pub fn broken(): i32 {
+    return missing_value;
+}

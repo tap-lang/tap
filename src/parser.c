@@ -57,6 +57,24 @@ static void consume(Parser *parser, enum TokenType expected_type) {
     }
 }
 
+// 取当前 token 的源码位置。文件名走 intern 表，节点只借用指针、不负责释放。
+static SourceLoc current_location(Parser *parser) {
+    SourceLoc loc;
+    loc.file = intern_source_file(parser->lexer->filename);
+    loc.line = (uint32_t)parser->current_token->line;
+    loc.column = (uint32_t)parser->current_token->column;
+    return loc;
+}
+
+// 给节点打上源码位置。已经有位置的节点不覆盖 —— 内层（更精确）优先。
+//
+// 只需要在 parse_statement / parse_expression 两个入口调用：递归下降里所有语句和
+// 表达式都会经过它们，所以不必在 70 多处 create_* 调用点逐个设置。
+static void stamp_location(ASTNode *node, SourceLoc loc) {
+    if (!node || node->loc.file) return;
+    node->loc = loc;
+}
+
 // 前置声明
 static ASTNode *parse_expression(Parser *parser); // 解析表达式（逻辑或、逻辑与、比较、加减、乘除取模）
 static ASTNode *parse_logical_or(Parser *parser); // 解析逻辑或 ||
@@ -492,11 +510,15 @@ static ASTNode *parse_match(Parser *parser, int as_value);
 
 // 解析一条语句；不消费包围代码块的右大括号。
 static ASTNode *parse_statement(Parser *parser) {
+    // 位置取语句首 token：var_decl / return / if 都会先消费关键字再建节点，
+    // 那时 current_token 已经前移，所以必须在分发之前记下来。
+    SourceLoc start = current_location(parser);
+    ASTNode *node = NULL;
+
     if (parser->current_token->type == TOKEN_LET ||
         parser->current_token->type == TOKEN_CONST) {
-        return (ASTNode *)parse_var_decl(parser, 1);
-    }
-    if (parser->current_token->type == TOKEN_RETURN) {
+        node = (ASTNode *)parse_var_decl(parser, 1);
+    } else if (parser->current_token->type == TOKEN_RETURN) {
         // 解析返回语句
         consume(parser, TOKEN_RETURN);
 
@@ -504,30 +526,27 @@ static ASTNode *parse_statement(Parser *parser) {
         ASTNode *expression = parse_expression(parser);
 
         consume(parser, TOKEN_SEMICOLON);
-        return (ASTNode *)create_return(expression);
-    }
-    if (parser->current_token->type == TOKEN_IF) {
-        return parse_if_statement(parser);
-    }
-    if (parser->current_token->type == TOKEN_FOR) {
-        return parse_for_statement(parser);
-    }
-    if (parser->current_token->type == TOKEN_WHILE) {
-        return parse_while_statement(parser);
-    }
-    if (parser->current_token->type == TOKEN_BREAK ||
-        parser->current_token->type == TOKEN_CONTINUE) {
-        return parse_loop_control_statement(parser);
-    }
-    if (parser->current_token->type == TOKEN_MATCH) {
-        return parse_match(parser, 0);
-    }
-    if (is_module_component(parser->current_token)) {
-        return parse_expression_statement(parser);
+        node = (ASTNode *)create_return(expression);
+    } else if (parser->current_token->type == TOKEN_IF) {
+        node = parse_if_statement(parser);
+    } else if (parser->current_token->type == TOKEN_FOR) {
+        node = parse_for_statement(parser);
+    } else if (parser->current_token->type == TOKEN_WHILE) {
+        node = parse_while_statement(parser);
+    } else if (parser->current_token->type == TOKEN_BREAK ||
+               parser->current_token->type == TOKEN_CONTINUE) {
+        node = parse_loop_control_statement(parser);
+    } else if (parser->current_token->type == TOKEN_MATCH) {
+        node = parse_match(parser, 0);
+    } else if (is_module_component(parser->current_token)) {
+        node = parse_expression_statement(parser);
+    } else {
+        parser_error(parser, "expected statement"); // 中文：期望语句
+        return NULL;
     }
 
-    parser_error(parser, "expected statement"); // 中文：期望语句
-    return NULL;
+    stamp_location(node, start);
+    return node;
 }
 
 static ASTNode *parse_block(Parser *parser) {
@@ -1500,7 +1519,12 @@ static ASTNode *parse_logical_or(Parser *parser) {
 }
 
 static ASTNode *parse_expression(Parser *parser) {
-    return parse_logical_or(parser);
+    // 位置取表达式首 token。递归进入内层时，内层会先 stamp，外层的 stamp_location
+    // 看到已有位置就跳过，所以每个节点留下的是自己最内层的起始位置。
+    SourceLoc start = current_location(parser);
+    ASTNode *node = parse_logical_or(parser);
+    stamp_location(node, start);
+    return node;
 }
 
 // 解析程序

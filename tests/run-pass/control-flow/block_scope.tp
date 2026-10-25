@@ -1,0 +1,65 @@
+// 块作用域：if 分支、for 循环、match 分支里声明的变量，出了各自的块就不可见。
+//
+// 历史 bug：符号表是单一链表，进入块时既不记录也不恢复表头，块内 `let`
+// 声明的变量会泄漏到块外，并且和块外的同名变量互相覆盖。因为槽位统一分配在
+// 入口块，泄漏出去的名字读到的是未初始化（或已过期）的值 —— 不报错、不警告。
+//
+// 这里用「同名遮蔽」来暴露它：三个函数都返回一个外层变量，修复前会被内层的
+// 同名声明改掉，修复后必须保持原值。
+
+enum Shape {
+    Dot(i32),
+    Empty,
+}
+
+// 两个分支各自声明同名 local，互不干扰。
+fn classify(flag: i32): i32 {
+    let result: i32 = 0;
+    if (flag == 0) {
+        let local: i32 = 11;
+        result = local;
+    } else {
+        let local: i32 = 22;
+        result = local;
+    }
+    return result;
+}
+
+// 循环变量遮蔽外层的 index；循环结束后必须还是 99，不是 3。
+fn shadowed_counter(): i32 {
+    let index: i32 = 99;
+    for (let index: i32 = 0; index < 3; index++) {
+        let step: i32 = index;
+    }
+    return index;
+}
+
+// match 的载荷绑定遮蔽外层的 value；分支结束后必须还是 5，不是 7。
+fn payload_is_local(): i32 {
+    let value: i32 = 5;
+    let shape: Shape = Shape.Dot(7);
+    match (shape) {
+        Shape.Dot(value) => {
+            let bound: i32 = value;
+        }
+        Shape.Empty => {
+        }
+    }
+    return value;
+}
+
+fn main(): i32 {
+    print("classify: %d %d\n", classify(0), classify(1));
+    print("shadowed_counter: %d\n", shadowed_counter());
+    print("payload_is_local: %d\n", payload_is_local());
+    return 0;
+}
+
+/** -- test
+- .stdout
+classify: 11 22
+shadowed_counter: 99
+payload_is_local: 5
+- .exit
+0
+-- */

@@ -4,7 +4,7 @@
 #include "ast.h"
 
 // Forward declaration of Symbol struct
-typedef struct Symbol Symbol;
+// typedef struct Symbol Symbol;
 
 // 在现有头文件包含部分添加以下内容
 #include <llvm-c/Core.h>

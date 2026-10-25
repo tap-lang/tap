@@ -1,0 +1,15 @@
+// 块内声明的变量出了块就不可见：if 分支里的 `let` 不能被块外的代码引用。
+fn main(): i32 {
+    if (1 == 1) {
+        let hidden: i32 = 7;
+    }
+    print("%d\n", hidden);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: undefined variable 'hidden'
+- .exit
+1
+-- */

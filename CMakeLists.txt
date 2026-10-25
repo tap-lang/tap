@@ -70,6 +70,7 @@ add_executable(tap
     src/main.c
     src/helpers.c
     src/ast.c
+    src/types.c
     src/parser.c
     src/module.c
     src/generics.c

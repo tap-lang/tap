@@ -1,5 +1,44 @@
 #include "ast.h"
 #include <inttypes.h>
+#include <stdlib.h>
+#include <string.h>
+
+// 源文件名 intern 表。
+//
+// SourceLoc.file 要在整个编译过程里保持有效，而 Lexer 的 filename 是借用的：
+// module.c / prelude.c 解析完就把路径 free 掉。节点也不能各自 strdup 一份
+// （几万个节点就是几万份文件名，free_ast 还得逐个释放）。所以做进程级 intern：
+// 同一个路径只存一份，永不释放，进程退出时由操作系统回收。
+static const char **interned_files = NULL;
+static size_t interned_file_count = 0;
+static size_t interned_file_capacity = 0;
+
+const char *intern_source_file(const char *path) {
+    if (!path) return NULL;
+
+    for (size_t i = 0; i < interned_file_count; i++) {
+        if (strcmp(interned_files[i], path) == 0) return interned_files[i];
+    }
+
+    if (interned_file_count == interned_file_capacity) {
+        size_t capacity = interned_file_capacity ? interned_file_capacity * 2 : 8;
+        const char **grown = realloc(interned_files, capacity * sizeof(char *));
+        if (!grown) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+        interned_files = grown;
+        interned_file_capacity = capacity;
+    }
+
+    char *copy = strdup(path);
+    if (!copy) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    interned_files[interned_file_count++] = copy;
+    return copy;
+}
 
 static void print_indent(int depth) {
     for (int i = 0; i < depth; i++) {
@@ -513,7 +552,7 @@ void print_ast(const ProgramNode *program) {
 
 // 创建程序节点
 ProgramNode *create_program() {
-    ProgramNode *program = (ProgramNode *)malloc(sizeof(ProgramNode));
+    ProgramNode *program = (ProgramNode *)calloc(1, sizeof(ProgramNode));
     if (!program) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -533,7 +572,7 @@ ProgramNode *create_program() {
 ImportNode *create_import(
     const char *module_name, const char *member, const char *alias, int is_wildcard,
     const char *filename, int line, int column) {
-    ImportNode *import_node = (ImportNode *)malloc(sizeof(ImportNode));
+    ImportNode *import_node = (ImportNode *)calloc(1, sizeof(ImportNode));
     if (!import_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -552,7 +591,7 @@ ImportNode *create_import(
 
 // 创建函数节点
 FunctionNode *create_function(char *name) {
-    FunctionNode *function = (FunctionNode *)malloc(sizeof(FunctionNode));
+    FunctionNode *function = (FunctionNode *)calloc(1, sizeof(FunctionNode));
     if (!function) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -577,7 +616,7 @@ FunctionNode *create_function(char *name) {
 
 // 创建枚举声明节点，成员稍后通过 add_enum_variant 追加。
 EnumNode *create_enum(char *name) {
-    EnumNode *enum_node = (EnumNode *)malloc(sizeof(EnumNode));
+    EnumNode *enum_node = (EnumNode *)calloc(1, sizeof(EnumNode));
     if (!enum_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -606,7 +645,7 @@ void add_enum_type_param(EnumNode *enum_node, IdentifierNode *type_param) {
 
 // 创建一个枚举成员声明；载荷类型后续由 add_enum_variant_payload 追加。
 EnumVariantNode *create_enum_variant(char *name) {
-    EnumVariantNode *variant = (EnumVariantNode *)malloc(sizeof(EnumVariantNode));
+    EnumVariantNode *variant = (EnumVariantNode *)calloc(1, sizeof(EnumVariantNode));
     if (!variant) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -626,7 +665,7 @@ EnumVariantNode *create_enum_variant(char *name) {
 
 // 创建结构体声明节点，字段稍后通过 add_struct_field 追加。
 StructNode *create_struct(char *name) {
-    StructNode *struct_node = (StructNode *)malloc(sizeof(StructNode));
+    StructNode *struct_node = (StructNode *)calloc(1, sizeof(StructNode));
     if (!struct_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -644,7 +683,7 @@ StructNode *create_struct(char *name) {
 
 // 创建结构体字段声明节点，接管 field_type 的所有权。
 StructFieldNode *create_struct_field(char *name, VarTypeNode *field_type) {
-    StructFieldNode *field = (StructFieldNode *)malloc(sizeof(StructFieldNode));
+    StructFieldNode *field = (StructFieldNode *)calloc(1, sizeof(StructFieldNode));
     if (!field) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -658,7 +697,7 @@ StructFieldNode *create_struct_field(char *name, VarTypeNode *field_type) {
 
 // 创建结构体字面量节点，字段稍后通过 add_struct_init_field 追加。
 StructLiteralNode *create_struct_literal(char *struct_name) {
-    StructLiteralNode *literal = (StructLiteralNode *)malloc(sizeof(StructLiteralNode));
+    StructLiteralNode *literal = (StructLiteralNode *)calloc(1, sizeof(StructLiteralNode));
     if (!literal) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -674,7 +713,7 @@ StructLiteralNode *create_struct_literal(char *struct_name) {
 // 创建结构体初始化字段节点，接管 expression 的所有权。
 StructInitFieldNode *create_struct_init_field(char *name, ASTNode *expression) {
     StructInitFieldNode *field =
-        (StructInitFieldNode *)malloc(sizeof(StructInitFieldNode));
+        (StructInitFieldNode *)calloc(1, sizeof(StructInitFieldNode));
     if (!field) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -688,7 +727,7 @@ StructInitFieldNode *create_struct_init_field(char *name, ASTNode *expression) {
 
 // 创建标识符节点
 IdentifierNode *create_identifier(char *name) {
-    IdentifierNode *identifier = (IdentifierNode *)malloc(sizeof(IdentifierNode));
+    IdentifierNode *identifier = (IdentifierNode *)calloc(1, sizeof(IdentifierNode));
     if (!identifier) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -703,7 +742,7 @@ IdentifierNode *create_identifier(char *name) {
 
 // 创建整数字面量节点
 LiteralNode *create_int_literal(uint64_t value) {
-    LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
+    LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
     if (!literal) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -724,7 +763,7 @@ LiteralNode *create_int_literal_text(const char *value) {
 
 // 创建字符串字面量节点
 LiteralNode *create_string_literal(char *value) {
-    LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
+    LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
     if (!literal) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -739,7 +778,7 @@ LiteralNode *create_string_literal(char *value) {
 
 // 创建浮点数字面量节点
 LiteralNode *create_float_literal(double value) {
-    LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
+    LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
     if (!literal) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -754,7 +793,7 @@ LiteralNode *create_float_literal(double value) {
 
 // 创建布尔字面量节点
 LiteralNode *create_bool_literal(int value) {
-    LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
+    LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
     if (!literal) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -769,7 +808,7 @@ LiteralNode *create_bool_literal(int value) {
 
 // 创建 Unicode 字符（码点）字面量节点。
 LiteralNode *create_char_literal(uint32_t value) {
-    LiteralNode *literal = (LiteralNode *)malloc(sizeof(LiteralNode));
+    LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
     if (!literal) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -784,7 +823,7 @@ LiteralNode *create_char_literal(uint32_t value) {
 
 // 创建返回语句节点
 ReturnNode *create_return(ASTNode *expression) {
-    ReturnNode *return_node = (ReturnNode *)malloc(sizeof(ReturnNode));
+    ReturnNode *return_node = (ReturnNode *)calloc(1, sizeof(ReturnNode));
     if (!return_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -797,7 +836,7 @@ ReturnNode *create_return(ASTNode *expression) {
 
 // 创建二元操作节点
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right) {
-    BinaryOpNode *binary_op = (BinaryOpNode *)malloc(sizeof(BinaryOpNode));
+    BinaryOpNode *binary_op = (BinaryOpNode *)calloc(1, sizeof(BinaryOpNode));
     if (!binary_op) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -812,7 +851,7 @@ BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode
 
 // 创建取地址表达式节点，并接管 target 的所有权。
 ReferenceNode *create_reference(ASTNode *target) {
-    ReferenceNode *reference = (ReferenceNode *)malloc(sizeof(ReferenceNode));
+    ReferenceNode *reference = (ReferenceNode *)calloc(1, sizeof(ReferenceNode));
     if (!reference) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -825,7 +864,7 @@ ReferenceNode *create_reference(ASTNode *target) {
 
 // 创建 sizeof(T) 表达式节点，并接管 operand_type 的所有权。
 SizeofNode *create_sizeof(VarTypeNode *operand_type) {
-    SizeofNode *size_expression = (SizeofNode *)malloc(sizeof(SizeofNode));
+    SizeofNode *size_expression = (SizeofNode *)calloc(1, sizeof(SizeofNode));
     if (!size_expression) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -838,7 +877,7 @@ SizeofNode *create_sizeof(VarTypeNode *operand_type) {
 
 // 创建显式类型转换节点，并接管 expression / target_type 的所有权。
 CastNode *create_cast(ASTNode *expression, VarTypeNode *target_type) {
-    CastNode *cast = (CastNode *)malloc(sizeof(CastNode));
+    CastNode *cast = (CastNode *)calloc(1, sizeof(CastNode));
     if (!cast) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -855,7 +894,7 @@ CastNode *create_cast(ASTNode *expression, VarTypeNode *target_type) {
 
 // 创建变量类型节点
 VarTypeNode *create_var_type(enum LiteralType type) {
-    VarTypeNode *var_type = (VarTypeNode *)malloc(sizeof(VarTypeNode));
+    VarTypeNode *var_type = (VarTypeNode *)calloc(1, sizeof(VarTypeNode));
     if (!var_type) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -942,7 +981,7 @@ VarTypeNode *create_pointer_type(VarTypeNode *element_type) {
 
 VarDeclNode *create_var_decl(
     char *name, VarTypeNode *type, ASTNode *expression, int is_const) {
-    VarDeclNode *var_decl = (VarDeclNode *)malloc(sizeof(VarDeclNode));
+    VarDeclNode *var_decl = (VarDeclNode *)calloc(1, sizeof(VarDeclNode));
     if (!var_decl) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -958,7 +997,7 @@ VarDeclNode *create_var_decl(
 }
 
 AssignmentNode *create_assignment(const char *name, ASTNode *expression) {
-    AssignmentNode *assignment = (AssignmentNode *)malloc(sizeof(AssignmentNode));
+    AssignmentNode *assignment = (AssignmentNode *)calloc(1, sizeof(AssignmentNode));
     if (!assignment) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1038,7 +1077,7 @@ IndexAssignmentNode *create_index_assignment(
 }
 
 FunctionCallNode *create_function_call(const char *name) {
-    FunctionCallNode *function_call = (FunctionCallNode *)malloc(sizeof(FunctionCallNode));
+    FunctionCallNode *function_call = (FunctionCallNode *)calloc(1, sizeof(FunctionCallNode));
     if (!function_call) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1190,7 +1229,7 @@ void add_enum_variant_payload(EnumVariantNode *variant, VarTypeNode *type) {
 // 创建 match 解构语句节点。
 MatchStatementNode *create_match_statement(ASTNode *expression) {
     MatchStatementNode *statement =
-        (MatchStatementNode *)malloc(sizeof(MatchStatementNode));
+        (MatchStatementNode *)calloc(1, sizeof(MatchStatementNode));
     if (!statement) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1203,7 +1242,7 @@ MatchStatementNode *create_match_statement(ASTNode *expression) {
 }
 
 TryNode *create_try(ASTNode *inner) {
-    TryNode *node = (TryNode *)malloc(sizeof(TryNode));
+    TryNode *node = (TryNode *)calloc(1, sizeof(TryNode));
     if (!node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1219,7 +1258,7 @@ TryNode *create_try(ASTNode *inner) {
 
 // 创建 match 分支；enum_name 与 variant_name 同时为 NULL 表示通配分支。
 MatchArmNode *create_match_arm(char *enum_name, char *variant_name) {
-    MatchArmNode *arm = (MatchArmNode *)malloc(sizeof(MatchArmNode));
+    MatchArmNode *arm = (MatchArmNode *)calloc(1, sizeof(MatchArmNode));
     if (!arm) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1368,7 +1407,7 @@ static void append_node(ASTNode **list, ASTNode *node) {
 
 TraitMethodNode *create_trait_method(
     const char *name, const char *filename, int line, int column) {
-    TraitMethodNode *method = (TraitMethodNode *)malloc(sizeof(TraitMethodNode));
+    TraitMethodNode *method = (TraitMethodNode *)calloc(1, sizeof(TraitMethodNode));
     if (!method) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1386,7 +1425,7 @@ TraitMethodNode *create_trait_method(
 }
 
 TraitNode *create_trait(const char *name, const char *filename, int line, int column) {
-    TraitNode *trait_node = (TraitNode *)malloc(sizeof(TraitNode));
+    TraitNode *trait_node = (TraitNode *)calloc(1, sizeof(TraitNode));
     if (!trait_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1405,7 +1444,7 @@ TraitNode *create_trait(const char *name, const char *filename, int line, int co
 ImplNode *create_impl(
     const char *trait_name, const char *type_name,
     const char *filename, int line, int column) {
-    ImplNode *impl_node = (ImplNode *)malloc(sizeof(ImplNode));
+    ImplNode *impl_node = (ImplNode *)calloc(1, sizeof(ImplNode));
     if (!impl_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1438,7 +1477,7 @@ void add_trait_method_param_type(TraitMethodNode *method, VarTypeNode *type) {
 }
 
 void add_impl_method(ImplNode *impl_node, FunctionNode *function) {
-    ImplMethodLink *link = (ImplMethodLink *)malloc(sizeof(ImplMethodLink));
+    ImplMethodLink *link = (ImplMethodLink *)calloc(1, sizeof(ImplMethodLink));
     if (!link) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1456,7 +1495,7 @@ void add_type_param_bound(IdentifierNode *type_param, VarTypeNode *bound) {
 
 // 创建条件语句节点
 IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, ASTNode *alternative) {
-    IfStatementNode *if_node = (IfStatementNode *)malloc(sizeof(IfStatementNode));
+    IfStatementNode *if_node = (IfStatementNode *)calloc(1, sizeof(IfStatementNode));
     if (!if_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1471,7 +1510,7 @@ IfStatementNode *create_if_statement(ASTNode *condition, ASTNode *consequence, A
 
 ForStatementNode *create_for_statement(
     ASTNode *initializer, ASTNode *condition, ASTNode *update, ASTNode *body) {
-    ForStatementNode *for_node = (ForStatementNode *)malloc(sizeof(ForStatementNode));
+    ForStatementNode *for_node = (ForStatementNode *)calloc(1, sizeof(ForStatementNode));
     if (!for_node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);
@@ -1486,7 +1525,7 @@ ForStatementNode *create_for_statement(
 }
 
 static ASTNode *create_control_statement(enum NodeType type) {
-    ASTNode *node = (ASTNode *)malloc(sizeof(ASTNode));
+    ASTNode *node = (ASTNode *)calloc(1, sizeof(ASTNode));
     if (!node) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
         exit(1);

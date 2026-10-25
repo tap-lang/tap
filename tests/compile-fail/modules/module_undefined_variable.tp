@@ -1,0 +1,19 @@
+// 模块内部的未定义引用：诊断必须指向模块源文件（而不是入口文件），并且位置
+// 要准确到行、列。
+//
+// 这里同时守住一个生命周期约束：module.c 解析完模块就 free 掉路径字符串，
+// 所以节点上的位置不能借用 Lexer 的 filename，必须走 ast.c 的 intern 表。
+// 路径只写文件名片段，避免测试依赖工作目录。
+import modules.broken_ref as ref;
+
+fn main(): i32 {
+    return ref.broken();
+}
+
+/** -- test
+- .stderr
+error: undefined variable 'missing_value'
+broken_ref.tp:6:12
+- .exit
+1
+-- */

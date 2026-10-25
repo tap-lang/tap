@@ -1,0 +1,23 @@
+// bool 作为泛型实参本身完全正常，只是不能和整数绑定到**同一个**类型参数。
+// 两次调用各自推断，生成两个独立实例（`identity$bool` / `identity$i32`）。
+fn identity<T>(value: T): T {
+    return value;
+}
+
+fn main(): i32 {
+    let flag: bool = identity(true);
+    let number: i32 = identity(7);
+    if (flag) {
+        print("flag ok\n");
+    }
+    print("number: %d\n", number);
+    return 0;
+}
+
+/** -- test
+- .stdout
+flag ok
+number: 7
+- .exit
+0
+-- */

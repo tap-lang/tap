@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "helpers.h"
+#include "types.h"
 
 typedef struct TypeBinding {
     char *name;
@@ -24,69 +25,8 @@ typedef struct {
 } GenericContext;
 
 static char *type_key(const VarTypeNode *type);
-static VarTypeNode *clone_type(const VarTypeNode *source);
-
-// 复制具名类型携带的泛型实参。
-static void clone_type_arguments(VarTypeNode *destination, ASTNode *arguments) {
-    for (ASTNode *argument = arguments; argument; argument = argument->next) {
-        add_var_type_argument(
-            destination, clone_type((VarTypeNode *)argument));
-    }
-}
-
-// 深拷贝一个完整类型节点。
-static VarTypeNode *clone_type(const VarTypeNode *source) {
-    if (!source) return NULL;
-    if (source->is_pointer) {
-        return create_pointer_type(clone_type(source->element_type));
-    }
-    if (source->is_array) {
-        return create_array_type(
-            clone_type(source->element_type), source->array_length);
-    }
-    if (source->struct_name) {
-        VarTypeNode *copy = create_struct_type(source->struct_name);
-        clone_type_arguments(copy, source->type_arguments);
-        return copy;
-    }
-    if (source->enum_name) {
-        VarTypeNode *copy = create_enum_type(source->enum_name);
-        clone_type_arguments(copy, source->type_arguments);
-        return copy;
-    }
-    return create_var_type(source->type);
-}
-
-// 比较两个尚未降低到 LLVM 的完整类型。
-static int type_equal(const VarTypeNode *left, const VarTypeNode *right) {
-    if (!left || !right) return left == right;
-    if (left->is_pointer != right->is_pointer ||
-        left->is_array != right->is_array) {
-        return 0;
-    }
-    if (left->is_pointer) {
-        return type_equal(left->element_type, right->element_type);
-    }
-    if (left->is_array) {
-        return left->array_length == right->array_length &&
-               type_equal(left->element_type, right->element_type);
-    }
-    const char *left_name = left->struct_name ? left->struct_name : left->enum_name;
-    const char *right_name = right->struct_name ? right->struct_name : right->enum_name;
-    if (left_name || right_name) {
-        if (!left_name || !right_name || strcmp(left_name, right_name) != 0) return 0;
-        ASTNode *left_argument = left->type_arguments;
-        ASTNode *right_argument = right->type_arguments;
-        while (left_argument && right_argument) {
-            if (!type_equal((VarTypeNode *)left_argument,
-                            (VarTypeNode *)right_argument)) return 0;
-            left_argument = left_argument->next;
-            right_argument = right_argument->next;
-        }
-        return !left_argument && !right_argument;
-    }
-    return left->type == right->type;
-}
+// 完整类型的深拷贝和等价判断统一在 types.c：单态化和 codegen 必须共用同一份，
+// 否则两边对「同一类型」可能给出不同答案。
 
 // 返回链表中的节点数量。
 static unsigned node_count(ASTNode *node) {
@@ -105,36 +45,7 @@ static FunctionNode *find_function(ProgramNode *program, const char *name) {
     return NULL;
 }
 
-// 在程序中查找具名结构体。
-static StructNode *find_struct(ProgramNode *program, const char *name) {
-    for (ASTNode *node = program ? program->structs : NULL;
-         node; node = node->next) {
-        StructNode *struct_node = (StructNode *)node;
-        if (strcmp(struct_node->name, name) == 0) return struct_node;
-    }
-    return NULL;
-}
-
-// 在程序中查找具名枚举。
-static EnumNode *find_enum(ProgramNode *program, const char *name) {
-    for (ASTNode *node = program ? program->enums : NULL;
-         node; node = node->next) {
-        EnumNode *enum_node = (EnumNode *)node;
-        if (strcmp(enum_node->name, name) == 0) return enum_node;
-    }
-    return NULL;
-}
-
-// 在结构体中查找字段声明。
-static StructFieldNode *find_field(StructNode *struct_node, const char *name) {
-    for (ASTNode *node = struct_node ? struct_node->fields : NULL;
-         node; node = node->next) {
-        StructFieldNode *field = (StructFieldNode *)node;
-        if (strcmp(field->name, name) == 0) return field;
-    }
-    return NULL;
-}
-
+// 结构体 / 枚举 / 字段的查找统一在 types.c（Codegen 也用同一份）。
 // 判断名称是否在给定的类型参数列表里。
 static int has_type_parameter(ASTNode *type_params, const char *name) {
     for (ASTNode *node = type_params; node; node = node->next) {
@@ -170,16 +81,24 @@ static TypeBinding *find_binding(TypeBinding *bindings, const char *name) {
     return NULL;
 }
 
-// 判断两个具体标量是否可沿用现有 Codegen 的数值转换规则。
-static int scalar_types_compatible(const VarTypeNode *left,
-                                   const VarTypeNode *right) {
+// 判断两个标量能否绑定到**同一个泛型类型参数**。
+//
+// 注意这是「可统一（unifiable）」，和 codegen 的 `scalar_types_compatible`（赋值兼容）
+// 不是一回事，所以两份规则各自保留、不要合并：赋值兼容是单向的（`let x: f32 = 1;`
+// 合法，反向不合法），而泛型绑定要求两个实参属于同一族，必须对称。
+//
+// bool 不算整数。`LITERAL_BOOL` 在枚举里排在 U128 之后，不会被 `<= LITERAL_U128`
+// 命中；这里**不要**再把它加回来 —— 否则 `pair<T>(a: T, b: T)` 用 `pair(true, 7)`
+// 调用时会把 T 推断成 bool，报出来的却是下游的「赋值类型不匹配」，完全指错方向。
+static int scalar_types_unifiable(const VarTypeNode *left,
+                                  const VarTypeNode *right) {
     if (!left || !right || left->is_pointer || right->is_pointer ||
         left->is_array || right->is_array || left->enum_name || right->enum_name ||
         left->struct_name || right->struct_name) {
         return 0;
     }
-    int left_integer = left->type <= LITERAL_U128 || left->type == LITERAL_BOOL;
-    int right_integer = right->type <= LITERAL_U128 || right->type == LITERAL_BOOL;
+    int left_integer = left->type <= LITERAL_U128;
+    int right_integer = right->type <= LITERAL_U128;
     int left_float = left->type >= LITERAL_FLOAT && left->type <= LITERAL_F64;
     int right_float = right->type >= LITERAL_FLOAT && right->type <= LITERAL_F64;
     return (left_integer && right_integer) || (left_float && right_float);
@@ -190,8 +109,8 @@ static int bind_type(TypeBinding **bindings, const char *name,
                      const VarTypeNode *type) {
     TypeBinding *binding = find_binding(*bindings, name);
     if (binding) {
-        return type_equal(binding->type, type) ||
-               scalar_types_compatible(binding->type, type);
+        return tap_type_equal(binding->type, type) ||
+               scalar_types_unifiable(binding->type, type);
     }
 
     binding = (TypeBinding *)calloc(1, sizeof(TypeBinding));
@@ -200,7 +119,7 @@ static int bind_type(TypeBinding **bindings, const char *name,
         exit(1);
     }
     binding->name = strdup(name);
-    binding->type = clone_type(type);
+    binding->type = tap_type_clone(type);
     binding->next = *bindings;
     *bindings = binding;
     return 1;
@@ -288,7 +207,7 @@ static VarTypeNode *substitute_type(FunctionNode *function,
     const char *parameter = type_parameter_name(function, source);
     if (parameter) {
         TypeBinding *binding = find_binding(bindings, parameter);
-        return binding ? clone_type(binding->type) : clone_type(source);
+        return binding ? tap_type_clone(binding->type) : tap_type_clone(source);
     }
     if (source->is_pointer) {
         return create_pointer_type(
@@ -653,7 +572,7 @@ static char *instantiate_struct(
     }
 
     char *name = specialized_struct_name(template, type_arguments);
-    StructNode *existing = find_struct(context->program, name);
+    StructNode *existing = tap_find_struct(context->program, name);
     if (existing) return name;
 
     StructNode *copy = create_struct(name);
@@ -721,7 +640,7 @@ static void materialize_type(GenericContext *context, VarTypeNode *type) {
 
     const char *name = type->struct_name ? type->struct_name : type->enum_name;
     if (!name) return;
-    StructNode *structure = find_struct(context->program, name);
+    StructNode *structure = tap_find_struct(context->program, name);
     if (!structure) {
         if (type->type_arguments) {
             fprintf(stderr, "error: undefined generic struct type '%s'\n", name);
@@ -893,7 +812,7 @@ static void materialize_expression(GenericContext *context, ASTNode *expression)
             VarTypeNode *type = create_enum_type(literal->struct_name);
             for (ASTNode *argument = literal->type_arguments; argument;
                  argument = argument->next) {
-                add_var_type_argument(type, clone_type((VarTypeNode *)argument));
+                add_var_type_argument(type, tap_type_clone((VarTypeNode *)argument));
             }
             materialize_type(context, type);
             free(literal->struct_name);
@@ -996,7 +915,7 @@ static void add_symbol(GenericContext *context, const char *name,
     TypeSymbol *symbol = find_symbol(context, name);
     if (symbol) {
         free_ast((ASTNode *)symbol->type);
-        symbol->type = clone_type(type);
+        symbol->type = tap_type_clone(type);
         return;
     }
     symbol = (TypeSymbol *)calloc(1, sizeof(TypeSymbol));
@@ -1005,7 +924,7 @@ static void add_symbol(GenericContext *context, const char *name,
         exit(1);
     }
     symbol->name = strdup(name);
-    symbol->type = clone_type(type);
+    symbol->type = tap_type_clone(type);
     symbol->next = context->symbols;
     context->symbols = symbol;
 }
@@ -1042,7 +961,7 @@ static void generic_call_error(FunctionCallNode *call, const char *message,
 // 解析标识符、结构体字段或枚举成员的完整类型。
 static VarTypeNode *identifier_type(GenericContext *context, const char *name) {
     TypeSymbol *symbol = find_symbol(context, name);
-    if (symbol) return clone_type(symbol->type);
+    if (symbol) return tap_type_clone(symbol->type);
 
     // 模块里的顶层常量在泛型上下文里没有 TypeSymbol，名字又带模块前缀
     // （`__tap_module_0.V`），会掉进下面「点号 = 枚举成员」的分支，最后被当成一个
@@ -1052,22 +971,15 @@ static VarTypeNode *identifier_type(GenericContext *context, const char *name) {
         VarDeclNode *constant = (VarDeclNode *)node;
         if (constant->name && constant->type &&
             strcmp(constant->name, name) == 0) {
-            return clone_type(constant->type);
+            return tap_type_clone(constant->type);
         }
     }
 
     // 模块私有枚举被改名成 `__tap_module_0.E` 后，成员引用变成 `__tap_module_0.E.B`
-    // （两个点）。按**最后一个**点切分，才能取出正确的前缀；用 strchr 取第一个点会切错。
-    const char *dot = strrchr(name, '.');
-    if (dot) {
-        size_t base_size = (size_t)(dot - name);
-        char *base = (char *)malloc(base_size + 1);
-        if (!base) {
-            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-            exit(1);
-        }
-        memcpy(base, name, base_size);
-        base[base_size] = '\0';
+    // （两个点）。切分规则（按**最后一个**点）在 types.c，Codegen 用的是同一份。
+    char *base = NULL;
+    const char *field_name = NULL;
+    if (tap_split_qualified_name(name, &base, &field_name)) {
         TypeSymbol *base_symbol = find_symbol(context, base);
         if (base_symbol && base_symbol->type) {
             const char *struct_name = base_symbol->type->struct_name
@@ -1076,12 +988,13 @@ static VarTypeNode *identifier_type(GenericContext *context, const char *name) {
             // 基础符号不是结构体 / 枚举时（标量，或类型还没推断出来的局部变量），这里
             // 没有字段可查 —— 当查不到处理，别把 NULL 名字喂给 find_struct（会段错误）。
             StructFieldNode *field = struct_name
-                ? find_field(find_struct(context->program, struct_name), dot + 1)
+                ? tap_find_struct_field(tap_find_struct(context->program, struct_name),
+                                        field_name, NULL)
                 : NULL;
             free(base);
-            if (field) return clone_type(field->field_type);
+            if (field) return tap_type_clone(field->field_type);
         } else {
-            if (find_enum(context->program, base)) {
+            if (tap_find_enum(context->program, base)) {
                 VarTypeNode *type = create_enum_type(base);
                 free(base);
                 return type;
@@ -1093,7 +1006,7 @@ static VarTypeNode *identifier_type(GenericContext *context, const char *name) {
 
     for (ASTNode *node = context->program->constants; node; node = node->next) {
         VarDeclNode *constant = (VarDeclNode *)node;
-        if (strcmp(constant->name, name) == 0) return clone_type(constant->type);
+        if (strcmp(constant->name, name) == 0) return tap_type_clone(constant->type);
     }
     return NULL;
 }
@@ -1141,8 +1054,8 @@ static void check_type_bounds(
             actual->struct_name ? actual->struct_name : actual->enum_name;
 
         // 名字既不是结构体也不是枚举 —— 多半是还没实例化的类型参数，跳过。
-        if (type_name && !find_struct(context->program, type_name) &&
-            !find_enum(context->program, type_name)) {
+        if (type_name && !tap_find_struct(context->program, type_name) &&
+            !tap_find_enum(context->program, type_name)) {
             continue;
         }
 
@@ -1335,7 +1248,7 @@ int validate_impl_signatures(ProgramNode *program) {
             }
 
             while (trait_param && impl_param) {
-                if (!type_equal((VarTypeNode *)trait_param, impl_param)) {
+                if (!tap_type_equal((VarTypeNode *)trait_param, impl_param)) {
                     char *expected = describe_type((VarTypeNode *)trait_param);
                     char *actual_type = describe_type(impl_param);
                     print_diagnostic(stderr, "error", method->filename, method->line,
@@ -1353,7 +1266,7 @@ int validate_impl_signatures(ProgramNode *program) {
                 index++;
             }
 
-            if (!type_equal(method->return_type, signature->return_type)) {
+            if (!tap_type_equal(method->return_type, signature->return_type)) {
                 char *expected = describe_type(signature->return_type);
                 char *actual_type = describe_type(method->return_type);
                 print_diagnostic(stderr, "error", method->filename, method->line,
@@ -1602,7 +1515,7 @@ static VarTypeNode *index_type(GenericContext *context,
         free_ast((ASTNode *)container);
         return NULL;
     }
-    VarTypeNode *element = clone_type(container->element_type);
+    VarTypeNode *element = tap_type_clone(container->element_type);
     free_ast((ASTNode *)container);
     return element;
 }
@@ -1635,7 +1548,7 @@ static FunctionNode *find_non_generic_method(
         FunctionNode *function = (FunctionNode *)node;
         if (function->type_params || !function->param_types) continue;
         if (!function_base_matches(function->name, method_name)) continue;
-        if (type_equal((VarTypeNode *)function->param_types, receiver_type)) {
+        if (tap_type_equal((VarTypeNode *)function->param_types, receiver_type)) {
             return function;
         }
     }
@@ -1652,7 +1565,7 @@ static void infer_struct_literal_arguments(
     TypeBinding *bindings = NULL;
     for (ASTNode *node = literal->fields; node; node = node->next) {
         StructInitFieldNode *field = (StructInitFieldNode *)node;
-        StructFieldNode *definition = find_field(struct_node, field->name);
+        StructFieldNode *definition = tap_find_struct_field(struct_node, field->name, NULL);
         if (!definition) continue;
         VarTypeNode *actual = process_expression(
             context, field->expression, definition->field_type);
@@ -1666,7 +1579,7 @@ static void infer_struct_literal_arguments(
         const char *name = ((IdentifierNode *)node)->name;
         TypeBinding *binding = find_binding(bindings, name);
         if (!binding) continue;
-        add_struct_literal_type_argument(literal, clone_type(binding->type));
+        add_struct_literal_type_argument(literal, tap_type_clone(binding->type));
     }
     free_bindings(bindings);
 }
@@ -1697,11 +1610,11 @@ static VarTypeNode *process_call(GenericContext *context,
     FunctionNode *function = find_function(context->program, call->name);
     if (function && function->type_params) {
         function = specialize_call(context, call, function, expected);
-        return clone_type(function->return_type);
+        return tap_type_clone(function->return_type);
     }
     if (!function) {
         function = specialize_method_call(context, call, expected);
-        if (function) return clone_type(function->return_type);
+        if (function) return tap_type_clone(function->return_type);
         function = find_non_generic_method(context, call->name);
     }
     if (call->type_arguments) {
@@ -1715,7 +1628,7 @@ static VarTypeNode *process_call(GenericContext *context,
             context, argument, function_param_type(function, index));
         free_ast((ASTNode *)ignored);
     }
-    if (function && function->return_type) return clone_type(function->return_type);
+    if (function && function->return_type) return tap_type_clone(function->return_type);
     if (strcmp(call->name, "__tap_builtin_string_len") == 0 ||
         strstr(call->name, ".len")) {
         return create_var_type(LITERAL_UINT);
@@ -1732,7 +1645,7 @@ static VarTypeNode *process_call(GenericContext *context,
         strstr(call->name, ".slice")) {
         return create_var_type(LITERAL_STRING);
     }
-    return expected ? clone_type(expected) : create_var_type(LITERAL_I32);
+    return expected ? tap_type_clone(expected) : create_var_type(LITERAL_I32);
 }
 
 // 递归处理表达式，完成泛型调用改写并推断结果类型。
@@ -1765,11 +1678,11 @@ static VarTypeNode *process_expression(GenericContext *context,
             VarTypeNode *result = NULL;
             if (object_type && object_type->struct_name) {
                 StructNode *struct_node =
-                    find_struct(context->program, object_type->struct_name);
+                    tap_find_struct(context->program, object_type->struct_name);
                 StructFieldNode *field = struct_node
-                    ? find_field(struct_node, access->field)
+                    ? tap_find_struct_field(struct_node, access->field, NULL)
                     : NULL;
-                if (field) result = clone_type(field->field_type);
+                if (field) result = tap_type_clone(field->field_type);
             }
             free_ast((ASTNode *)object_type);
             return result;
@@ -1780,7 +1693,7 @@ static VarTypeNode *process_expression(GenericContext *context,
             VarTypeNode *inner = process_expression(
                 context, ((TryNode *)expression)->inner, NULL);
             free_ast((ASTNode *)inner);
-            return expected ? clone_type(expected) : NULL;
+            return expected ? tap_type_clone(expected) : NULL;
         }
         case NODE_MATCH_STATEMENT: {
             // match 作表达式：分支值里的泛型调用要在这里特化。
@@ -1796,7 +1709,7 @@ static VarTypeNode *process_expression(GenericContext *context,
                 free_ast((ASTNode *)arm_value);
             }
             free_ast((ASTNode *)matched);
-            return expected ? clone_type(expected) : NULL;
+            return expected ? tap_type_clone(expected) : NULL;
         }
         case NODE_REFERENCE: {
             VarTypeNode *target = process_expression(
@@ -1809,7 +1722,7 @@ static VarTypeNode *process_expression(GenericContext *context,
             CastNode *cast = (CastNode *)expression;
             VarTypeNode *inner = process_expression(context, cast->expression, NULL);
             free_ast((ASTNode *)inner);
-            return cast->target_type ? clone_type(cast->target_type) : NULL;
+            return cast->target_type ? tap_type_clone(cast->target_type) : NULL;
         }
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
@@ -1833,17 +1746,17 @@ static VarTypeNode *process_expression(GenericContext *context,
                         context, element, expected->element_type);
                     free_ast((ASTNode *)ignored);
                 }
-                return clone_type(expected);
+                return tap_type_clone(expected);
             }
             return infer_array_literal_type(context, array);
         }
         case NODE_STRUCT_LITERAL: {
             StructLiteralNode *literal = (StructLiteralNode *)expression;
-            StructNode *struct_node = find_struct(
+            StructNode *struct_node = tap_find_struct(
                 context->program, literal->struct_name);
             for (ASTNode *node = literal->fields; node; node = node->next) {
                 StructInitFieldNode *field = (StructInitFieldNode *)node;
-                StructFieldNode *definition = find_field(struct_node, field->name);
+                StructFieldNode *definition = tap_find_struct_field(struct_node, field->name, NULL);
                 VarTypeNode *ignored = process_expression(
                     context, field->expression,
                     definition ? definition->field_type : NULL);
@@ -1857,12 +1770,12 @@ static VarTypeNode *process_expression(GenericContext *context,
             VarTypeNode *type = create_struct_type(literal->struct_name);
             for (ASTNode *argument = literal->type_arguments; argument;
                  argument = argument->next) {
-                add_var_type_argument(type, clone_type((VarTypeNode *)argument));
+                add_var_type_argument(type, tap_type_clone((VarTypeNode *)argument));
             }
             return type;
         }
         default:
-            return expected ? clone_type(expected) : NULL;
+            return expected ? tap_type_clone(expected) : NULL;
     }
 }
 
@@ -1912,14 +1825,14 @@ static void bind_match_payloads(
     EnumNode *enum_node = NULL;
     StructNode *structure = NULL;
     if (matched->enum_name) {
-        enum_node = find_enum(context->program, matched->enum_name);
-        structure = find_struct(context->program, matched->enum_name);
+        enum_node = tap_find_enum(context->program, matched->enum_name);
+        structure = tap_find_struct(context->program, matched->enum_name);
     } else if (matched->struct_name) {
-        structure = find_struct(context->program, matched->struct_name);
+        structure = tap_find_struct(context->program, matched->struct_name);
         if (structure && structure->is_tagged_enum) {
             const char *enum_name = structure->tagged_enum_name
                 ? structure->tagged_enum_name : structure->name;
-            enum_node = find_enum(context->program, enum_name);
+            enum_node = tap_find_enum(context->program, enum_name);
         }
     }
     if (!enum_node || !structure) return;

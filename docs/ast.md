@@ -22,9 +22,16 @@ AST 位于 Parser 和 LLVM Codegen 之间：
 所有具体节点都把 `ASTNode` 放在结构体首字段：
 
 ```c
+typedef struct {
+    const char *file;
+    uint32_t line;
+    uint32_t column;
+} SourceLoc;
+
 typedef struct ASTNode {
     enum NodeType type;
     struct ASTNode *next;
+    SourceLoc loc;
 } ASTNode;
 ```
 
@@ -35,6 +42,26 @@ typedef struct ASTNode {
 
 1. `base.type` 设置为对应的 `NodeType`。
 2. `base.next` 初始化为 `NULL`。
+
+构造函数统一用 `calloc` 分配，所以 `loc` 默认全 0（表示位置未知），不需要逐个显式初始化。
+
+## 源码位置
+
+位置放在 `ASTNode` 里而不是每个节点各存一份三字段，诊断代码因此不必先知道具体节点类型：
+`print_node_diagnostic(stderr, "error", (ASTNode *)node, "...")` 直接取 `node->loc`。
+
+位置的填充只有两个入口：
+
+- `parse_statement()` —— 所有语句
+- `parse_expression()` —— 所有表达式（含递归进入的内层表达式）
+
+两者在分发**之前**记下当前 token 的位置，返回时调 `stamp_location()`。`stamp_location()`
+只填 `file` 为空的节点，所以内层（更精确）的位置优先，外层不会覆盖。
+
+`SourceLoc.file` 指向 `intern_source_file()` 的返回值，**不归节点所有，`free_ast` 不释放**。
+之所以要 intern：`module.c` / `prelude.c` 解析完就把模块路径 `free` 掉，而 Lexer 的
+`filename` 只是借用那个指针；节点也不能各自 `strdup`（几万个节点就是几万份文件名）。
+intern 表是进程级的，同一个路径只存一份，进程退出时由操作系统回收。
 
 ## 节点类型
 
@@ -321,7 +348,8 @@ Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`
 
 1. 在 `NodeType` 中增加节点类型。
 2. 定义以 `ASTNode base` 开头的具体结构体。
-3. 添加构造函数并初始化全部字段。
+3. 添加构造函数并初始化全部字段。用 `calloc` 分配，`base.loc` 留全 0 —— 语句和表达式
+   的位置由 Parser 在 `parse_statement()` / `parse_expression()` 里统一填充。
 4. 在 Parser 中创建并连接节点。**新增语句只需要接入 `parse_statement()` 一处**：`parse_block`
    和函数体都走它，不要再写第二份语句分派。
 5. 在 `print_ast()` 中添加可读输出。
@@ -331,7 +359,9 @@ Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`
 
 ## 当前限制与注意事项
 
-- `ImportNode` 和 `FunctionNode` 保存源文件、行号和列号，用于模块与重复定义诊断；其他 AST 节点仅按需保存源码位置。
+- 语句和表达式的源码位置由 Parser 自动填充（见「源码位置」），新增节点不必自己处理。
+  顶层声明（函数 / 结构体 / 枚举 / trait / impl）不走 `parse_statement()`，其中
+  `FunctionNode` 仍保留自己的 `filename` / `line` / `column` 三字段，尚未迁到 `base.loc`。
 - `LiteralType` 同时承担字面量类型和声明类型，后续类型系统扩展时应考虑拆分。
 - `params` 与 `param_types` 使用平行链表；混合有类型和无类型参数时容易发生位置错配。
 - `print_ast()` 当前直接访问 `VarDeclNode.type`，无类型变量声明可能导致空指针访问。

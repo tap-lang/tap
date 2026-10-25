@@ -123,13 +123,10 @@ static int decimal_width(int value) {
 }
 
 // 统一输出诊断消息、源码位置，以及错误行上下各三行的代码上下文。
-void print_diagnostic(FILE *output, const char *level, const char *filename,
-                      int line, int column, const char *format, ...) {
+void vprint_diagnostic(FILE *output, const char *level, const char *filename,
+                      int line, int column, const char *format, va_list arguments) {
     fprintf(output, "%s: ", level);
-    va_list arguments;
-    va_start(arguments, format);
     vfprintf(output, format, arguments);
-    va_end(arguments);
     fprintf(output, "\n--> %s:%d:%d\n", filename ? filename : "<unknown>", line, column);
 
     if (filename && line > 0) {
@@ -139,6 +136,26 @@ void print_diagnostic(FILE *output, const char *level, const char *filename,
             free(source_code);
         }
     }
+}
+
+void print_diagnostic(FILE *output, const char *level, const char *filename,
+                      int line, int column, const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    vprint_diagnostic(output, level, filename, line, column, format, arguments);
+    va_end(arguments);
+}
+
+void print_node_diagnostic(FILE *output, const char *level,
+                           const ASTNode *node, const char *format, ...) {
+    const char *file = node ? node->loc.file : NULL;
+    int line = node ? (int)node->loc.line : 0;
+    int column = node ? (int)node->loc.column : 0;
+
+    va_list arguments;
+    va_start(arguments, format);
+    vprint_diagnostic(output, level, file, line, column, format, arguments);
+    va_end(arguments);
 }
 
 // 打印代码当前行以及上下各context_lines行

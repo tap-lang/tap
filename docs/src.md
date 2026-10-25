@@ -18,6 +18,8 @@ tap 当前采用手写前端和 LLVM 后端，主要编译流程如下：
 | [`module.c`](../src/module.c) / [`module.h`](../src/module.h) | 解析模块路径、递归加载导入并合并函数；详见[模块导入文档](module.md) |
 | [`prelude.c`](../src/prelude.c) / [`prelude.h`](../src/prelude.h) | 定位并解析 Prelude，检查重复函数后合并到用户程序 AST |
 | [`ast.c`](../src/ast.c) / [`ast.h`](../src/ast.h) | AST 节点定义、构造、打印和释放；详见 [AST 文档](ast.md) |
+| [`types.c`](../src/types.c) / [`types.h`](../src/types.h) | 完整类型的深拷贝与等价判断、按名字查声明、限定名切分；单态化和 Codegen 共用 |
+| [`generics.c`](../src/generics.c) / [`generics.h`](../src/generics.h) | 泛型单态化：推断类型实参、克隆实例、校验 trait impl 签名 |
 | [`codegen.c`](../src/codegen.c) / [`codegen.h`](../src/codegen.h) | 遍历 AST、生成 LLVM IR，并将 IR 编译链接为可执行文件 |
 | [`run.c`](../src/run.c) / [`run.h`](../src/run.h) | 本地可执行文件与 `lli` 的运行、退出码和临时产物清理 |
 | [`runtime/src/runtime.c`](../runtime/src/runtime.c) | 终端、休眠和随机数等跨平台 C Runtime 实现 |
@@ -33,12 +35,17 @@ main
 ├── parser -> lexer + ast
 ├── module -> parser + ast
 ├── prelude -> parser + ast
-├── codegen -> ast + LLVM
+├── generics -> ast + types
+├── codegen -> ast + types + LLVM
 └── run -> codegen
 ```
 
 - Lexer 只负责产生 Token，不创建 AST。
 - Parser 拥有 AST 的创建过程。
+- `types.c` 只放不依赖阶段上下文的纯函数（类型深拷贝/等价判断、按名字查声明、
+  限定名切分），单态化和 Codegen 都调它 —— 两边对同一类型必须给出相同答案。
+  新增这类"两边都要用"的工具函数请放这里，不要再往 `generics.c` / `codegen.c`
+  里各写一份。
 - Codegen 和 Run 消费 AST/LLVM 结果，不参与语法解析。
 - `main.c` 负责组装各阶段，并在流程结束后释放资源。
 
