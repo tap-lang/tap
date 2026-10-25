@@ -32,6 +32,7 @@ typedef struct ASTNode {
     enum NodeType type;
     struct ASTNode *next;
     SourceLoc loc;
+    struct VarTypeNode *resolved_type;   // 缓存的完整类型；NULL 表示尚未推断
 } ASTNode;
 ```
 
@@ -43,7 +44,8 @@ typedef struct ASTNode {
 1. `base.type` 设置为对应的 `NodeType`。
 2. `base.next` 初始化为 `NULL`。
 
-构造函数统一用 `calloc` 分配，所以 `loc` 默认全 0（表示位置未知），不需要逐个显式初始化。
+构造函数统一用 `calloc` 分配，所以 `loc` 和 `resolved_type` 默认全 0（位置未知、类型未推断），
+不需要逐个显式初始化。
 
 ## 源码位置
 
@@ -62,6 +64,28 @@ typedef struct ASTNode {
 之所以要 intern：`module.c` / `prelude.c` 解析完就把模块路径 `free` 掉，而 Lexer 的
 `filename` 只是借用那个指针；节点也不能各自 `strdup`（几万个节点就是几万份文件名）。
 intern 表是进程级的，同一个路径只存一份，进程退出时由操作系统回收。
+
+## 缓存的类型（resolved_type）
+
+`ASTNode.resolved_type` 存表达式的完整类型（标量也有）。**节点拥有它，`free_ast` 负责释放。**
+
+填充有两条路，写的是同一个字段：
+
+1. `sema.c` 在 Codegen 之前跑一遍，为能确定的表达式填入类型；
+2. Codegen 的 `expression_full_type()` 遇到还没填的节点才自己推断，并把结果缓存回去。
+
+所以 `resolved_type` 为 NULL 只表示「还没人算过」，不表示出错。`expression_type()` 也会
+优先读它（只认纯标量，数组/指针/结构体/枚举仍走各自带诊断的分支）。设置
+`TAP_SEMA_STATS=1` 可以打印 Sema 的覆盖率和 Codegen 的缓存命中率。
+
+缓存是安全的：表达式节点在 AST 里唯一，符号表状态由它在函数里的位置决定，推断结果不随
+调用时机变化。有两个地方会重置它，都是自动的：
+
+- 构造函数用 `calloc`，新节点的 `resolved_type` 天然是 NULL；
+- 泛型单态化克隆 AST 时走构造函数，克隆出的节点同样从 NULL 开始，会重新推断。
+
+Sema 目前是**影子模式**：只填类型，不接管诊断，推不出来就返回 NULL 交给 Codegen。这样
+任何时刻的行为都和没有 Sema 时一致，覆盖率可以逐步提高而不会一次引入大面积回归。
 
 ## 节点类型
 

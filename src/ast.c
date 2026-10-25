@@ -1786,6 +1786,10 @@ void free_ast(ASTNode *node) {
             break;
     }
 
+    // 释放缓存的完整类型。VarTypeNode 本身也是 ASTNode，递归 free_ast 会继续
+    // 释放它的 element_type。
+    free_ast((ASTNode *)node->resolved_type);
+
     // 释放节点本身
     free(node);
 }

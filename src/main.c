@@ -12,6 +12,7 @@
 #include "prelude.h"
 #include "tagged.h"
 #include "generics.h"
+#include "sema.h"
 #include "codegen.h"
 #include "run.h"
 #include "helpers.h"
@@ -201,10 +202,15 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    // TAP_NO_SEMA=1 跳过语义分析，用于对照实验：确认 Codegen 的缓存命中确实来自 Sema，
+    // 而不是 Codegen 自己的缓存。排查「某个类型问题是不是 Sema 引入的」时也用它。
+    const char *skip_sema = getenv("TAP_NO_SEMA");
+
     if (load_modules(program, input_file, argv[0]) != 0 
         || load_prelude(program, argv[0]) != 0
         || lower_payload_enums(program) != 0
         || specialize_generics(program) != 0
+        || (!(skip_sema && skip_sema[0]) && analyze_program(program) != 0)
     ) {
         free_ast((ASTNode *)program);
         free_parser(parser);

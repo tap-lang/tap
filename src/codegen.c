@@ -3,6 +3,7 @@
 #include "types.h"
 
 #include <limits.h>
+#include <stdlib.h>
 
 // 返回未显式标注整数时使用的默认整数类型。
 static enum LiteralType default_integer_type(void) {
@@ -1299,7 +1300,8 @@ static VarTypeNode *copy_high_level_type(const VarTypeNode *type) {
 //
 // **注意：这里和 generics.c 的 `process_expression` 是两份并行的推断实现**，两边对同一个
 // 表达式必须给出一致的类型（不一致会让单态化静默选错实例）。改动覆盖范围时同步另一侧。
-static VarTypeNode *expression_full_type(
+// 真正做推断的部分。外部一律走下面的 expression_full_type（带缓存）。
+static VarTypeNode *compute_expression_full_type(
     CodeGenContext *context, ASTNode *expression) {
     if (!expression) return NULL;
 
@@ -1383,6 +1385,32 @@ static VarTypeNode *expression_full_type(
     }
 }
 
+// 类型缓存统计：TAP_SEMA_STATS=1 时在生成结束时打印。
+// 命中说明 Sema 已经填过这个节点，Codegen 不需要再推断。
+static unsigned type_cache_hits = 0;
+static unsigned type_cache_misses = 0;
+
+// 带缓存的入口：同一表达式只推断一次，结果挂在节点上。
+//
+// 缓存的理由有两个：expression_type / expression_assignable_to / 各生成函数会反复推断
+// 同一个节点，每次都 clone 一份既慢、也容易在分支之间产生不一致；而节点在 AST 里唯一、
+// 符号表位置固定，推断结果不随调用时机变化。
+//
+// 这也是独立 Sema 阶段的接口雏形：等 Sema 能把整个程序一次填满，这里的 compute 分支
+// 就可以逐步退化成「resolved_type 必须有值」的断言。
+static VarTypeNode *expression_full_type(CodeGenContext *context, ASTNode *expression) {
+    if (!expression) return NULL;
+    if (expression->resolved_type) {
+        type_cache_hits++;
+        return tap_type_clone(expression->resolved_type);
+    }
+    type_cache_misses++;
+
+    VarTypeNode *type = compute_expression_full_type(context, expression);
+    if (type) expression->resolved_type = tap_type_clone(type);
+    return type;
+}
+
 // 无类型标注的 `let` 用的版本：标量返回 NULL，让调用方继续走原来的标量路径
 // （expression_type + insert_symbol），`let x = 42;` 这类代码的行为完全不变。
 static VarTypeNode *infer_expression_var_type(
@@ -1393,6 +1421,18 @@ static VarTypeNode *infer_expression_var_type(
 // 推断表达式在当前上下文中的标量类型。
 static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expression) {
     if (!expression) return default_integer_type();
+
+    // Sema（或本文件先前的推断）已经给出纯标量类型，直接取用。
+    //
+    // 只认纯标量：数组 / 指针 / 结构体 / 枚举仍走下面的分支，因为那些分支带着
+    // 诊断（比如「多维数组必须索引到标量元素」），跳过会丢错误报告。
+    const VarTypeNode *resolved = expression->resolved_type;
+    if (resolved && !resolved->is_array && !resolved->is_pointer &&
+        !resolved->struct_name && !resolved->enum_name) {
+        type_cache_hits++;
+        return resolved->type;
+    }
+    type_cache_misses++;
 
     switch (expression->type) {
         case NODE_LITERAL:
@@ -5115,6 +5155,14 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
 
     // 完整生成和校验之后再运行 DCE，确保不可达代码中的错误仍能报告。
     eliminate_unreachable_functions(context);
+
+    const char *stats = getenv("TAP_SEMA_STATS");
+    if (stats && stats[0] != '\0') {
+        unsigned total = type_cache_hits + type_cache_misses;
+        fprintf(stderr, "codegen: %u/%u type queries served from cache (%.0f%%)\n",
+                type_cache_hits, total,
+                total ? (100.0 * (double)type_cache_hits / (double)total) : 100.0);
+    }
 }
 
 // 懒初始化 JIT 执行引擎。

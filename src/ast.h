@@ -106,11 +106,20 @@ typedef struct {
     uint32_t column;
 } SourceLoc;
 
+// 前置声明：ASTNode 要挂一个指向类型节点的指针，而 VarTypeNode 定义在它后面。
+struct VarTypeNode;
+
 // 基础AST节点结构
 typedef struct ASTNode {
     enum NodeType type;             // 节点类型
     struct ASTNode *next;           // 用于链表结构
     SourceLoc loc;                  // 源码位置；未知时全 0
+    // 表达式的完整类型（标量也有）；NULL 表示还没推断过。
+    //
+    // 由 Codegen 的类型推断按需填充并缓存，节点拥有它，free_ast 负责释放。
+    // 同一个表达式节点在 AST 里唯一、符号表位置固定，所以推断结果不会随调用时机变化。
+    // 独立 Sema 阶段落地后，这里就是 Sema 与 Codegen 之间的接口。
+    struct VarTypeNode *resolved_type;
 } ASTNode;
 
 // 程序节点
