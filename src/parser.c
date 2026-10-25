@@ -1666,6 +1666,10 @@ ProgramNode *parse_program(Parser *parser) {
     
     // 解析所有模块导入、顶层常量和函数定义
     while (parser->current_token->type != TOKEN_EOF) {
+        // 顶层声明不走 parse_statement，所以位置要在这里单独记下来并 stamp 到节点上；
+        // 否则 duplicate struct / duplicate enum 这类诊断拿不到位置。
+        SourceLoc start = current_location(parser);
+
         // `pub` 是顶层可见性修饰符：只有带 pub 的顶层声明才能被其他模块导入。
         // 不写 pub 的顶层符号会改名成模块私有符号，外部既看不到、也不占用全局名字。
         int is_pub = 0;
@@ -1683,14 +1687,17 @@ ProgramNode *parse_program(Parser *parser) {
             EnumNode *enum_node = parse_enum(parser);
             enum_node->is_pub = is_pub;
             add_enum(program, enum_node);
+            stamp_location((ASTNode *)enum_node, start);
         } else if (parser->current_token->type == TOKEN_STRUCT) {
             StructNode *struct_node = parse_struct(parser);
             struct_node->is_pub = is_pub;
             add_struct(program, struct_node);
+            stamp_location((ASTNode *)struct_node, start);
         } else if (parser->current_token->type == TOKEN_CONST) {
             VarDeclNode *constant = parse_var_decl(parser, 1);
             constant->is_pub = is_pub;
             add_constant(program, constant);
+            stamp_location((ASTNode *)constant, start);
         } else if (parser->current_token->type == TOKEN_EXTERN) {
             // Only functions are supported by the first external ABI version.
             consume(parser, TOKEN_EXTERN);
@@ -1700,19 +1707,24 @@ ProgramNode *parse_program(Parser *parser) {
             FunctionNode *function = parse_function(parser, 1);
             function->is_pub = is_pub;
             add_function(program, function);
+            stamp_location((ASTNode *)function, start);
         } else if (parser->current_token->type == TOKEN_FN) {
             FunctionNode *function = parse_function(parser, 0);
             function->is_pub = is_pub;
             add_function(program, function);
+            stamp_location((ASTNode *)function, start);
         } else if (parser->current_token->type == TOKEN_TRAIT) {
             TraitNode *trait_node = parse_trait(parser);
             trait_node->is_pub = is_pub;
             add_trait(program, trait_node);
+            stamp_location((ASTNode *)trait_node, start);
         } else if (parser->current_token->type == TOKEN_IMPL) {
             if (is_pub) {
                 parser_error(parser, "`pub` cannot be applied to an impl block"); // 中文：impl 不能用 pub 修饰
             }
-            add_impl(program, parse_impl(parser, program));
+            ImplNode *impl_node = parse_impl(parser, program);
+            add_impl(program, impl_node);
+            stamp_location((ASTNode *)impl_node, start);
         } else if (is_pub) {
             parser_error(parser, "`pub` must be followed by a function, constant, enum, struct or trait declaration"); // 中文：pub 后必须是函数、常量、枚举、结构体或 trait 声明
         } else {

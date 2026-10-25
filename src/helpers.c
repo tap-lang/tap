@@ -127,14 +127,18 @@ void vprint_diagnostic(FILE *output, const char *level, const char *filename,
                       int line, int column, const char *format, va_list arguments) {
     fprintf(output, "%s: ", level);
     vfprintf(output, format, arguments);
-    fprintf(output, "\n--> %s:%d:%d\n", filename ? filename : "<unknown>", line, column);
+    fprintf(output, "\n");
 
-    if (filename && line > 0) {
-        char *source_code = read_source_file(filename);
-        if (source_code) {
-            print_code_line(output, source_code, line, 3);
-            free(source_code);
-        }
+    // 没有位置信息时不打印 `--> <unknown>:0:0` —— 那比不打印更难看，也没有信息量。
+    // 诊断要么给出真实位置，要么只给一句话。
+    if (!filename || line <= 0) return;
+
+    fprintf(output, "--> %s:%d:%d\n", filename, line, column);
+
+    char *source_code = read_source_file(filename);
+    if (source_code) {
+        print_code_line(output, source_code, line, 3);
+        free(source_code);
     }
 }
 
@@ -156,6 +160,29 @@ void print_node_diagnostic(FILE *output, const char *level,
     va_start(arguments, format);
     vprint_diagnostic(output, level, file, line, column, format, arguments);
     va_end(arguments);
+}
+
+void report_error(const ASTNode *node, const char *format, ...) {
+    const char *file = node ? node->loc.file : NULL;
+    int line = node ? (int)node->loc.line : 0;
+    int column = node ? (int)node->loc.column : 0;
+
+    va_list arguments;
+    va_start(arguments, format);
+    vprint_diagnostic(stderr, "error", file, line, column, format, arguments);
+    va_end(arguments);
+
+    exit(1);
+}
+
+void report_error_at(const char *filename, int line, int column,
+                     const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    vprint_diagnostic(stderr, "error", filename, line, column, format, arguments);
+    va_end(arguments);
+
+    exit(1);
 }
 
 // 打印代码当前行以及上下各context_lines行

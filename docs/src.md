@@ -55,6 +55,23 @@ Codegen 会先生成并验证全部函数，再将非 `main` 函数视为内部�
 LLVM GlobalDCE。这样既保留了未调用函数的编译错误检查，也不会把不可达的
 Prelude 和模块函数写入最终 IR。
 
+## 诊断输出
+
+所有语义诊断走 `helpers.c` 的统一出口：
+
+- `report_error(node, format, ...)` —— 用节点自带的位置，输出 `error: ...`、
+  `--> file:line:col` 和源码上下文
+- `report_error_at(filename, line, column, format, ...)` —— 位置由调用方显式给出
+
+两者内部都是 `exit(1)`，并且标了 `noreturn`（见 `helpers.h` 的 `TAP_NORETURN`）—— 标出来
+之后调用方的控制流分析才正确，否则 `if (bad) report_error(...);` 后面会被当成存在
+「没 return」的路径。
+
+没有位置信息时**不打印** `--> <unknown>:0:0`，只输出一句话：诊断要么给出真实位置，
+要么只给一句话，假装有位置没有信息量。
+
+新增诊断一律用这两个函数，不要再写 `fprintf(stderr, "error: ..."); exit(1);`。
+
 ## 模块加载
 
 Parser 将 `import a.b;` 保存为 `ImportNode`，Module Loader 再把模块名转换为
