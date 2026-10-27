@@ -749,9 +749,66 @@ static int split_field_access_name(
 }
 
 // 解析结构体字段访问，返回基础符号、字段声明和字段下标。
+// 把结构体模板的字段类型按实例的类型实参替换。
+//
+// `Vec<T>` 的 `data: *T` 里，`T` 是一个 `enum_name == "T"` 的占位 VarTypeNode。
+// 泛型结构体本身是单态化的（IR 里能看到 `Vec$i32` / `Vec$p_i32` 两个独立类型），
+// 但 `field_access_info` 查的是**模板**，拿到的字段类型仍是 `*T` —— 于是
+// `Vec<*i32>.data[i]` 被推断成 `T`，和 `*i32` 比较永远不相等，
+// `get<T>()` 的 `return vec.data[index]` 就报 `return type mismatch`。
+//
+// LLVM 侧不受影响：opaque pointer 把 `*T` 和 `*i32` 都表示成 `ptr`。
+static VarTypeNode *specialize_field_type(
+    StructNode *structure, const VarTypeNode *field_type,
+    const VarTypeNode *instance_type) {
+    if (!field_type) return NULL;
+    if (!structure || !instance_type || !instance_type->type_arguments) {
+        return tap_type_clone(field_type);
+    }
+
+    // 字段类型本身就是类型参数（`value: T`）。
+    if (!field_type->is_pointer && !field_type->is_array &&
+        !field_type->struct_name && field_type->enum_name) {
+        ASTNode *parameter = structure->type_params;
+        ASTNode *argument = instance_type->type_arguments;
+        while (parameter && argument) {
+            const char *parameter_name = ((IdentifierNode *)parameter)->name;
+            if (parameter_name && strcmp(parameter_name, field_type->enum_name) == 0) {
+                return tap_type_clone((VarTypeNode *)argument);
+            }
+            parameter = parameter->next;
+            argument = argument->next;
+        }
+        return tap_type_clone(field_type);
+    }
+
+    if (field_type->is_pointer) {
+        return create_pointer_type(
+            specialize_field_type(structure, field_type->element_type, instance_type));
+    }
+    if (field_type->is_array) {
+        return create_array_type(
+            specialize_field_type(structure, field_type->element_type, instance_type),
+            field_type->array_length);
+    }
+
+    VarTypeNode *copy = field_type->struct_name
+        ? create_struct_type(field_type->struct_name)
+        : field_type->enum_name
+            ? create_enum_type(field_type->enum_name)
+            : create_var_type(field_type->type);
+    for (ASTNode *argument = field_type->type_arguments; argument;
+         argument = argument->next) {
+        add_var_type_argument(copy, specialize_field_type(
+            structure, (VarTypeNode *)argument, instance_type));
+    }
+    return copy;
+}
+
 static StructFieldNode *field_access_info(
     CodeGenContext *context, const char *name, Symbol **symbol_out,
-    StructNode **struct_out, unsigned *index_out) {
+    StructNode **struct_out, unsigned *index_out,
+    VarTypeNode **field_type_out) {
     char *base_name = NULL;
     char *field_name = NULL;
     if (!split_field_access_name(name, &base_name, &field_name)) return NULL;
@@ -776,6 +833,11 @@ static StructFieldNode *field_access_info(
 
     if (symbol_out) *symbol_out = symbol;
     if (struct_out) *struct_out = struct_node;
+    // 按实例的类型实参替换模板里的类型参数（`Vec<T>.data` 的 `*T`）。
+    if (field_type_out) {
+        *field_type_out =
+            specialize_field_type(struct_node, field->field_type, symbol->declared_type);
+    }
     free(base_name);
     free(field_name);
     return field;
@@ -789,7 +851,7 @@ static LLVMValueRef generate_field_address(
     StructNode *struct_node = NULL;
     unsigned index = 0;
     StructFieldNode *field =
-        field_access_info(context, name, &symbol, &struct_node, &index);
+        field_access_info(context, name, &symbol, &struct_node, &index, NULL);
     if (!field) return NULL;
 
     LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, struct_node->name);
@@ -1038,7 +1100,7 @@ static int reference_assignable_to(
                    element_type->type == symbol->type;
         }
 
-        StructFieldNode *field = field_access_info(context, name, NULL, NULL, NULL);
+        StructFieldNode *field = field_access_info(context, name, NULL, NULL, NULL, NULL);
         return field && tap_type_equal(field->field_type, pointer_type->element_type);
     }
 
@@ -1107,7 +1169,7 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                 return tap_type_equal(symbol->declared_type, target_type);
             }
             StructFieldNode *field =
-                field_access_info(context, name, NULL, NULL, NULL);
+                field_access_info(context, name, NULL, NULL, NULL, NULL);
             return field && tap_type_equal(field->field_type, target_type);
         }
         if (expression && expression->type == NODE_INDEX_EXPRESSION) {
@@ -1139,7 +1201,7 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                               target_type->struct_name) == 0;
             }
             StructFieldNode *field =
-                field_access_info(context, identifier->name, NULL, NULL, NULL);
+                field_access_info(context, identifier->name, NULL, NULL, NULL, NULL);
             return field && field->field_type->struct_name &&
                    strcmp(field->field_type->struct_name, target_type->struct_name) == 0;
         }
@@ -1214,12 +1276,25 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
         const char *name = ((IdentifierNode *)expression)->name;
         Symbol *symbol = find_symbol(context, name);
         if (!symbol) {
-            StructFieldNode *field =
-                field_access_info(context, name, NULL, NULL, NULL);
-            if (field && field->field_type->is_pointer) {
-                return field->field_type->element_type;
+            // 字段访问（`vec.data`）：泛型结构体的字段类型要按实例实参替换，
+            // 否则拿到的是模板的 `*T`。返回的是替换结果的子节点，外壳有意不回收
+            // —— 类型推断本来就大量按借用语义传递，进程生命周期内不回收这些节点。
+            VarTypeNode *specialized = NULL;
+            StructFieldNode *field = field_access_info(
+                context, name, NULL, NULL, NULL, &specialized);
+            if (field && specialized) {
+                // 注意这里返回**容器类型**而不是元素类型，和下面的变量分支不同。
+                //
+                // 变量分支返回的是「索引一次之后」的类型（`arr` → `i32`），因为
+                // `arr[i]` 会再走 INDEX_EXPRESSION 分支取一层。但字段访问（`vec.data`）
+                // 本身已经是 `**i32`，如果这里也返回元素，`vec.data[i]` 就会被取两层，
+                // 得到 `i32` 而不是 `*i32` —— `Vec<*T>.get()` 的 return 就是栽在这。
+                if (specialized->is_pointer || specialized->is_array) {
+                    return specialized;
+                }
             }
-            if (field && field->field_type->is_array) {
+            // 兜底：没有替换结果时同样返回容器类型（理由见上）。
+            if (field && (field->field_type->is_pointer || field->field_type->is_array)) {
                 return field->field_type;
             }
             report_undefined_name(context, name, expression);
@@ -1280,7 +1355,7 @@ static VarTypeNode *infer_reference_type(
             }
         } else {
             StructFieldNode *field =
-                field_access_info(context, name, NULL, NULL, NULL);
+                field_access_info(context, name, NULL, NULL, NULL, NULL);
             if (field) target_type = field->field_type;
         }
     } else if (target && target->type == NODE_INDEX_EXPRESSION) {
@@ -1482,7 +1557,7 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
                 uint64_t enum_value = 0;
                 if (enum_variant_value(context, name, &enum_value)) return LITERAL_I32;
                 StructFieldNode *field =
-                    field_access_info(context, name, NULL, NULL, NULL);
+                    field_access_info(context, name, NULL, NULL, NULL, NULL);
                 if (field) return field->field_type->type;
                 VarDeclNode *constant = find_global_constant(context, name);
                 return constant && constant->type

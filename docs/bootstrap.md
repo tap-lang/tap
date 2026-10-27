@@ -1,6 +1,60 @@
 # 自举可行性分析
 
-## 结论
+## 最新状态（2026-10-27）
+
+上一版结论是「不能」，三个结构性阻塞是**解引用**、**堆上构造结构体**、**空指针**。
+其中两个已经解决，递归 AST 现在可以直接用指针写：
+
+```tp
+struct Node { value: i32, next: *Node }
+
+fn sum(node: *Node): i32 {
+    if (node == null) { return 0; }
+    return node.value + sum(node.next);
+}
+```
+
+实测探针（`/tmp/boot2/`，用当前 `build/tap`）：
+
+| 探针 | 结果 |
+|---|---|
+| 链表 + 递归求和（栈上节点） | ✅ `sum: 6` |
+| 二叉树 + 递归求和（两个指针字段） | ✅ `total: 6` |
+| `malloc` 节点 + 逐字段赋值 | ✅ `value: 42` |
+| 枚举字段 + 指针 AST（`kind: Kind`） | ✅ `eval: 3` |
+| 读文件 + 字符扫描（迷你 lexer） | ✅ 433 字节 / 74 token |
+| `p[0] = Cell { ... }` 整体赋值 | ❌ 仍需绕（逐字段赋值可以） |
+| 递归载荷枚举 `Add(Expr, Expr)` | ❌ 仍需指针或 Box |
+
+### 新发现的两个缺口
+
+**`Vec<*T>` 曾经不支持**（`Vec<i32>`、`Vec<S>` 都正常）—— ✅ 已修（2026-10-27）：
+
+```tp
+let v: Vec<*i32> = vec.new<*i32>();
+v = v.push(&x);        // 曾经报 return type mismatch
+```
+
+根因是 `indexed_value_type` 对字段访问（`vec.data`）多取了一层指针，不是类型绑定问题。
+修完之后 `Vec<*Symbol>` 符号表可以直接写，不必退回 arena 模式。
+
+**没有 HashMap**。`std/` 里没有映射类型，符号表只能线性查找，或者自己用指针写一个。
+
+### 更新后的结论
+
+**前端可以自举** —— lexer / parser / AST 都能用指针自然表达，文件 IO 和字符串够用，
+`malloc` + 逐字段赋值能构造堆节点，符号表可以用 `Vec<*Symbol>`。
+
+剩下的两个语言级缺口（整体赋值、递归载荷枚举）都有绕法，不是硬阻塞。
+
+---
+
+## 历史分析（2026-10 上旬，供对照）
+
+以下内容来自上一版实测，部分结论已被上面覆盖 —— **保留是为了看清哪些判断变了、为什么变**。
+
+
+### 上一版结论
 
 **不能。** 以 tap 当前的语言能力，写不出一个自然形态的编译器。
 
@@ -69,7 +123,7 @@ tap <probe>.tp -o out && ./out
 
 ### A 级 —— 结构性阻塞
 
-**A1. 没有指针解引用**
+**A1. 没有指针解引用** —— ✅ 已解决（2026-10-27 加了 `*p` 和指针成员访问）
 
 ```tp
 fn read(node: *Node): i32 { return (*node).value; }   // error: expected factor
@@ -79,7 +133,8 @@ fn read(node: *Node): i32 { return node->value; }     // error: expected factor
 `*Node` 类型能声明，`&局部变量` 能取地址，`&v` 传给 `*Node` 形参也正常 ——
 但拿到指针之后**读不到里面的东西**。指针实际上退化成了「只能传给 extern 的不透明句柄」。
 
-**A2. 堆上无法构造/修改结构体**
+**A2. 堆上无法构造/修改结构体** —— ⚠️ 部分解决：逐字段赋值（`p.value = 9`）现在可以了，
+整体赋值（`p[0] = Cell { ... }`）仍然不行
 
 ```tp
 let p: *Cell = memory.malloc<Cell>(sizeof(Cell));
@@ -90,7 +145,7 @@ p[0].value = 9;              // error: only String methods 'len', 'byte_at', 'sl
 `Vec<Cell>.data` 是 `*Cell`，同样写不进去。唯一能改结构体的办法是
 `let c = vec.get(...); c.field = x; vec = vec.set(..., c)` —— 整体读出来、改完、整体写回。
 
-**A3. 没有空指针**
+**A3. 没有空指针** —— ✅ 已解决（2026-10-27 加了 `null`，解引用有运行时检查）
 
 ```tp
 struct Node { value: i32, next: *Node }
