@@ -1,0 +1,51 @@
+// Vec 的指针元素 —— 符号表最自然的形态。
+//
+// 以前 `Vec<*i32>` 报 `return type mismatch`，根因是 indexed_value_type 取多了
+// 一层：`vec.data` 的字段类型是 `**i32`，但 IDENTIFIER 分支先取了一层元素
+// （`*i32`），INDEX_EXPRESSION 分支又取一层（`i32`）。`Vec<i32>` 恰好没事，
+// 因为第二层不是指针，走的是「原样返回」的兜底。
+import std.vec as vec;
+import std.memory as memory;
+
+struct Symbol {
+    name: String,
+    value: i32,
+}
+
+fn lookup(table: Vec<*Symbol>, name: String): i32 {
+    for (let i: i64 = 0; i < table.len(); i = i + 1) {
+        let entry: *Symbol = table.get(i);
+        if (entry.name == name) {
+            return entry.value;
+        }
+    }
+    return -1;
+}
+
+fn main(): i32 {
+    let table: Vec<*Symbol> = vec.new<*Symbol>();
+
+    let a: *Symbol = memory.malloc<Symbol>(sizeof(Symbol));
+    a.name = "alpha";
+    a.value = 11;
+    table = table.push(a);
+
+    let b: *Symbol = memory.malloc<Symbol>(sizeof(Symbol));
+    b.name = "beta";
+    b.value = 22;
+    table = table.push(b);
+
+    print("alpha: %d\n", lookup(table, "alpha"));
+    print("beta: %d\n", lookup(table, "beta"));
+    print("missing: %d\n", lookup(table, "gamma"));
+    return 0;
+}
+
+/** -- test
+- .stdout
+alpha: 11
+beta: 22
+missing: -1
+- .exit
+0
+-- */
