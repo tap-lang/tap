@@ -1,0 +1,15 @@
+// 解引用 null 在 C 里是未定义行为（通常直接段错误）。这里插了运行时检查，
+// 和除零、数组越界同一套处理：明确报错退出。
+fn main(): i32 {
+    let p: *i32 = null;
+    let y: i32 = *p;
+    print("%d\n", y);
+    return 0;
+}
+
+/** -- test
+- .stdout
+Null pointer dereference
+- .exit
+1
+-- */

@@ -1777,6 +1777,10 @@ static int rewrite_expression(
             return rewrite_expression(
                 program, ((ReferenceNode *)expression)->target,
                 current_module, bindings);
+        case NODE_DEREFERENCE:
+            return rewrite_expression(
+                program, ((DereferenceNode *)expression)->operand,
+                current_module, bindings);
         case NODE_ARRAY_LITERAL: {
             ArrayLiteralNode *array = (ArrayLiteralNode *)expression;
             for (ASTNode *element = array->elements; element; element = element->next) {

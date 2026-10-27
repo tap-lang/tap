@@ -1,0 +1,40 @@
+// null 最刚需的用途：给递归数据结构一个终止标记。
+//
+// 自引用结构体 `next: *Node` 语法上本来就支持，但没有 null 时最后一个节点的 next
+// 无处可填 —— 只能造一个值无意义的哨兵节点。
+struct Node {
+    value: i32,
+    next: *Node,
+}
+
+fn main(): i32 {
+    // 尾节点的 next 是 null
+    let tail: Node = Node { value: 2, next: null };
+    let head: Node = Node { value: 1, next: &tail };
+
+    print("head: %d\n", head.value);
+    print("next: %d\n", head.next[0].value);
+
+    // 遍历到终止
+    if (head.next[0].next == null) {
+        print("tail ends\n");
+    }
+
+    // `!=` 同样支持
+    let x: i32 = 9;
+    let p: *i32 = &x;
+    if (p != null) {
+        print("p: %d\n", *p);
+    }
+    return 0;
+}
+
+/** -- test
+- .stdout
+head: 1
+next: 2
+tail ends
+p: 9
+- .exit
+0
+-- */

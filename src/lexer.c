@@ -178,6 +178,7 @@ static enum TokenType check_keyword(const char *text, int length) {
         if (memcmp(text, "enum", 4) == 0) return TOKEN_ENUM;
         if (memcmp(text, "bool", 4) == 0) return TOKEN_BOOL;
         if (memcmp(text, "char", 4) == 0) return TOKEN_CHAR;
+        if (memcmp(text, "null", 4) == 0) return TOKEN_NULL;
         if (memcmp(text, "true", 4) == 0) return TOKEN_BOOL;
         if (memcmp(text, "uint", 4) == 0) return TOKEN_UINT;
         if (memcmp(text, "i128", 4) == 0) return TOKEN_I128;

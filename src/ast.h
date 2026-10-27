@@ -43,7 +43,8 @@ enum NodeType {
     NODE_TRAIT,                     // trait 接口声明节点
     NODE_TRAIT_METHOD,              // trait 方法签名节点
     NODE_IMPL,                      // impl 接口实现节点
-    NODE_FIELD_ACCESS               // 字段访问表达式（接收者是任意表达式）
+    NODE_FIELD_ACCESS,              // 字段访问表达式（接收者是任意表达式）
+    NODE_DEREFERENCE                // 解引用表达式（*p）
 };
 
 // 字面量类型
@@ -66,7 +67,8 @@ enum LiteralType {
     LITERAL_STRING,                 // 长度化字符串 String
     LITERAL_C_STRING,               // C 兼容零结尾字符串指针 c_string
     LITERAL_BOOL,                   // 布尔值 bool
-    LITERAL_CHAR                    // Unicode 码点 char
+    LITERAL_CHAR,                   // Unicode 码点 char
+    LITERAL_NULL                    // 空指针字面量：没有自己的类型，只能赋给 *T
 };
 
 // 二元操作符类型  + - * / == != < > <= >= && ||
@@ -279,6 +281,13 @@ typedef struct {
     ASTNode *target;       // 被取地址的可寻址表达式
 } ReferenceNode;
 
+// 解引用表达式节点（`*p`）。只用于**取值**；`*p = x` 这种左值写法暂不支持，
+// 写操作请用 `p[0] = x`。
+typedef struct {
+    ASTNode base;
+    ASTNode *operand;      // 被解引用的指针表达式，类型必须是 *T
+} DereferenceNode;
+
 // 编译期类型大小表达式节点
 typedef struct {
     ASTNode base;
@@ -469,10 +478,15 @@ LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);
 LiteralNode *create_float_literal(double value);
 LiteralNode *create_bool_literal(int value);
+// 创建 null 字面量。它没有自己的类型，只能出现在有 *T 目标类型的上下文里
+// （`let p: *T = null`、`p == null`、作为 *T 实参）。
+LiteralNode *create_null_literal(void);
 LiteralNode *create_char_literal(uint32_t value);
 ReturnNode *create_return(ASTNode *expression);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
 ReferenceNode *create_reference(ASTNode *target);
+// 创建解引用表达式节点，并接管 operand 的所有权。
+DereferenceNode *create_dereference(ASTNode *operand);
 SizeofNode *create_sizeof(VarTypeNode *operand_type);
 CastNode *create_cast(ASTNode *expression, VarTypeNode *target_type);
 VarDeclNode *create_var_decl(

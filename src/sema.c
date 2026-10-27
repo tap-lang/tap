@@ -88,6 +88,10 @@ static void analyze_expression_only(SemaContext *context, ASTNode *expression) {
 static VarTypeNode *compute_expression_type(SemaContext *context, ASTNode *expression) {
     switch (expression->type) {
         case NODE_LITERAL:
+            // null 没有独立类型：交给有目标类型的上下文（Codegen 的
+            // generate_expression_for_type）。在这里填一个 LITERAL_NULL 的
+            // VarTypeNode 会让它泄进 expression_type 的缓存路径。
+            if (((LiteralNode *)expression)->literal_type == LITERAL_NULL) return NULL;
             return create_var_type(((LiteralNode *)expression)->literal_type);
 
         case NODE_IDENTIFIER: {
@@ -193,6 +197,18 @@ static VarTypeNode *compute_expression_type(SemaContext *context, ASTNode *expre
             VarTypeNode *target = analyze_expression(context, reference->target);
             if (!target) return NULL;
             return create_pointer_type(target); // 接管 target 的所有权
+        }
+
+        case NODE_DEREFERENCE: {
+            DereferenceNode *dereference = (DereferenceNode *)expression;
+            VarTypeNode *pointer = analyze_expression(context, dereference->operand);
+            if (!pointer || !pointer->is_pointer || !pointer->element_type) {
+                free_ast((ASTNode *)pointer);
+                return NULL;
+            }
+            VarTypeNode *element = tap_type_clone(pointer->element_type);
+            free_ast((ASTNode *)pointer);
+            return element;
         }
 
         default:

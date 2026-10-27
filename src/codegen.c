@@ -120,6 +120,16 @@ static int is_scalar_var_type(const VarTypeNode *type) {
            !type->struct_name && !type->enum_name && !type->type_arguments;
 }
 
+// 判断表达式是不是 null 字面量。
+//
+// null 没有自己的类型：它只能出现在能确定 *T 目标类型的位置（`let p: *T = null`、
+// `p == null`、作为 *T 实参）。凡是能确定目标类型的地方都要特判它，其余位置一律
+// 报错，而不是猜一个类型 —— 猜错就是静默的坏值。
+static int is_null_literal(ASTNode *expression) {
+    return expression && expression->type == NODE_LITERAL &&
+           ((LiteralNode *)expression)->literal_type == LITERAL_NULL;
+}
+
 static const char *literal_type_name(enum LiteralType type) {
     switch (type) {
         case LITERAL_INT: return "int";
@@ -783,10 +793,25 @@ static LLVMValueRef generate_field_address(
     if (!field) return NULL;
 
     LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, struct_node->name);
+
+    // 变量本身是指针时（`let q: *P = &p;` 里的 `q.x`），槽位里存的是**地址**，
+    // 必须先 load 出指针值再 GEP。
+    //
+    // 注意 create_pointer_type 会把元素的名字复制到指针节点上（所以 `*P` 的
+    // struct_name 仍是 "P"，field_access_info 才能查到字段）。正因如此，直接拿
+    // symbol->value 去 GEP 在类型上不会报错 —— 它会读栈上相邻的垃圾，编译和运行
+    // 都悄无声息。这是最难查的一类错，必须显式区分。
+    LLVMValueRef base = symbol->value;
+    if (symbol->declared_type && symbol->declared_type->is_pointer) {
+        base = LLVMBuildLoad2(context->builder,
+                              LLVMPointerType(struct_type, 0),
+                              symbol->value, "pointer_value");
+    }
+
     if (field_out) *field_out = field;
     if (symbol_out) *symbol_out = symbol;
     return LLVMBuildStructGEP2(
-        context->builder, struct_type, symbol->value, index, "struct_field_ptr");
+        context->builder, struct_type, base, index, "struct_field_ptr");
 }
 
 // 按名字查值的完整类型：局部变量、单层字段（`a.b`）、多级字段（`a.b.c`）。
@@ -1055,6 +1080,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         return result;
     }
     if (target_type->is_pointer) {
+        // null 可以赋给任意 *T。
+        if (is_null_literal(expression)) return 1;
         if (expression && expression->type == NODE_FUNCTION_CALL &&
             is_runtime_memory_pointer_result((FunctionCallNode *)expression)) {
             return 1;
@@ -1296,6 +1323,8 @@ static VarTypeNode *compute_expression_full_type(
 
     switch (expression->type) {
         case NODE_LITERAL:
+            // null 没有自己的类型：返回 NULL，让调用方按目标类型处理。
+            if (((LiteralNode *)expression)->literal_type == LITERAL_NULL) return NULL;
             return create_var_type(((LiteralNode *)expression)->literal_type);
         case NODE_CAST: {
             CastNode *cast = (CastNode *)expression;
@@ -1369,6 +1398,20 @@ static VarTypeNode *compute_expression_full_type(
                 context, (const ReferenceNode *)expression);
             return target;
         }
+        case NODE_DEREFERENCE: {
+            // `*p` 的类型就是 p 的元素类型。
+            DereferenceNode *dereference = (DereferenceNode *)expression;
+            VarTypeNode *pointer_type =
+                expression_full_type(context, dereference->operand);
+            if (!pointer_type || !pointer_type->is_pointer ||
+                !pointer_type->element_type) {
+                free_ast((ASTNode *)pointer_type);
+                return NULL;
+            }
+            VarTypeNode *element = tap_type_clone(pointer_type->element_type);
+            free_ast((ASTNode *)pointer_type);
+            return element;
+        }
         default:
             return NULL;
     }
@@ -1425,6 +1468,12 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
 
     switch (expression->type) {
         case NODE_LITERAL:
+            // null 的标量类型没有意义，返回默认整数只是避免把 LITERAL_NULL 这个
+            // 伪类型泄进类型运算。真正的类型由目标类型（generate_expression_for_type）
+            // 或 null 比较分支决定。
+            if (((LiteralNode *)expression)->literal_type == LITERAL_NULL) {
+                return default_integer_type();
+            }
             return ((LiteralNode *)expression)->literal_type;
         case NODE_IDENTIFIER: {
             const char *name = ((IdentifierNode *)expression)->name;
@@ -1454,6 +1503,13 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             enum LiteralType result = field_type
                 ? field_type->type : default_integer_type();
             free_ast((ASTNode *)field_type);
+            return result;
+        }
+        case NODE_DEREFERENCE: {
+            VarTypeNode *element_type = expression_full_type(context, expression);
+            enum LiteralType result = element_type
+                ? element_type->type : default_integer_type();
+            free_ast((ASTNode *)element_type);
             return result;
         }
         case NODE_SIZEOF:
@@ -1835,6 +1891,10 @@ static LLVMValueRef generate_expression_for_type(
         return generate_array_value(context, expression, target_type);
     }
     if (target_type->is_pointer) {
+        // null 按目标指针类型生成零值。
+        if (is_null_literal(expression)) {
+            return LLVMConstNull(get_llvm_var_type(context, target_type));
+        }
         if (!expression_assignable_to(context, expression, target_type)) {
             report_error(NULL, "pointer expression type mismatch"); // 中文：指针表达式类型不匹配
         }
@@ -2121,6 +2181,70 @@ static LLVMValueRef generate_reference(
     }
 
     report_error((const ASTNode *)reference, "reference target is not addressable"); // 中文：引用目标不可寻址
+}
+
+// emit_integer_guard 的定义在后面的数值守卫一节，解引用检查要用，先声明。
+static void emit_integer_guard(CodeGenContext *context, LLVMValueRef condition,
+                               const char *format, LLVMValueRef argument,
+                               unsigned argument_count);
+
+// 生成 `*p`：先求出指针值，再按元素类型 load。
+//
+// 只支持**取值**。`*p = x` 这种左值写法还没实现（赋值语句的左值目前只认标识符），
+// 写操作请用 `p[0] = x`。
+static LLVMValueRef generate_dereference(
+    CodeGenContext *context, DereferenceNode *dereference) {
+    VarTypeNode *pointer_type = expression_full_type(context, dereference->operand);
+    if (!pointer_type || !pointer_type->is_pointer || !pointer_type->element_type) {
+        free_ast((ASTNode *)pointer_type);
+        report_error((const ASTNode *)dereference,
+                     "cannot dereference a non-pointer expression"); // 中文：不能解引用非指针表达式
+    }
+
+    LLVMValueRef pointer = generate_expression(context, dereference->operand);
+
+    // 解引用 null 在 C 里是未定义行为（通常直接段错误）。这里生成运行时检查，
+    // 和除零、数组越界同一风格：明确报错退出，而不是崩在 SIGSEGV。
+    LLVMValueRef non_null = LLVMBuildICmp(
+        context->builder, LLVMIntNE, pointer,
+        LLVMConstNull(LLVMTypeOf(pointer)), "pointer_non_null");
+    emit_integer_guard(context, non_null,
+                       "Null pointer dereference\n", NULL, 0); // 中文：解引用空指针
+
+    LLVMTypeRef element_type = get_llvm_var_type(context, pointer_type->element_type);
+    free_ast((ASTNode *)pointer_type);
+    return LLVMBuildLoad2(context->builder, element_type, pointer, "deref");
+}
+
+// `p == null` / `p != null`：null 按另一边的指针类型生成零值。
+//
+// 二元运算原本没有指针比较的专门分支（`p == p` 是靠 icmp 对指针合法「碰巧」work 的），
+// 所以 null 必须在这里单独处理，否则它会被当成 i32 的 0 生成。
+static LLVMValueRef generate_null_comparison(
+    CodeGenContext *context, BinaryOpNode *binary) {
+    if (binary->op_type != OP_EQUAL && binary->op_type != OP_NOT_EQUAL) {
+        report_error((const ASTNode *)binary,
+                     "null can only be compared with == or !="); // 中文：null 只能和 == / != 比较
+    }
+
+    ASTNode *pointer_side =
+        is_null_literal(binary->left) ? binary->right : binary->left;
+    VarTypeNode *pointer_type = expression_full_type(context, pointer_side);
+    if (!pointer_type || !pointer_type->is_pointer) {
+        free_ast((ASTNode *)pointer_type);
+        report_error((const ASTNode *)binary,
+                     "null can only be compared with a pointer"); // 中文：null 只能和指针比较
+    }
+
+    LLVMValueRef pointer = generate_expression(context, pointer_side);
+    LLVMValueRef null_value = LLVMConstNull(get_llvm_var_type(context, pointer_type));
+    free_ast((ASTNode *)pointer_type);
+
+    int is_equal = binary->op_type == OP_EQUAL;
+    return LLVMBuildICmp(context->builder,
+                         is_equal ? LLVMIntEQ : LLVMIntNE,
+                         pointer, null_value,
+                         is_equal ? "is_null" : "not_null");
 }
 
 // 插入一个运行时守卫：condition 为假时打印 format 并退出。
@@ -3106,6 +3230,11 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
     switch (expression->type) {
         case NODE_LITERAL: {
             LiteralNode *literal = (LiteralNode *)expression;
+            if (literal->literal_type == LITERAL_NULL) {
+                // 走到这里说明没有任何目标类型能确定它该是哪个指针类型。
+                report_error((const ASTNode *)literal,
+                             "null needs a target type (add a type annotation)"); // 中文：null 需要目标类型
+            }
             if (is_integer_type(literal->literal_type)) {
                 return integer_constant(context, literal, literal->literal_type);
             }
@@ -3222,6 +3351,8 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
         }
         case NODE_REFERENCE:
             return generate_reference(context, (ReferenceNode *)expression);
+        case NODE_DEREFERENCE:
+            return generate_dereference(context, (DereferenceNode *)expression);
         case NODE_SIZEOF: {
             SizeofNode *size_expression = (SizeofNode *)expression;
             validate_var_type(context, size_expression->operand_type);
@@ -3257,6 +3388,12 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             BinaryOpNode *binary = (BinaryOpNode *)expression;
             if (binary->op_type == OP_AND || binary->op_type == OP_OR) {
                 return generate_logical_binary(context, binary);
+            }
+            // `p == null` / `p != null`：null 要按另一边的指针类型生成零值。
+            // 必须在这里拦：否则 null 会走 generate_expression 生成 i32 的 0，
+            // 和指针做 icmp 时类型对不上。
+            if (is_null_literal(binary->left) || is_null_literal(binary->right)) {
+                return generate_null_comparison(context, binary);
             }
             enum LiteralType left_type = expression_type(context, binary->left);
             enum LiteralType right_type = expression_type(context, binary->right);

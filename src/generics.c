@@ -288,6 +288,9 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
         case NODE_REFERENCE:
             return (ASTNode *)create_reference(clone_expression(
                 ((ReferenceNode *)source)->target, template, bindings));
+        case NODE_DEREFERENCE:
+            return (ASTNode *)create_dereference(clone_expression(
+                ((DereferenceNode *)source)->operand, template, bindings));
         case NODE_SIZEOF:
             return (ASTNode *)create_sizeof(substitute_type(
                 template, ((SizeofNode *)source)->operand_type, bindings));
@@ -747,6 +750,10 @@ static void materialize_expression(GenericContext *context, ASTNode *expression)
         case NODE_REFERENCE:
             materialize_expression(
                 context, ((ReferenceNode *)expression)->target);
+            break;
+        case NODE_DEREFERENCE:
+            materialize_expression(
+                context, ((DereferenceNode *)expression)->operand);
             break;
         case NODE_SIZEOF:
             materialize_type(context, ((SizeofNode *)expression)->operand_type);
@@ -1661,6 +1668,8 @@ static VarTypeNode *process_expression(GenericContext *context,
     if (!expression) return NULL;
     switch (expression->type) {
         case NODE_LITERAL:
+            // null 没有独立类型，推断不出来 —— 由 Codegen 按目标类型处理。
+            if (((LiteralNode *)expression)->literal_type == LITERAL_NULL) return NULL;
             return create_var_type(((LiteralNode *)expression)->literal_type);
         case NODE_IDENTIFIER:
             return identifier_type(
@@ -1715,6 +1724,18 @@ static VarTypeNode *process_expression(GenericContext *context,
             VarTypeNode *target = process_expression(
                 context, ((ReferenceNode *)expression)->target, NULL);
             return target ? create_pointer_type(target) : NULL;
+        }
+        case NODE_DEREFERENCE: {
+            // `*p` 的类型是 p 的元素类型。
+            VarTypeNode *pointer = process_expression(
+                context, ((DereferenceNode *)expression)->operand, NULL);
+            if (!pointer || !pointer->is_pointer || !pointer->element_type) {
+                free_ast((ASTNode *)pointer);
+                return NULL;
+            }
+            VarTypeNode *element = tap_type_clone(pointer->element_type);
+            free_ast((ASTNode *)pointer);
+            return element;
         }
         case NODE_SIZEOF:
             return create_var_type(LITERAL_UINT);

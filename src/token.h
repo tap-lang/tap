@@ -90,6 +90,7 @@ enum TokenType {
     TOKEN_LBRACKET,    // [
     TOKEN_RBRACKET,    // ]
     TOKEN_QUESTION,    // ?
+    TOKEN_NULL,        // null 空指针字面量
 
     // 特殊标记
     TOKEN_EOF          // 文件结束

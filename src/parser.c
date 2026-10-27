@@ -1106,6 +1106,11 @@ static ASTNode *parse_primary(Parser *parser) {
         consume(parser, TOKEN_F32);
         return (ASTNode *)float_literal;
     }
+    if (token->type == TOKEN_NULL) {
+        consume(parser, TOKEN_NULL);
+        return (ASTNode *)create_null_literal();
+    }
+
     if (token->type == TOKEN_BOOL &&
         (strcmp(token->lexeme, "true") == 0 ||
          strcmp(token->lexeme, "false") == 0)) {
@@ -1208,6 +1213,16 @@ static ASTNode *parse_factor(Parser *parser) {
     if (parser->current_token->type == TOKEN_REFERENCE) {
         consume(parser, TOKEN_REFERENCE);
         return (ASTNode *)create_reference(parse_factor(parser));
+    }
+
+    // 前缀 `*` 解引用：`*p`、`**pp`。
+    //
+    // 因子位置的 `*` 只可能是前缀 —— 二元乘号由 parse_term 处理（它先取一个
+    // factor，看到 `*` 才再取一个 factor），所以 `2 * *p` 也能正确解析成
+    // 2 * (*p)：parse_term 拿到 2 之后，parse_factor 又会遇到前缀 `*`。
+    if (parser->current_token->type == TOKEN_MULTIPLY) {
+        consume(parser, TOKEN_MULTIPLY);
+        return (ASTNode *)create_dereference(parse_factor(parser));
     }
 
     if (parser->current_token->type == TOKEN_MINUS) {

@@ -1,0 +1,51 @@
+// 指针的成员访问必须自动解引用。
+//
+// 修复前 `q.inner.v` 编译通过、运行不报错，但读到的是栈上相邻的垃圾值：
+// create_pointer_type 会把元素名复制到指针节点上（所以 `*Outer` 的 struct_name
+// 仍是 "Outer"），字段查找因此能通过；而 GEP 用的还是变量槽位的地址（`*Outer*`），
+// 被当成 `%Outer*` 用 —— 类型上不报错，结果全错。
+struct Inner {
+    v: i32,
+}
+
+struct Outer {
+    inner: Inner,
+}
+
+struct Holder {
+    ptr: *i32,
+}
+
+fn main(): i32 {
+    // 多级字段读（指针 → 结构体 → 结构体 → 标量）
+    let p: Outer = Outer { inner: Inner { v: 3 } };
+    let q: *Outer = &p;
+    print("nested: %d\n", q.inner.v);
+
+    // 通过指针写字段
+    q.inner = Inner { v: 8 };
+    print("write: %d\n", p.inner.v);
+
+    // 结构体里存指针，再通过指向该结构体的指针取出来索引
+    let x: i32 = 11;
+    let h: Holder = Holder { ptr: &x };
+    let hp: *Holder = &h;
+    print("ptrfield: %d\n", hp.ptr[0]);
+
+    // 读改写同一个字段
+    let s: Inner = Inner { v: 1 };
+    let sp: *Inner = &s;
+    sp.v = sp.v + 41;
+    print("self: %d\n", s.v);
+    return 0;
+}
+
+/** -- test
+- .stdout
+nested: 3
+write: 8
+ptrfield: 11
+self: 42
+- .exit
+0
+-- */

@@ -179,6 +179,11 @@ static void dump_expr(ASTNode *n, int depth) {
         printf("Reference: &\n");
         dump_expr(((ReferenceNode *)n)->target, depth + 2);
         break;
+    case NODE_DEREFERENCE:
+        print_indent(depth);
+        printf("Dereference: *\n");
+        dump_expr(((DereferenceNode *)n)->operand, depth + 2);
+        break;
     case NODE_SIZEOF:
         print_indent(depth);
         printf("Sizeof: ");
@@ -806,6 +811,20 @@ LiteralNode *create_bool_literal(int value) {
     return literal;
 }
 
+// 创建 null 字面量。类型由上下文（目标 *T）决定，这里只标记字面量种类。
+LiteralNode *create_null_literal(void) {
+    LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
+    if (!literal) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    literal->base.type = NODE_LITERAL;
+    literal->base.next = NULL;
+    literal->literal_type = LITERAL_NULL;
+    literal->integer_text = NULL;
+    return literal;
+}
+
 // 创建 Unicode 字符（码点）字面量节点。
 LiteralNode *create_char_literal(uint32_t value) {
     LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
@@ -860,6 +879,19 @@ ReferenceNode *create_reference(ASTNode *target) {
     reference->base.next = NULL;
     reference->target = target;
     return reference;
+}
+
+// 创建解引用表达式节点（`*p`），并接管 operand 的所有权。
+DereferenceNode *create_dereference(ASTNode *operand) {
+    DereferenceNode *dereference = (DereferenceNode *)calloc(1, sizeof(DereferenceNode));
+    if (!dereference) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    dereference->base.type = NODE_DEREFERENCE;
+    dereference->base.next = NULL;
+    dereference->operand = operand;
+    return dereference;
 }
 
 // 创建 sizeof(T) 表达式节点，并接管 operand_type 的所有权。
@@ -1701,6 +1733,9 @@ void free_ast(ASTNode *node) {
         }
         case NODE_REFERENCE:
             free_ast(((ReferenceNode *)node)->target);
+            break;
+        case NODE_DEREFERENCE:
+            free_ast(((DereferenceNode *)node)->operand);
             break;
         case NODE_SIZEOF:
             free_ast((ASTNode *)((SizeofNode *)node)->operand_type);

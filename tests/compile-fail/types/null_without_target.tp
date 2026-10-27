@@ -1,0 +1,13 @@
+// null 没有独立类型，必须能从上下文确定目标指针类型。
+fn main(): i32 {
+    let p = null;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: null needs a target type (add a type annotation)
+null_without_target.tp:3:13
+- .exit
+1
+-- */

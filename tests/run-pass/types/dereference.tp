@@ -1,0 +1,41 @@
+// `*p` 解引用。
+//
+// 因子位置的 `*` 一定是前缀：二元乘号由 parse_term 处理（它先取一个 factor，
+// 看到 `*` 才再取一个），所以 `2 * *p` 能正确解析成 2 * (*p)。
+fn twice(value: i32): i32 {
+    return value * 2;
+}
+
+fn main(): i32 {
+    // 基本解引用
+    let x: i32 = 42;
+    let p: *i32 = &x;
+    print("deref: %d\n", *p);
+
+    // 二级指针
+    let pp: **i32 = &p;
+    print("double: %d\n", **pp);
+
+    // 前缀 `*` 和二元乘号共存
+    let three: i32 = 3;
+    let tp: *i32 = &three;
+    print("mul: %d\n", 2 * *tp);
+
+    // 作为实参
+    print("arg: %d\n", twice(*p));
+
+    // 参与表达式
+    print("expr: %d\n", (*p) + 1);
+    return 0;
+}
+
+/** -- test
+- .stdout
+deref: 42
+double: 42
+mul: 6
+arg: 84
+expr: 43
+- .exit
+0
+-- */

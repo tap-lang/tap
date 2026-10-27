@@ -200,6 +200,8 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 - 二元算术、比较与逻辑表达式。
 - 可嵌套的固定长度数组字面量、多维数组索引表达式和指针索引表达式。
 - 取地址表达式；`&value` 使用 `ReferenceNode` 保存可寻址目标。
+- 解引用表达式；`*pointer` 使用 `DereferenceNode` 保存被解引用的指针。只支持取值，
+  `*p = x` 这种左值写法还不支持（写操作用 `p[0] = x`）。
 - 类型大小表达式；`sizeof(T)` 使用 `SizeofNode` 保存完整类型并产生 `uint` 常量。
 - 一元前缀；Parser 将 `-value` 转换成 `0 - value` 的 `BinaryOpNode`，
   将 `!value` 转换成 `value == false` 的 `BinaryOpNode`。
@@ -212,7 +214,8 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 | 比较 | `==`、`!=`、`<`、`>`、`<=`、`>=` |
 | 逻辑 | `&&`、`||` |
 
-一元前缀操作符为 `&`（取地址）、`-`（一元负号）和 `!`（逻辑非）。
+一元前缀操作符为 `&`（取地址）、`*`（解引用）、`-`（一元负号）和 `!`（逻辑非）。
+因子位置的 `*` 一定是前缀：二元乘号由 `parse_term` 处理，所以 `2 * *p` 读作 `2 * (*p)`。
 
 优先级由低到高为：`||` → `&&` → 比较 → `+ -` → `* / %` → 一元前缀 → 下标与方法。
 `%` 与 `*`、`/` 同级且左结合，按操作数是否有符号分别生成 `srem` 或 `urem`。
@@ -233,6 +236,19 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 | `LITERAL_FLOAT`、`LITERAL_F32`、`LITERAL_F64` | `float_value` |
 | `LITERAL_STRING` | `string_value` |
 | `LITERAL_BOOL` | `bool_value` |
+| `LITERAL_NULL` | 无（见下） |
+
+`LITERAL_NULL` 是唯一**没有自己类型**的字面量。它只能出现在能确定 `*T` 目标类型的位置：
+`let p: *T = null`、`p == null` / `p != null`、作为 `*T` 实参。所以：
+
+- `expression_full_type()` 对它返回 `NULL`（不是 `create_var_type(LITERAL_NULL)`），
+  否则这个伪类型会泄进 `tap_type_equal` / `scalar_types_compatible` 等所有类型运算；
+- `expression_type()` 返回默认整数只是占位，真正类型由 `generate_expression_for_type()`
+  的目标类型决定；
+- 其余没有目标类型的位置一律报 `null needs a target type`，不猜。
+
+解引用时插入运行时检查（和除零、数组越界同一套 `emit_integer_guard`），所以
+`let y = *p` 在 `p` 是 null 时输出 `Null pointer dereference` 并退出，而不是段错误。
 
 `VarTypeNode` 当前也复用 `LiteralType` 表示声明类型。需要区分：`LiteralNode.literal_type`
 描述表达式中的值，`VarTypeNode.type` 描述变量、参数或函数返回值的类型注解。
@@ -378,8 +394,18 @@ Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`
    和函数体都走它，不要再写第二份语句分派。
 5. 在 `print_ast()` 中添加可读输出。
 6. 在 `free_ast()` 中释放节点拥有的资源。
-7. 在 Codegen 中实现对应语义。
-8. 添加 Parser 输出测试和运行测试。
+7. 在 `module.c` 的 `rewrite_expression()` 里补分支 —— 漏了会在跨模块改名时把子表达式丢掉。
+8. 在 `generics.c` 补三处：`clone_expression()`（克隆，漏了报 `cannot clone generic
+   expression type N`）、`materialize_expression()`（补全嵌套泛型实例）、
+   `process_expression()`（类型推断）。
+9. 在 `sema.c` 的 `compute_expression_type()` 里补类型推断。漏了不致命（会回退到 Codegen
+   推断），但 `TAP_SEMA_STATS=1` 的覆盖率会掉。
+10. 在 Codegen 里补三个 switch：`expression_full_type()`、`expression_type()`、
+    `generate_expression()`。
+11. 添加 Parser 输出测试和运行测试。
+
+第 7、8 步最容易漏，而且症状都不直观：漏了 `rewrite_expression` 是「某些模块组合下行为诡异」，
+漏了 `clone_expression` 是直接报一个内部错误。
 
 ## 当前限制与注意事项
 
