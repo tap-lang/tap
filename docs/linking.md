@@ -145,6 +145,99 @@ CMake 里对应 `add_library(tap_runtime STATIC ...)` 和 `add_library(tap_runti
 | CMake · MSVC | `TAP_LLVM_C_ROOT` 下的 `LLVM-C.lib` + `LLVM-C.dll` |
 | CMake · 其他 | `find_package(LLVM)` → `target_link_libraries(tap ${llvm_libs})` |
 
+### 静态链接 LLVM
+
+默认链的是单体动态库（`libLLVM.so` / `libLLVM.dylib`）。要摆脱这个依赖：
+
+```sh
+cmake -S . -B build-static -DCMAKE_BUILD_TYPE=Release \
+      -DTAP_STATIC_LLVM=ON \
+      -DLLVM_DIR=/opt/homebrew/opt/llvm@21/lib/cmake/llvm   # Linux 换成发行版路径
+cmake --build build-static --parallel
+```
+
+开关做的事：
+
+```cmake
+set(LLVM_LINK_LLVM_DYLIB OFF)
+execute_process(COMMAND llvm-config --link-static --libs --system-libs all ...)
+```
+
+**为什么不用 `llvm_map_components_to_libnames(... all)`**：`all` 依赖全局属性
+`LLVM_COMPONENT_LIBS`，那是 LLVM **自己构建时**才设置的，外部项目里展开成空 ——
+一个库都不链，链接期所有 LLVM 符号 undefined。实测踩过。
+
+改用 `llvm-config --link-static --libs --system-libs all`：它给出准确的组件列表
+**和依赖顺序**（静态链接对顺序敏感），`all` 包含所有后端 —— `src/codegen.c` 调了
+`LLVMInitializeAllTargetInfos` / `AllTargets` / `AllTargetMCs` / `AllAsmPrinters` /
+`AllAsmParsers`，漏一个后端就会在链接期报错。
+
+**`--system-libs` 不能漏**：LLVM 的静态库依赖 zlib / zstd / libxml2（本机实测缺 `-lz`
+时链接报 `_uncompress` undefined）。`llvm-config --system-libs` 会把它们带出来。
+
+`llvm-config` 输出的是 `-lLLVMxxx` 形式，所以还需要显式的库搜索路径
+（`target_link_directories(tap PRIVATE ${LLVM_LIBRARY_DIRS})`）。
+
+**还必须补两个东西**（实测依次踩到）：
+
+1. **C++ 运行库**：LLVM 组件静态库是 C++ 写的，而 tap 是纯 C 项目（链接驱动是 `cc`），
+   不会自动带 `libc++` —— 缺了就是满屏 `std::__1::...` undefined。
+2. **Homebrew 的 `<prefix>/lib`**：`--system-libs` 里的 zstd 由 Homebrew 装在那里，
+   不在 LLVM 自己的 lib 目录下，缺了报 `library 'zstd' not found`。
+
+**`--system-libs` 里的 z3 / zstd 要分开处理**：
+
+| 库 | 处理 | 原因 |
+|---|---|---|
+| `z3` | **去掉** | Homebrew 只提供 dylib；tap 不用 SMT 求解器，LLVM 的静态库也没有引用它 |
+| `zstd` | **静态链** | `libzstd.a` 存在（`/opt/homebrew/opt/zstd/lib/`），静态链进去就不用带动态依赖 |
+
+**实测结果（macOS / Homebrew LLVM 21.1.5 / arm64）**：
+
+```
+tap  156 MB   （动态版 340 KB）
+依赖：libSystem / libz / libxml2 / libc++  —— 全部 /usr/lib，系统自带
+```
+
+**没有任何 Homebrew 路径**，拷到同架构的 macOS 上直接能跑。功能验证：`--version` 正常、
+`tap run examples/fibonacci.tp` 跑通。
+
+对比动态版：
+
+| | 动态版 | 静态版 |
+|---|---|---|
+| 体积 | 340 KB | 156 MB |
+| 依赖数 | 2 | 4 |
+| **关键依赖** | `libLLVM.dylib`（152 MB，**目标机必须有 Homebrew LLVM**） | 无（全是系统库） |
+
+依赖数量变多但都是系统库 —— 这才是「静态」的意义：不是依赖更少，而是**不依赖用户环境里可能没装的东西**。
+
+**libz / libxml2 / libc++ 能再去掉吗？** 实测都不行：
+
+| 库 | 结论 | 依据 |
+|---|---|---|
+| `libc++` | ❌ | LLVM 组件静态库是 C++ 写的，必然引用；macOS 也没有 `libc++.a` |
+| `libz` | ❌ | 过滤掉 `-lz` 后链接失败（LLVM 的 Support 用 zlib 做压缩） |
+| `libxml2` | ❌ | 去掉 `LLVMWindowsManifest` 组件后**依然**被引用，是别的组件在用 |
+
+而且 macOS **不提供**这三个的静态库（`/usr/lib/libz.a`、`libxml2.a`、`libc++.a` 都不存在，
+Homebrew 也没有），所以「静态链」这条路也堵死了。
+
+**但它们都在 `/usr/lib`，任何 macOS 都自带**，不构成部署负担。
+macOS 上能做到的极限就是「只依赖系统库」，现在就是。
+
+**「全静态」在各平台的可能性**：
+
+| 平台 | 全静态 | 说明 |
+|---|---|---|
+| Linux | ✅ | 再叠加 `-DCMAKE_EXE_LINKER_FLAGS=-static`。glibc 全静态有 NSS 警告，tap 用不到那些接口 |
+| macOS | ❌ | libSystem 只有 `.dylib`，Apple 不支持静态链接系统库。`TAP_STATIC_LLVM` 只能去掉对 `libLLVM.dylib` 的依赖，二进制仍依赖 `/usr/lib/libSystem.B.dylib`（任何 macOS 都有） |
+| MSVC | ⚠️ | `/MT` 静态 CRT（`set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")`），但官方 LLVM 包只提供 `LLVM-C.dll` |
+| MinGW | ✅ | `-static`，或用 `-static-libgcc -static-libstdc++` 只静态运行时 |
+
+Homebrew 的 LLVM **没有** `libLLVM.a`（单体静态库），只有 206 个组件 `.a` —— 这正是
+必须用 `llvm_map_components_to_libnames` 而不能简单加 `-static` 的原因。
+
 ## 测试模式
 
 | 环境 | `TEST_RUN_MODE` | 原因 |

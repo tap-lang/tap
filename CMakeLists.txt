@@ -33,6 +33,10 @@ message(STATUS "C_COMPILER: ${CMAKE_C_COMPILER}")
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+# 静态链接 LLVM：不依赖 libLLVM.so / libLLVM.dylib，改用组件静态库。
+# 注意 macOS 上做不到「全静态」——libSystem 只有动态库，Apple 不支持静态链接系统库。
+# 这个开关只保证 tap 不再依赖 LLVM 的动态库，二进制会明显变大。
+option(TAP_STATIC_LLVM "Link LLVM statically (component archives) instead of libLLVM" OFF)
 
 # Build both Runtime forms: native executables use the archive and lli loads the shared library.
 add_library(tap_runtime STATIC runtime/src/runtime.c)
@@ -131,6 +135,62 @@ else()
     # Unix packages in CI provide the traditional monolithic LLVM library.
     if(MSVC AND TARGET LLVM-C)
         set(llvm_libs LLVM-C)
+    elseif(TAP_STATIC_LLVM)
+        # 用组件静态库代替 libLLVM。
+        #
+        # 不能用 llvm_map_components_to_libnames(... all)：`all` 依赖全局属性
+        # LLVM_COMPONENT_LIBS，那是 LLVM 自己构建时才有，外部项目里展开成空 ——
+        # 结果一个库都不链，链接期全部符号 undefined（实测就是这个症状）。
+        #
+        # llvm-config --link-static 给出准确的组件列表**和依赖顺序**，静态链接
+        # 对顺序敏感，这一点很重要。tap 调了 LLVMInitializeAllTargets()，需要
+        # 所有后端，所以传 `all`。
+        set(LLVM_LINK_LLVM_DYLIB OFF)
+        find_program(TAP_LLVM_CONFIG NAMES llvm-config
+                     HINTS "${LLVM_TOOLS_BINARY_DIR}" "${LLVM_LIBRARY_DIRS}/../bin")
+        if(NOT TAP_LLVM_CONFIG)
+            message(FATAL_ERROR
+                "TAP_STATIC_LLVM=ON requires llvm-config (not found)")
+        endif()
+        execute_process(
+            COMMAND "${TAP_LLVM_CONFIG}" --link-static --libs --system-libs all
+            OUTPUT_VARIABLE llvm_libs
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE llvm_config_result)
+        if(NOT llvm_config_result EQUAL 0 OR NOT llvm_libs)
+            message(FATAL_ERROR
+                "llvm-config --link-static --libs all failed; the LLVM install "
+                "probably has no component archives")
+        endif()
+        separate_arguments(llvm_libs UNIX_COMMAND "${llvm_libs}")
+        # LLVM 的组件静态库是 C++ 写的，而 tap 是纯 C 项目（链接驱动是 cc），
+        # 不会自动带上 C++ 运行库 —— 缺了就是满屏 std::__1:: 符号 undefined。
+        if(APPLE)
+            list(APPEND llvm_libs c++)
+        else()
+            list(APPEND llvm_libs stdc++)
+        endif()
+        # --system-libs 带出的 z3 / zstd：
+        #   z3    —— Homebrew 只提供 dylib，且 tap 不用 SMT 求解器，去掉。
+        #   zstd  —— 有 libzstd.a，静态链进去，避免 Homebrew 的动态依赖。
+        # 目标是让最终二进制只依赖系统库（libSystem / libz / libxml2 / libc++）。
+        list(FILTER llvm_libs EXCLUDE REGEX "z3|zstd")
+        if(EXISTS "/opt/homebrew/opt/zstd/lib/libzstd.a")
+            list(APPEND llvm_libs "/opt/homebrew/opt/zstd/lib/libzstd.a")
+        else()
+            list(APPEND llvm_libs zstd)
+        endif()
+        # libz / libxml2 / libc++ 去不掉（见 docs/linking.md）：
+        # macOS 不提供它们的静态库，LLVM 的组件静态库也确实引用。
+        # 但三者都在 /usr/lib，是系统自带，不构成部署负担。
+        # llvm-config 输出的是 -lLLVMxxx 形式，需要显式的库搜索路径。
+        target_link_directories(tap PRIVATE ${LLVM_LIBRARY_DIRS})
+        # --system-libs 里的 zstd / libxml2 由 Homebrew 装在 <prefix>/lib，
+        # 不在 LLVM 自己的 lib 目录下，得单独补上，否则报 library 'zstd' not found。
+        if(APPLE AND EXISTS "/opt/homebrew/lib")
+            target_link_directories(tap PRIVATE "/opt/homebrew/lib")
+        endif()
+        message(STATUS "TAP_STATIC_LLVM=ON: linking LLVM component archives")
     else()
         set(llvm_libs LLVM)
     endif()
