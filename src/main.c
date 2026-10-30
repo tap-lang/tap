@@ -23,11 +23,11 @@ static void print_usage() {
     printf("用法: tap [选项] <源文件>\n");
     printf("      tap run [选项] [源文件] [-- 程序参数...]\n");
     printf("      tap build\n");
-    printf("      tap init <名字>\n");
+    printf("      tap new <名字>\n");
     printf("命令:\n");
     printf("  run               编译为本地可执行文件并运行；不给文件时编译并运行当前包\n");
     printf("  build             编译当前包，产物放到 <包根>/build/<name>\n");
-    printf("  init <名字>       新建项目（转发给 tapm init）\n");
+    printf("  new <名字>        新建项目（转发给 tapm new）\n");
     printf("选项:\n");
     printf("  -h, --help        显示此帮助信息\n");
     printf("  -o <文件>         指定输出文件\n");
@@ -64,10 +64,10 @@ int main(int argc, char *argv[]) {
     int program_argc = 0;
     char **program_argv = NULL;
 
-    // `init` 是包管理器的活，tap 只转发：`tap init demo` → `tapm init demo`。
-    // 放在参数解析之前，`init` 之后的参数原样透传，不被 tap 自己的选项规则干扰
+    // `new` 是包管理器的活，tap 只转发：`tap new demo` → `tapm new demo`。
+    // 放在参数解析之前，`new` 之后的参数原样透传，不被 tap 自己的选项规则干扰
     // （项目名不该因为长得像选项就被拒掉）。
-    if (argc >= 2 && strcmp(argv[1], "init") == 0) {
+    if (argc >= 2 && strcmp(argv[1], "new") == 0) {
         return run_tapm(argv[0], argc - 1, &argv[1]);
     }
 

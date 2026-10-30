@@ -414,11 +414,11 @@ static int find_program_on_path(const char *name, char *output, size_t output_si
     }
 }
 
-// 把 `tap init ...` 转发给 tapm。
+// 把 `tap new ...` 转发给 tapm。
 //
 // tap 自己不实现脚手架——那是包管理器的活，模板也只该有一份（在 tapm 里）。
-// 这里只做转发：参数原样透传、退出码原样返回，所以 `tap init demo` 和
-// `tapm init demo` 完全等价。
+// 这里只做转发：参数原样透传、退出码原样返回，所以 `tap new demo` 和
+// `tapm new demo` 完全等价。
 //
 // tapm 是独立安装的二进制，没装是最可能的失败，所以提前把查找做完，好给出
 // 「装什么、放哪」这种能照着做的提示，而不是一句看不出所以然的 spawn 失败。
@@ -447,10 +447,10 @@ int run_tapm(const char *compiler_path, int forwarded_argc, char **forwarded_arg
 
     if (!program[0]) {
         fprintf(stderr,
-            "error: cannot find `%s`; `tap init` is provided by the tapm package manager\n", // 中文：找不到 tapm
+            "error: cannot find `%s`; `tap new` is provided by the tapm package manager\n", // 中文：找不到 tapm
             TAPM_PROGRAM_NAME);
         fprintf(stderr,
-            "install tapm and put it on PATH, or run `tapm init` directly\n"); // 中文：装上 tapm 并放进 PATH
+            "install tapm and put it on PATH, or run `tapm new` directly\n"); // 中文：装上 tapm 并放进 PATH
         return 1;
     }
 

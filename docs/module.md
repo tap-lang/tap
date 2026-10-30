@@ -304,10 +304,10 @@ tap run main.tp         # 文件模式：现有行为，完全不变
 包的目录布局约定（`package.toml` / `src/` / `packages/`）见 tapm 仓库的
 `docs/design.md`。
 
-### `tap init`：转发给 `tapm`
+### `tap new`：转发给 `tapm`
 
 ```text
-tap init demo           # 等价于 tapm init demo
+tap new demo           # 等价于 tapm new demo
 ```
 
 `init` 是包管理器的活，编译器**只转发**——参数原样透传、退出码原样返回，模板也只有一份
@@ -315,10 +315,10 @@ tap init demo           # 等价于 tapm init demo
 干扰（项目名不该因为长得像选项就被拒）。
 
 **tapm 的查找顺序**：先看编译器自己旁边（安装布局下两者都在 `<prefix>/bin`），再按 `PATH`
-找。都找不到时报错并提示「装上 tapm 并放进 PATH，或直接跑 `tapm init`」——而不是把
+找。都找不到时报错并提示「装上 tapm 并放进 PATH，或直接跑 `tapm new`」——而不是把
 `spawn` 的失败原样抛给用户。
 
-**这条依赖是单向的、软的**：`tap init` 需要 tapm，但**构建路径不需要**——`tap build` /
+**这条依赖是单向的、软的**：`tap new` 需要 tapm，但**构建路径不需要**——`tap build` /
 `tap run` 完全独立于 tapm，tapm 坏了也不影响构建自己的项目。
 
 对于 `std.*` 模块，编译器会先尝试 `TAP_STD_PATH`，并去掉模块名开头的
