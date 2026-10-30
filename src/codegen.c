@@ -1971,13 +1971,14 @@ static LLVMValueRef generate_expression_for_type(
             return LLVMConstNull(get_llvm_var_type(context, target_type));
         }
         if (!expression_assignable_to(context, expression, target_type)) {
-            report_error(NULL, "pointer expression type mismatch"); // 中文：指针表达式类型不匹配
+            report_error((const ASTNode *)expression, "pointer expression type mismatch"); // 中文：指针表达式类型不匹配
         }
         return generate_expression(context, expression);
     }
     if (target_type->struct_name) {
         if (!expression_assignable_to(context, expression, target_type)) {
-            report_error(NULL, "struct expression type mismatch"); // 中文：结构体表达式类型不匹配
+            report_error((const ASTNode *)expression,
+                         "struct expression type mismatch"); // 中文：结构体表达式类型不匹配
         }
         if (expression && expression->type == NODE_STRUCT_LITERAL) {
             return generate_struct_literal_value(
