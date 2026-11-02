@@ -634,14 +634,37 @@ static void link_argv_free(LinkArgv *argv) {
     argv->capacity = 0;
 }
 
-// 把用户链接参数展开成当前平台链接器认识的 argv 片段。
+// 把 `-Wl,a,b` 里逗号分隔的裸参数逐个压进 argv。
 //
-// 三个平台三种写法，所以按平台只保留一份实现：
-//   - 驱动（cc / gcc / clang）：-l / -L / -Wl, 三种写法驱动都认，原样透传
-//   - macOS 的 ld：`-Wl,` 是驱动的前缀，ld 不认识，要拆成逗号分隔的裸参数
-//   - MSVC 的 clang-cl：库按 .lib 习惯当输入文件，其余走 /link 交给 link.exe
-#if defined(__APPLE__)
-static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
+// 只对「直接调链接器」的路径成立（macOS 的 ld、MinGW 的 ld.lld）：它们是链接器本身，
+// 不认驱动前缀。走 cc / gcc / clang 驱动时整串原样透传，驱动自己会拆。
+static int link_argv_push_raw_split(LinkArgv *argv, const char *value) {
+    for (const char *segment = value; *segment;) {
+        const char *comma = strchr(segment, ',');
+        size_t length = comma ? (size_t)(comma - segment) : strlen(segment);
+        if (length > 0) {
+            char *part = malloc(length + 1);
+            if (!part) {
+                argv->failed = 1;
+                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                return 1;
+            }
+            memcpy(part, segment, length);
+            part[length] = '\0';
+            link_argv_push(argv, part);
+            free(part);
+        }
+        if (!comma) break;
+        segment = comma + 1;
+    }
+    return 0;
+}
+
+// 直接调用 ld 系列（macOS 的 ld、MinGW 下的 ld.lld）时的参数展开。
+//
+// `-Wl,` 是驱动的前缀，ld 自己不认识，所以裸参数要拆成逗号分隔的多个参数；
+// `-l` / `-L` 两种写法 ld 和驱动都认，原样拼上就行。
+static void push_link_options_direct_ld(LinkArgv *argv, const LinkOptions *options) {
     if (link_options_is_empty(options)) return;
 
     for (int i = 0; i < options->count; i++) {
@@ -655,27 +678,21 @@ static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
             break;
         case LINK_ARG_RAW:
             // `-Wl,-rpath,/usr/local/lib` 在 ld 下是 `-rpath /usr/local/lib` 两个参数。
-            for (const char *segment = argument->value; *segment;) {
-                const char *comma = strchr(segment, ',');
-                size_t length = comma ? (size_t)(comma - segment) : strlen(segment);
-                if (length > 0) {
-                    char *part = malloc(length + 1);
-                    if (!part) {
-                        argv->failed = 1;
-                        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-                        return;
-                    }
-                    memcpy(part, segment, length);
-                    part[length] = '\0';
-                    link_argv_push(argv, part);
-                    free(part);
-                }
-                if (!comma) break;
-                segment = comma + 1;
-            }
+            link_argv_push_raw_split(argv, argument->value);
             break;
         }
     }
+}
+
+// 把用户链接参数展开成当前平台链接器认识的 argv 片段。
+//
+// 三种平台三种写法，所以按平台只保留一份实现：
+//   - 驱动（cc / gcc / clang）：-l / -L / -Wl, 三种写法驱动都认，原样透传
+//   - macOS 的 ld：直接调 ld，见 push_link_options_direct_ld
+//   - MSVC 的 clang-cl：库按 .lib 习惯当输入文件，其余走 /link 交给 link.exe
+#if defined(__APPLE__)
+static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
+    push_link_options_direct_ld(argv, options);
 }
 #elif defined(_WIN32) && !defined(__MINGW32__)
 // 后缀比较忽略大小写：`-lSQLITE3.LIB` 不该被拼成 `SQLITE3.LIB.lib`。
@@ -766,6 +783,85 @@ static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
 }
 #endif
 
+#if defined(_WIN32) && defined(__MINGW32__)
+// 取路径的父目录。这里不能用 compiler_directory —— 它会去问操作系统
+// 「当前可执行文件在哪」，对 ld.lld 这种外部程序来说问错了对象。
+static int split_parent_directory(
+    const char *path, char *directory, size_t directory_size) {
+    const char *separator = strrchr(path, '/');
+    const char *backslash = strrchr(path, '\\');
+    if (!separator || (backslash && backslash > separator)) separator = backslash;
+    if (!separator) return 0;
+
+    size_t length = (size_t)(separator - path);
+    if (length == 0 || length >= directory_size) return 0;
+    memcpy(directory, path, length);
+    directory[length] = '\0';
+    return 1;
+}
+
+// 在 MinGW 下找「能直接调用的 ld.lld」和它配套的 CRT 目录。
+//
+// 为什么要绕开 gcc：gcc 驱动除了拼链接行什么都不做，却顺带把 libgcc 拖了进来。
+// Runtime 已经自带 __main / ___chkstk_ms / i128 的除法辅助符号，链接行里不再需要
+// -lgcc，于是可以省掉 gcc 这一层依赖（没装 gcc 的机器也能链接）。
+//
+// crt2.o、crtbegin.o、libmingw32.a 等都在同一个 lib 目录里，但不同发行版相对 bin
+// 的位置不一样：MSYS2 是 <prefix>/lib，w64devkit 是 <prefix>/x86_64-w64-mingw32/lib。
+// 所以按 ld.lld 和 gcc 各自的 bin 目录反推，逐个探测到 crt2.o 为止。
+static int find_mingw_link_tools(char *linker_path, size_t linker_path_size,
+                                 char *crt_directory, size_t crt_directory_size) {
+    char lld_path[RUN_PATH_MAX];
+    if (!find_program_on_path("ld.lld.exe", lld_path, sizeof(lld_path))) return 0;
+
+    char roots[2][RUN_PATH_MAX];
+    int root_count = 0;
+    char root[RUN_PATH_MAX];
+    if (split_parent_directory(lld_path, root, sizeof(root))) {
+        snprintf(roots[root_count++], RUN_PATH_MAX, "%s", root);
+    }
+    // ld.lld 可能来自独立的 LLVM 安装，跟 MinGW 的 lib 目录不在一棵树上，
+    // 所以 gcc 所在目录也当一个候选根（探测不到 crt2.o 时自然会被跳过）。
+    char gcc_path[RUN_PATH_MAX];
+    if (find_program_on_path("gcc.exe", gcc_path, sizeof(gcc_path)) &&
+        split_parent_directory(gcc_path, root, sizeof(root))) {
+        int duplicate = 0;
+        for (int i = 0; i < root_count; i++) {
+            if (strcmp(roots[i], root) == 0) duplicate = 1;
+        }
+        if (!duplicate && root_count < 2) snprintf(roots[root_count++], RUN_PATH_MAX, "%s", root);
+    }
+
+    static const char *const layouts[] = {
+        "%s/../lib", "%s/../x86_64-w64-mingw32/lib", NULL
+    };
+    for (int root_index = 0; root_index < root_count; root_index++) {
+        for (int layout_index = 0; layouts[layout_index]; layout_index++) {
+            char candidate[RUN_PATH_MAX];
+            int length = snprintf(candidate, sizeof(candidate), layouts[layout_index],
+                                  roots[root_index]);
+            if (length <= 0 || (size_t)length >= sizeof(candidate)) continue;
+
+            char crt_path[RUN_PATH_MAX];
+            length = snprintf(crt_path, sizeof(crt_path), "%s/crt2.o", candidate);
+            if (length <= 0 || (size_t)length >= sizeof(crt_path)) continue;
+            if (!runtime_file_exists(crt_path)) continue;
+
+            // 路径里带 .. 也能用，但写进命令和报错信息里很难看，顺手规范化一次。
+            char normalized[RUN_PATH_MAX];
+            if (_fullpath(normalized, candidate, sizeof(normalized))) {
+                snprintf(crt_directory, crt_directory_size, "%s", normalized);
+            } else {
+                snprintf(crt_directory, crt_directory_size, "%s", candidate);
+            }
+            snprintf(linker_path, linker_path_size, "%s", lld_path);
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
 // 链接失败时补一句能照着做的提示。链接器自己只会说 `cannot find -lsqlite3`，
 // 不会告诉你下一步该干什么。
 static void report_link_failure(int status, const LinkOptions *link_options) {
@@ -805,20 +901,67 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     link_argv_init(&argv);
 
 #if defined(_WIN32) && defined(__MINGW32__)
-    // MinGW-w64（目标三元组 x86_64-w64-windows-gnu）：用 GNU 驱动链接。
-    // 不能用 clang-cl —— 它按 MSVC 目标去找 MSVC 的 CRT 和 .lib，和 MinGW 的
-    // msvcrt/UCRT + libgcc 体系对不上。i128 的 __divti3 由 libgcc 提供，不用显式
-    // 指定；winsock 符号在 ws2_32 里。MinGW 没有独立的 libm（pow 在 CRT 里）。
-    const char *linker = "gcc";
-    link_argv_push(&argv, linker);
-    if (static_link) link_argv_push(&argv, "-static");
-    link_argv_push(&argv, object_file);
-    link_argv_push(&argv, runtime_static_path);
-    link_argv_push(&argv, "-o");
-    link_argv_push(&argv, exe_file);
-    // 用户库排在 Runtime 之后、系统库之前：静态链接的符号解析是单向的。
-    push_link_options(&argv, link_options);
-    link_argv_push(&argv, "-lws2_32");
+    // MinGW-w64（目标三元组 x86_64-w64-windows-gnu）：优先用 ld.lld 直接链接。
+    //
+    // 不用 clang-cl —— 它按 MSVC 目标去找 MSVC 的 CRT 和 .lib，和 MinGW 的
+    // msvcrt/UCRT 体系对不上。也不首选 gcc 驱动 —— 它会把 libgcc 拖进来，而 Runtime
+    // 已经自带 __main / ___chkstk_ms / i128 的除法辅助符号，链接行里根本不需要 -lgcc。
+    // 直接调 ld.lld 就少了一层对 gcc 的依赖。
+    // 找不到 ld.lld（老工具链、只有 gcc 的环境）时退回 gcc，行为跟以前一致。
+    char lld_path[RUN_PATH_MAX];
+    char crt_dir[RUN_PATH_MAX];
+    if (find_mingw_link_tools(lld_path, sizeof(lld_path), crt_dir, sizeof(crt_dir))) {
+        link_argv_push(&argv, lld_path);
+#if defined(__x86_64__)
+        // ld.lld 默认能按输入文件的机器类型自己判断，显式给出更稳。
+        link_argv_push(&argv, "-m");
+        link_argv_push(&argv, "i386pep");
+#endif
+        link_argv_push(&argv, static_link ? "-Bstatic" : "-Bdynamic");
+        link_argv_push(&argv, "-o");
+        link_argv_push(&argv, exe_file);
+        // crt2.o 必须在最前面：它带入口点，并且引用 __main（由 Runtime 提供）。
+        link_argv_push_joined(&argv, crt_dir, "/crt2.o");
+        link_argv_push_joined(&argv, crt_dir, "/crtbegin.o");
+        link_argv_push_joined(&argv, "-L", crt_dir);
+        link_argv_push(&argv, object_file);
+        link_argv_push(&argv, runtime_static_path);
+        // 用户库排在 Runtime 之后、系统库之前：静态链接的符号解析是单向的。
+        push_link_options_direct_ld(&argv, link_options);
+        // 系统库。ws2_32 提供 winsock 符号；其余是 MinGW 的启动代码和 CRT 例程，
+        // 顺序照抄 gcc 的默认链接行。
+        link_argv_push(&argv, "-lws2_32");
+        link_argv_push(&argv, "-lmingw32");
+        link_argv_push(&argv, "-lmingwex");
+        link_argv_push(&argv, "-lmsvcrt");
+        link_argv_push(&argv, "-lkernel32");
+        link_argv_push(&argv, "-lpthread");
+        link_argv_push(&argv, "-ladvapi32");
+        link_argv_push(&argv, "-lshell32");
+        link_argv_push(&argv, "-luser32");
+        // 默认清单让生成的 exe 带上清单资源（高 DPI、UCRT 依赖都靠它）；
+        // 有些工具链没这个文件，缺了也不影响运行。crtend.o 必须收在所有目标文件之后。
+        char manifest[RUN_PATH_MAX];
+        int manifest_length = snprintf(manifest, sizeof(manifest), "%s/default-manifest.o", crt_dir);
+        if (manifest_length > 0 && (size_t)manifest_length < sizeof(manifest) &&
+            runtime_file_exists(manifest)) {
+            link_argv_push(&argv, manifest);
+        }
+        link_argv_push_joined(&argv, crt_dir, "/crtend.o");
+    } else {
+        // 退回 gcc 驱动：i128 的 __divti3 等符号由 libgcc 提供；MinGW 没有独立的
+        // libm（pow 在 CRT 里）。
+        const char *linker = "gcc";
+        link_argv_push(&argv, linker);
+        if (static_link) link_argv_push(&argv, "-static");
+        link_argv_push(&argv, object_file);
+        link_argv_push(&argv, runtime_static_path);
+        link_argv_push(&argv, "-o");
+        link_argv_push(&argv, exe_file);
+        // 用户库排在 Runtime 之后、系统库之前：静态链接的符号解析是单向的。
+        push_link_options(&argv, link_options);
+        link_argv_push(&argv, "-lws2_32");
+    }
 #elif defined(_WIN32)
     // Match the Runtime's static MSVC CRT so generated objects and Runtime use one CRT.
     char output_option[RUN_PATH_MAX + 4];

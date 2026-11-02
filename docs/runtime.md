@@ -108,8 +108,22 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 指数是小数或负数时没法用快速幂算，必须走 libm。**这是 Runtime 里唯一需要 `-lm` 的符号**：
 macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的链接命令显式带了 `-lm`
 （放在目标文件之后），因为 glibc 2.34 之前 libm 是独立的。Windows 的 msvcrt/UCRT 自带
-`pow`，MSVC（clang-cl）和 MinGW（gcc）都不需要 `-lm`；MinGW 额外要 `-lws2_32` 提供
-winsock 符号，MSVC 则是 `ws2_32.lib`。
+`pow`，MSVC（clang-cl）和 MinGW（`ld.lld` 或回退的 gcc）都不需要 `-lm`；MinGW 额外要
+`-lws2_32` 提供 winsock 符号，MSVC 则是 `ws2_32.lib`。
+
+## 编译器辅助符号（替掉 libgcc）
+
+MinGW 下链接不再经过 gcc 驱动，也就没有 libgcc 了。LLVM 后端和 CRT 会无条件引用下面几个
+符号，所以 Runtime 自己提供一份（`_WIN32 && !_MSC_VER && !__CYGWIN__`，Cygwin 仍经 clang
+驱动链 libgcc，这两个符号本来就有）：
+
+| C ABI | 行为 |
+|---|---|
+| `__main(): void` | 空实现。MinGW 的 `crt2.o` 无条件引用它，GCC 那边它本来就是空的 |
+| `___chkstk_ms(): void` | 栈帧超过 4KB 时 LLVM 插入的栈探测，x86_64 内联汇编按 Win64 ABI 逐页 touch |
+| `__divti3` / `__udivti3` / `__modti3` / `__umodti3` | i128 除法/取模的 libcall，约定按 Win64 的「byval 指针 + XMM0 返回」 |
+
+`-lgcc_eh` 不需要：tap 生成的代码没有 C++ 异常表。
 
 ## 标准流输出 ABI
 

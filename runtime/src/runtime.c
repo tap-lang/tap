@@ -1409,7 +1409,7 @@ int32_t __tap_socket_close(int64_t handle) {
 }
 
 // ---------------------------------------------------------------------------
-// Windows（clang 构建）下的 128 位整数除法 / 取模运行时助手
+// Windows（非 MSVC）下的 128 位整数除法 / 取模运行时助手
 // ---------------------------------------------------------------------------
 // 背景：tap 的 i128/u128 除法在 IR 层是 `sdiv i128` / `udiv i128`，LLVM 的 x86-64
 // 后端会把它降级成对 `__divti3` / `__udivti3` / `__modti3` / `__umodti3` 的 libcall。
@@ -1424,22 +1424,20 @@ int32_t __tap_socket_close(int64_t handle) {
 //     输出之前，因为除法在 print 之前求值）。回归点：tests/run-pass/operators/
 //     mixed_signedness.tp 是唯一做 i128 除法的用例，所以只有它红。
 //
-// 修法：在本 Runtime 里自带这四个助手，用 clang 编译——clang 编出来的函数签名天然
-// 就是 LLVM 的 Win64 libcall 约定（按指针接参、XMM0 返回，已用 `clang -target
-// x86_64-w64-windows-gnu -S` 核对过入口 `movq (%rcx),...` 与返回 `punpcklqdq`）。
-// 生成的 .o 引用 __divti3 时，链接器优先从本 Runtime 的静态库取到我们这份，
-// 盖过 Cygwin libgcc 里约定不符的那份。
+// 修法：在本 Runtime 里自带这四个助手。生成的 .o 引用 __divti3 时，链接器优先从
+// 本 Runtime 的静态库取到我们这份，盖过 libgcc 里约定可能不符的那份。
 //
 // 算法：恢复余数法（restoring division），逐位从高到低，只用常量移位和加减比较，
 // 不触发任何二次 libcall。正确性已在 macOS 上和原生 `__int128 /`、`%` 对拍
 // ~220 万随机 + 边界用例，0 失败（算法是纯 C、与目标平台无关）。
 //
-// 守卫：只在 clang 且非 clang-cl 的 Windows 构建下编译。
-//   - Cygwin/MinGW 的 clang：编译，覆盖 libgcc。修复目标。
-//   - MinGW 的 gcc：不编译，用 MinGW-w64 libgcc（其 __divti3 与 clang 约定一致，正常）。
+// 守卫：Windows 且非 MSVC 全编译（MinGW 的 gcc / clang、Cygwin 的 gcc / clang）。
+// 以前只在 clang 下编译，是为了让 MinGW+gcc 继续用 libgcc 里那份；现在链接侧改成
+// 优先走 ld.lld 且不再链 libgcc，必须由本 Runtime 自给自足，否则 i128 除法直接
+// 报 undefined symbol。
 //   - MSVC 的 clang-cl：不编译，继续走 compiler-rt（本来就正常，不添乱）。
 //   - macOS / Linux：不编译，行为零变化。
-#if defined(_WIN32) && defined(__clang__) && !defined(_MSC_VER)
+#if defined(_WIN32) && !defined(_MSC_VER)
 
 typedef unsigned __int128 tap_u128;
 typedef __int128 tap_i128;
@@ -1504,4 +1502,53 @@ __int128 __modti3(__int128 a, __int128 b) {
     return negative ? -result : result;
 }
 
-#endif // defined(_WIN32) && defined(__clang__) && !defined(_MSC_VER)
+#endif // defined(_WIN32) && !defined(_MSC_VER)
+
+// ---------------------------------------------------------------------------
+// Windows（MinGW）下原本由 libgcc 提供的两个符号
+// ---------------------------------------------------------------------------
+// tap 的链接侧优先用 LLVM 自带的 ld.lld，并且**不再链接 libgcc** —— 这样只装了
+// LLVM、没装 GCC 的机器也能把 .tp 编成可执行文件。代价是 libgcc 里那两个被引用的
+// 符号必须由本 Runtime 提供：
+//
+//   __main          MinGW 的 crt2.o 无条件引用它（GCC 那边它在 libgcc 里，作用是跑
+//                   C++ 静态构造函数）。tap 不生成任何构造函数，空实现即可。
+//   ___chkstk_ms    栈帧超过 4 KB 的函数由 LLVM 插入调用，逐页触碰栈页以便 Windows
+//                   提交新页。除了 tap 自己的大栈帧，libmingw32.a 的 pseudo-reloc.o
+//                   也无条件引用它，所以哪怕程序很小也躲不掉。
+//
+// Cygwin 排除在外：它仍然经 clang 驱动链接，libgcc 一直在，这两个符号本来就有，
+// 没必要去动一条在这里测不到的路径。
+#if defined(_WIN32) && !defined(_MSC_VER) && !defined(__CYGWIN__)
+
+void __main(void) {
+    // tap 没有静态构造函数，无需运行任何东西。
+}
+
+#if defined(__x86_64__)
+// 约定：进入时 RAX = 需要分配的字节数，函数负责把 RSP 调整好再返回。
+// 逐页用 `orq $0,(%rcx)` 触碰，跳过的那一页会被 Windows 的栈增长机制提交。
+// 必须写成文件作用域的汇编：放在函数体里编译器会自己插栈帧调整，语义就乱了。
+__asm__(
+    ".text\n"
+    ".globl ___chkstk_ms\n"
+    ".def ___chkstk_ms; .scl 2; .type 32; .endef\n"
+    "___chkstk_ms:\n"
+    "    push %rcx\n"
+    "    push %rax\n"
+    "    cmp $0x1000, %rax\n"
+    "    lea 24(%rsp), %rcx\n"
+    "    jb 2f\n"
+    "1:  sub $0x1000, %rcx\n"
+    "    orq $0, (%rcx)\n"
+    "    sub $0x1000, %rax\n"
+    "    cmp $0x1000, %rax\n"
+    "    ja 1b\n"
+    "2:  sub %rax, %rcx\n"
+    "    orq $0, (%rcx)\n"
+    "    pop %rax\n"
+    "    pop %rcx\n"
+    "    ret\n");
+#endif // defined(__x86_64__)
+
+#endif // defined(_WIN32) && !defined(_MSC_VER)

@@ -36,8 +36,8 @@
 | macOS | `ld`（直接调，不经 cc） | `libtap_runtime.a` | `-lSystem`、`-syslibroot`、`-arch`、`-platform_version` |
 | Linux | `cc` | `libtap_runtime.a` | `-no-pie`、`-lm` |
 | MSVC | `clang-cl` | `tap_runtime.lib` | `/MT`、`/clang:-rtlib=compiler-rt`、`/Fe`、`ws2_32.lib` |
-| MINGW64 | `gcc` | `libtap_runtime.a` | `-lws2_32`（**不加 `-lm`**） |
-| UCRT64 | `gcc` | `libtap_runtime.a` | 同上，命令完全一致 |
+| MINGW64 | `ld.lld`（找不到时退回 `gcc`） | `libtap_runtime.a` | `-m i386pep`、显式 `crt2.o`/`crtend.o`、`-lws2_32`（**不加 `-lm`、不加 `-lgcc`**） |
+| UCRT64 | 同上 | `libtap_runtime.a` | 同上，命令完全一致 |
 | Cygwin | `clang` | `libtap_runtime.a` | `-lm`（**不加 `-rtlib=`、不加 `-no-pie`**） |
 
 ## 逐平台命令
@@ -88,6 +88,14 @@ clang-cl /nologo /MT /clang:-rtlib=compiler-rt prog.obj tap_runtime.lib /Feprog.
 ### MinGW-w64：MINGW64 / UCRT64
 
 ```sh
+# 首选：直接调 ld.lld（不需要 gcc，也不需要 libgcc）
+ld.lld -m i386pep -Bdynamic -o prog.exe \
+    <root>/lib/crt2.o <root>/lib/crtbegin.o -L<root>/lib \
+    prog.o libtap_runtime.a -lws2_32 \
+    -lmingw32 -lmingwex -lmsvcrt -lkernel32 -lpthread -ladvapi32 -lshell32 -luser32 \
+    <root>/lib/default-manifest.o <root>/lib/crtend.o
+
+# 回退：PATH 上找不到 ld.lld 时仍用 gcc 驱动
 gcc prog.o libtap_runtime.a -o prog.exe -lws2_32
 gcc -static prog.o libtap_runtime.a -o prog.exe -lws2_32   # --static
 ```
@@ -101,10 +109,33 @@ gcc -static prog.o libtap_runtime.a -o prog.exe -lws2_32   # --static
 | MSYS2 包前缀 | `mingw-w64-x86_64-*` | `mingw-w64-ucrt-x86_64-*` |
 | PATH | `/mingw64/bin` | `/ucrt64/bin` |
 
-- 用 GNU 驱动 `gcc`，**不能用 `clang-cl`**：它按 MSVC 目标去找 MSVC 的 CRT 和 `.lib`，
-  和 MinGW 的 msvcrt/UCRT + libgcc 体系对不上。
+- **不能 `clang-cl`**：它按 MSVC 目标去找 MSVC 的 CRT 和 `.lib`，和 MinGW 的 msvcrt/UCRT 体系对不上。
 - **不加 `-lm`**：MinGW 没有独立的 libm，`pow` 在 CRT 里。
-- `__divti3` 由 libgcc 提供，不用显式指定。
+- **不加 `-lgcc`**：链接行里一个 libgcc 符号都不需要，见下面「为什么可以不要 libgcc」。
+
+#### 为什么可以不要 libgcc
+
+gcc 驱动本身不干活，只是把参数拼给 ld，顺带把 `-lgcc` 塞进链接行。实测 MinGW 下真正用到
+libgcc 的只有 4 个符号，全部由 Runtime 自己提供（`runtime/src/runtime.c`）：
+
+| 符号 | 谁引用 | Runtime 里的来源 |
+|---|---|---|
+| `__main` | `crt2.o`（无条件引用） | `void __main(void) {}` 空实现，MinGW 下它本来就该是空的 |
+| `___chkstk_ms` | LLVM 给 >4KB 栈帧插的探测调用 | x86_64 内联汇编，按 Win64 ABI 逐页 touch |
+| `__divti3` / `__udivti3` / `__modti3` / `__umodti3` | i128 除法/取模的 libcall | 早已自带（约定和 LLVM 后端匹配，见「坑」第 1 条） |
+
+`-lgcc_eh` 实测也不需要（tap 生成的代码没有 C++ 异常表）。
+
+代价是链接器要自己找 CRT：`crt2.o`、`crtbegin.o`、`crtend.o`、`default-manifest.o` 和
+`libmingw32.a` 这些都在 sysroot 的 `lib` 目录里，但不同发行版相对 `bin` 的位置不一样
+（MSYS2 是 `<prefix>/lib`，w64devkit 是 `<prefix>/x86_64-w64-mingw32/lib`）。
+`run.c` 从 `ld.lld` 和 `gcc` 各自的 `bin` 目录反推，探测到 `crt2.o` 就用该目录。
+
+判定顺序：PATH 上有 `ld.lld.exe` 且能找到 CRT 目录 → 走 lld；否则整条退回 gcc，
+行为和以前完全一致。所以「装了 gcc 但没装 LLVM 工具」的环境不会因为这次改动而变坏。
+
+实测：把 `gcc` 换成一个必然失败的同名程序后，`TEST_RUN_MODE=native` 全量 240 个用例
+仍然 239 通过 / 1 跳过 / 0 失败 —— 说明链接路径确实不碰 gcc。
 
 ### Cygwin
 
@@ -251,9 +282,13 @@ Homebrew 的 LLVM **没有** `libLLVM.a`（单体静态库），只有 206 个�
    约定是「按 byval 指针传参 + XMM0 返回」，**只和 compiler-rt 匹配**。Cygwin 默认 rtlib
    是 libgcc，它的 `__divti3` 是 GCC 约定，对不上 → 一做 i128 除法就段错误（崩在首次输出前，
    回归点 `tests/run-pass/operators/mixed_signedness.tp`）。解法：`runtime.c` 在
-   `_WIN32 && __clang__ && !_MSC_VER` 下自带一份约定匹配的实现，链接静态库时盖过 libgcc。
+   `_WIN32 && !_MSC_VER` 下自带一份约定匹配的实现。这个守卫早先是
+   `_WIN32 && __clang__ && !_MSC_VER`，因为只有 clang 才会用 compiler-rt 约定；
+   MinGW 的链接行去掉 libgcc 之后 gcc 构建也要靠它，所以放宽成了只看 `_WIN32`。
 2. **`-lm` 位置**：必须放最后，否则老 glibc / Cygwin 上 `pow` 报未定义。
 3. **`ws2_32`**：Windows 全系（MSVC 用 `.lib`，MinGW/Cygwin 用 `-lws2_32`）。
 4. **clang-cl 只用于 MSVC 目标**：拿它链 MinGW 会去要 MSVC 的 CRT。
 5. **`-no-pie`**：Linux 要，Cygwin 不要（驱动不认）。
-6. **`-static`**：macOS 不支持，其余平台可用。
+6. **`-static`**：macOS 不支持，其余平台可用。MinGW 走 `ld.lld` 时翻译成 `-Bstatic`。
+7. **`-Wl,` 只在驱动下有效**：`ld.lld` 和 macOS 的 `ld` 不认这个前缀，`run.c` 会把逗号
+   拆成多个裸参数（`push_link_options_direct_ld()`）；走 gcc 驱动时仍是原样透传。

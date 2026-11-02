@@ -126,7 +126,7 @@ fn main(): i32 {
 | macOS | `ld` | `-lfoo` | `-Ldir` | `a b`（拆成裸参数，`ld` 不认 `-Wl,`） |
 | Linux | `cc` | `-lfoo` | `-Ldir` | `-Wl,a,b`（驱动自己拆） |
 | Cygwin | `clang` | `-lfoo` | `-Ldir` | `-Wl,a,b` |
-| MinGW-w64 | `gcc` | `-lfoo` | `-Ldir` | `-Wl,a,b` |
+| MinGW-w64 | `ld.lld`（找不到时 `gcc`） | `-lfoo` | `-Ldir` | `a b`（`ld.lld` 同样不认 `-Wl,`；回退到 gcc 时才用 `-Wl,a,b`） |
 | MSVC | `clang-cl` | `foo.lib`（已有 `.lib` 后缀则不重复加） | `/link /LIBPATH:dir` | `/link <arg>`（要写 link.exe 的写法） |
 
 MSVC 那一行是唯一语义有偏差的：clang-cl 把库当输入文件，`-L` / 裸参数只能进

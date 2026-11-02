@@ -10,13 +10,20 @@
 //
 //   ./build/tap run -o /tmp/link_winmm.exe -lwinmm tests/run-pass/extern/link_winmm.tp
 //
-// tap 展开后实际执行的链接命令（<obj> 是 tap 在临时目录生成的 program.o）：
+// tap 展开后实际执行的链接命令（<obj> 是 tap 在临时目录生成的 program.o，
+// <root>/lib 是 MinGW sysroot 的 lib 目录）：
 //
-//   MinGW-w64: gcc <obj> build/libtap_runtime.a -o <exe> -lwinmm -lws2_32
+//   MinGW-w64: ld.lld -m i386pep -Bdynamic -o <exe> <root>/lib/crt2.o <root>/lib/crtbegin.o
+//                      -L<root>/lib <obj> build/libtap_runtime.a -lwinmm -lws2_32
+//                      -lmingw32 -lmingwex -lmsvcrt -lkernel32 -lpthread -ladvapi32
+//                      -lshell32 -luser32 <root>/lib/default-manifest.o <root>/lib/crtend.o
+//   MinGW-回退: gcc <obj> build/libtap_runtime.a -o <exe> -lwinmm -lws2_32
 //   Cygwin:    clang <obj> build/libtap_runtime.a -o <exe> -lwinmm -lm
 //   MSVC:      clang-cl /nologo /MT /clang:-rtlib=compiler-rt <obj> build/tap_runtime.lib
 //                        /Fe<exe> ws2_32.lib winmm.lib
 //
+// MinGW 首选直接调 ld.lld：链接行里没有 -lgcc，Runtime 自带 __main / ___chkstk_ms
+// 和 i128 的 __divti3 等辅助符号。PATH 上找不到 ld.lld 时退回 gcc 驱动那一行。
 // MSVC 那行有两处不同：`-lwinmm` 被翻译成 winmm.lib 当输入文件（不加 -l 前缀），
 // ws2_32.lib 是 Runtime 自带的 winsock 依赖，固定排在用户库之前。
 extern fn timeGetTime(): u32;
