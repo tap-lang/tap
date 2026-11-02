@@ -32,6 +32,57 @@ extern char **environ;
 static char runtime_static_path[RUN_PATH_MAX];
 static char runtime_shared_path[RUN_PATH_MAX];
 
+// 复制字符串。用自己的一份而不是 strdup：MSVC 下 strdup 是弃用符号，
+// 要么带 _CRT_SECURE_NO_WARNINGS，要么换名，不值得为这个引入平台分支。
+static char *duplicate_string(const char *text) {
+    size_t length = strlen(text) + 1;
+    char *copy = malloc(length);
+    if (!copy) return NULL;
+    memcpy(copy, text, length);
+    return copy;
+}
+
+void link_options_init(LinkOptions *options) {
+    options->items = NULL;
+    options->count = 0;
+    options->capacity = 0;
+}
+
+int link_options_add(LinkOptions *options, LinkArgKind kind, const char *value) {
+    if (options->count == options->capacity) {
+        int capacity = options->capacity ? options->capacity * 2 : 8;
+        LinkArg *items = realloc(options->items, sizeof(LinkArg) * (size_t)capacity);
+        if (!items) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            return 1;
+        }
+        options->items = items;
+        options->capacity = capacity;
+    }
+
+    char *copy = duplicate_string(value);
+    if (!copy) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return 1;
+    }
+
+    options->items[options->count].kind = kind;
+    options->items[options->count].value = copy;
+    options->count++;
+    return 0;
+}
+
+int link_options_is_empty(const LinkOptions *options) {
+    return !options || options->count == 0;
+}
+
+void link_options_free(LinkOptions *options) {
+    if (!options) return;
+    for (int i = 0; i < options->count; i++) free(options->items[i].value);
+    free(options->items);
+    link_options_init(options);
+}
+
 typedef struct {
     // 本次编译/运行产生的临时目录。
     char directory[RUN_PATH_MAX];
@@ -513,30 +564,261 @@ static int macos_sdk_value(
 }
 #endif
 
+// 链接器 argv 的动态构建器。
+//
+// 以前每个平台都是一份定长的 `char *const argv[] = {...}`。加了 -l / -L / -Wl,
+// 之后参数个数在编译期未知，只能动态拼。条目一律复制一份：object_file / exe_file /
+// runtime 路径都是借用的，混在一起会让释放逻辑变成猜谜。
+typedef struct {
+    char **items;
+    size_t count;
+    size_t capacity;
+    int failed;
+} LinkArgv;
+
+static void link_argv_init(LinkArgv *argv) {
+    argv->items = NULL;
+    argv->count = 0;
+    argv->capacity = 0;
+    argv->failed = 0;
+}
+
+static int link_argv_push(LinkArgv *argv, const char *argument) {
+    if (argv->failed) return 1;
+
+    // +2：末尾要留 NULL 终结符，push 之后立刻写。
+    if (argv->count + 2 > argv->capacity) {
+        size_t capacity = argv->capacity ? argv->capacity * 2 : 16;
+        char **items = realloc(argv->items, sizeof(char *) * capacity);
+        if (!items) {
+            argv->failed = 1;
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            return 1;
+        }
+        argv->items = items;
+        argv->capacity = capacity;
+    }
+
+    char *copy = duplicate_string(argument);
+    if (!copy) {
+        argv->failed = 1;
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return 1;
+    }
+
+    argv->items[argv->count++] = copy;
+    argv->items[argv->count] = NULL;
+    return 0;
+}
+
+// 追加「前缀 + 值」，用于 -l<名字>、-L<目录>、/LIBPATH:<目录> 这类拼在一起的参数。
+static int link_argv_push_joined(LinkArgv *argv, const char *prefix, const char *value) {
+    size_t length = strlen(prefix) + strlen(value) + 1;
+    char *joined = malloc(length);
+    if (!joined) {
+        argv->failed = 1;
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return 1;
+    }
+    snprintf(joined, length, "%s%s", prefix, value);
+    int result = link_argv_push(argv, joined);
+    free(joined);
+    return result;
+}
+
+static void link_argv_free(LinkArgv *argv) {
+    for (size_t i = 0; i < argv->count; i++) free(argv->items[i]);
+    free(argv->items);
+    argv->items = NULL;
+    argv->count = 0;
+    argv->capacity = 0;
+}
+
+// 把用户链接参数展开成当前平台链接器认识的 argv 片段。
+//
+// 三个平台三种写法，所以按平台只保留一份实现：
+//   - 驱动（cc / gcc / clang）：-l / -L / -Wl, 三种写法驱动都认，原样透传
+//   - macOS 的 ld：`-Wl,` 是驱动的前缀，ld 不认识，要拆成逗号分隔的裸参数
+//   - MSVC 的 clang-cl：库按 .lib 习惯当输入文件，其余走 /link 交给 link.exe
+#if defined(__APPLE__)
+static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
+    if (link_options_is_empty(options)) return;
+
+    for (int i = 0; i < options->count; i++) {
+        const LinkArg *argument = &options->items[i];
+        switch (argument->kind) {
+        case LINK_ARG_LIBRARY:
+            link_argv_push_joined(argv, "-l", argument->value);
+            break;
+        case LINK_ARG_SEARCH_DIR:
+            link_argv_push_joined(argv, "-L", argument->value);
+            break;
+        case LINK_ARG_RAW:
+            // `-Wl,-rpath,/usr/local/lib` 在 ld 下是 `-rpath /usr/local/lib` 两个参数。
+            for (const char *segment = argument->value; *segment;) {
+                const char *comma = strchr(segment, ',');
+                size_t length = comma ? (size_t)(comma - segment) : strlen(segment);
+                if (length > 0) {
+                    char *part = malloc(length + 1);
+                    if (!part) {
+                        argv->failed = 1;
+                        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                        return;
+                    }
+                    memcpy(part, segment, length);
+                    part[length] = '\0';
+                    link_argv_push(argv, part);
+                    free(part);
+                }
+                if (!comma) break;
+                segment = comma + 1;
+            }
+            break;
+        }
+    }
+}
+#elif defined(_WIN32) && !defined(__MINGW32__)
+// 后缀比较忽略大小写：`-lSQLITE3.LIB` 不该被拼成 `SQLITE3.LIB.lib`。
+static int has_suffix_ignore_case(const char *text, const char *suffix) {
+    size_t text_length = strlen(text);
+    size_t suffix_length = strlen(suffix);
+    if (text_length < suffix_length) return 0;
+
+    const char *tail = text + (text_length - suffix_length);
+    for (size_t i = 0; i < suffix_length; i++) {
+        char left = tail[i];
+        char right = suffix[i];
+        if (left >= 'A' && left <= 'Z') left = (char)(left - 'A' + 'a');
+        if (right >= 'A' && right <= 'Z') right = (char)(right - 'A' + 'a');
+        if (left != right) return 0;
+    }
+    return 1;
+}
+
+static int link_argv_push_suffixed(LinkArgv *argv, const char *value, const char *suffix) {
+    size_t value_length = strlen(value);
+    size_t suffix_length = strlen(suffix);
+    char *joined = malloc(value_length + suffix_length + 1);
+    if (!joined) {
+        argv->failed = 1;
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return 1;
+    }
+    memcpy(joined, value, value_length);
+    memcpy(joined + value_length, suffix, suffix_length + 1);
+    int result = link_argv_push(argv, joined);
+    free(joined);
+    return result;
+}
+
+static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
+    if (link_options_is_empty(options)) return;
+
+    // 库：MSVC 体系里 `-lsqlite3` 对应的文件名是 sqlite3.lib。
+    int needs_linker_section = 0;
+    for (int i = 0; i < options->count; i++) {
+        const LinkArg *argument = &options->items[i];
+        if (argument->kind == LINK_ARG_LIBRARY) {
+            if (has_suffix_ignore_case(argument->value, ".lib")) {
+                link_argv_push(argv, argument->value);
+            } else {
+                link_argv_push_suffixed(argv, argument->value, ".lib");
+            }
+        } else {
+            needs_linker_section = 1;
+        }
+    }
+
+    // 搜索路径和裸参数只能交给 link.exe 自己解释。/link 之后的一切都归它，
+    // 所以这一段必须放在 clang-cl 自己的选项之后。
+    if (!needs_linker_section) return;
+
+    link_argv_push(argv, "/link");
+    for (int i = 0; i < options->count; i++) {
+        const LinkArg *argument = &options->items[i];
+        if (argument->kind == LINK_ARG_SEARCH_DIR) {
+            link_argv_push_joined(argv, "/LIBPATH:", argument->value);
+        } else if (argument->kind == LINK_ARG_RAW) {
+            // 这里的裸参数要按 link.exe 的写法给，例如 -Wl,/DEBUG
+            link_argv_push(argv, argument->value);
+        }
+    }
+}
+#else
+static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
+    if (link_options_is_empty(options)) return;
+
+    for (int i = 0; i < options->count; i++) {
+        const LinkArg *argument = &options->items[i];
+        switch (argument->kind) {
+        case LINK_ARG_LIBRARY:
+            link_argv_push_joined(argv, "-l", argument->value);
+            break;
+        case LINK_ARG_SEARCH_DIR:
+            link_argv_push_joined(argv, "-L", argument->value);
+            break;
+        case LINK_ARG_RAW:
+            // 驱动会把 -Wl, 后面的整串按逗号切开转给链接器，原样带前缀就行。
+            link_argv_push_joined(argv, "-Wl,", argument->value);
+            break;
+        }
+    }
+}
+#endif
+
+// 链接失败时补一句能照着做的提示。链接器自己只会说 `cannot find -lsqlite3`，
+// 不会告诉你下一步该干什么。
+static void report_link_failure(int status, const LinkOptions *link_options) {
+    fprintf(stderr, "link failed with linker exit code: %d\n", status); // 中文：链接失败，链接器退出码
+
+    if (link_options_is_empty(link_options)) return;
+
+    int has_library = 0;
+    for (int i = 0; i < link_options->count; i++) {
+        if (link_options->items[i].kind == LINK_ARG_LIBRARY) has_library = 1;
+    }
+    if (!has_library) return;
+
+    fprintf(stderr, "note: requested libraries:");
+    for (int i = 0; i < link_options->count; i++) {
+        const LinkArg *argument = &link_options->items[i];
+        if (argument->kind == LINK_ARG_LIBRARY) {
+            fprintf(stderr, " -l%s", argument->value);
+        }
+    }
+    fprintf(stderr, "\n");
+    fprintf(stderr,
+        "note: check that the library is installed and that -L points at the directory "
+        "containing it\n"); // 中文：检查库是否已安装，-L 是否指向库所在目录
+}
+
 // 把目标文件和 Runtime 静态库链接成可执行文件。
-static int link_object_file(const char *object_file, const char *exe_file, int static_link) {
+static int link_object_file(const char *object_file, const char *exe_file, int static_link,
+                            const LinkOptions *link_options) {
     if (!runtime_static_path[0]) {
         fprintf(stderr,
             "error: tap Runtime static library not found; set TAP_RUNTIME_PATH\n"); // 中文：找不到 tap Runtime 静态库；请设置 TAP_RUNTIME_PATH
         return 1;
     }
 
-    int result = 0;
+    LinkArgv argv;
+    link_argv_init(&argv);
+
 #if defined(_WIN32) && defined(__MINGW32__)
     // MinGW-w64（目标三元组 x86_64-w64-windows-gnu）：用 GNU 驱动链接。
     // 不能用 clang-cl —— 它按 MSVC 目标去找 MSVC 的 CRT 和 .lib，和 MinGW 的
     // msvcrt/UCRT + libgcc 体系对不上。i128 的 __divti3 由 libgcc 提供，不用显式
     // 指定；winsock 符号在 ws2_32 里。MinGW 没有独立的 libm（pow 在 CRT 里）。
     const char *linker = "gcc";
-    char *const dynamic_argv[] = {
-        (char *)linker, (char *)object_file, runtime_static_path,
-        "-o", (char *)exe_file, (char *)"-lws2_32", NULL
-    };
-    char *const static_argv[] = {
-        (char *)linker, (char *)"-static", (char *)object_file, runtime_static_path,
-        "-o", (char *)exe_file, (char *)"-lws2_32", NULL
-    };
-    result = run_process(static_link ? static_argv : dynamic_argv);
+    link_argv_push(&argv, linker);
+    if (static_link) link_argv_push(&argv, "-static");
+    link_argv_push(&argv, object_file);
+    link_argv_push(&argv, runtime_static_path);
+    link_argv_push(&argv, "-o");
+    link_argv_push(&argv, exe_file);
+    // 用户库排在 Runtime 之后、系统库之前：静态链接的符号解析是单向的。
+    push_link_options(&argv, link_options);
+    link_argv_push(&argv, "-lws2_32");
 #elif defined(_WIN32)
     // Match the Runtime's static MSVC CRT so generated objects and Runtime use one CRT.
     char output_option[RUN_PATH_MAX + 4];
@@ -550,16 +832,22 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     // 除法/取模会生成 __divti3/__modti3，显式选择 compiler-rt 才能让这些符号在 Windows
     // LLVM 安装中被解析；否则普通的 i128 测试会在最终链接阶段失败。
     // ws2_32.lib 提供 Runtime 里 winsock 的符号（WSAStartup / socket / closesocket 等）。
-    char *const argv[] = {
-        (char *)linker, "/nologo", "/MT", "/clang:-rtlib=compiler-rt", (char *)object_file,
-        runtime_static_path, output_option, (char *)"ws2_32.lib", NULL
-    };
     (void)static_link;
-    result = run_process(argv);
+    link_argv_push(&argv, linker);
+    link_argv_push(&argv, "/nologo");
+    link_argv_push(&argv, "/MT");
+    link_argv_push(&argv, "/clang:-rtlib=compiler-rt");
+    link_argv_push(&argv, object_file);
+    link_argv_push(&argv, runtime_static_path);
+    link_argv_push(&argv, output_option);
+    link_argv_push(&argv, "ws2_32.lib");
+    // 库直接当输入文件；-L 和裸参数由 push_link_options 补 /link 段。
+    push_link_options(&argv, link_options);
 #elif defined(__APPLE__)
     if (static_link) {
         fprintf(stderr,
             "error: -static is not supported on macOS because libSystem is only available as a dynamic library\n"); // 中文：macOS 不支持完整静态链接
+        link_argv_free(&argv);
         return 1;
     }
     // macOS 直接调用 ld 时必须显式传入 SDK、架构和平台版本。
@@ -571,6 +859,7 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
         macos_sdk_value(
             "TAP_MACOS_SDK_VERSION", "xcrun --sdk macosx --show-sdk-version",
             sdk_version, sizeof(sdk_version)) != 0) {
+        link_argv_free(&argv);
         return 1;
     }
 #if defined(__aarch64__)
@@ -580,18 +869,21 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
 #else
     const char *arch = "arm64";
 #endif
-    char *const argv[] = {
-        "ld",
-        "-o", (char *)exe_file,
-        (char *)object_file,
-        runtime_static_path,
-        "-lSystem",
-        "-syslibroot", sdk_path,
-        "-arch", (char *)arch,
-        "-platform_version", "macos", sdk_version, sdk_version,
-        NULL
-    };
-    result = run_process(argv);
+    link_argv_push(&argv, "ld");
+    link_argv_push(&argv, "-o");
+    link_argv_push(&argv, exe_file);
+    link_argv_push(&argv, object_file);
+    link_argv_push(&argv, runtime_static_path);
+    push_link_options(&argv, link_options);
+    link_argv_push(&argv, "-lSystem");
+    link_argv_push(&argv, "-syslibroot");
+    link_argv_push(&argv, sdk_path);
+    link_argv_push(&argv, "-arch");
+    link_argv_push(&argv, arch);
+    link_argv_push(&argv, "-platform_version");
+    link_argv_push(&argv, "macos");
+    link_argv_push(&argv, sdk_version);
+    link_argv_push(&argv, sdk_version);
 #else
     // 由 C 编译器驱动选择当前架构的 CRT、动态链接器和 compiler runtime。
     // `-lm` 必须放在目标文件和静态库之后：glibc 2.34 起 libm 并入了 libc，但更早的发行版
@@ -614,29 +906,30 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     // 也不加 `-no-pie`：Cygwin 的 clang 驱动不认这个参数（报 unused），Cygwin 目标本身
     // 就是非 PIE 的。
     const char *linker = "clang";
-    char *const dynamic_argv[] = {
-        (char *)linker, (char *)object_file, runtime_static_path, "-o",
-        (char *)exe_file, "-lm", NULL
-    };
-    char *const static_argv[] = {
-        (char *)linker, "-static", (char *)object_file, runtime_static_path,
-        "-o", (char *)exe_file, "-lm", NULL
-    };
+    const char *pie_option = NULL;
 #else
     const char *linker = "cc";
-    char *const dynamic_argv[] = {
-        (char *)linker, "-no-pie", (char *)object_file, runtime_static_path,
-        "-o", (char *)exe_file, "-lm", NULL
-    };
-    char *const static_argv[] = {
-        (char *)linker, "-static", "-no-pie", (char *)object_file,
-        runtime_static_path, "-o", (char *)exe_file, "-lm", NULL
-    };
+    const char *pie_option = "-no-pie";
 #endif
-    result = run_process(static_link ? static_argv : dynamic_argv);
+    link_argv_push(&argv, linker);
+    if (static_link) link_argv_push(&argv, "-static");
+    if (pie_option) link_argv_push(&argv, pie_option);
+    link_argv_push(&argv, object_file);
+    link_argv_push(&argv, runtime_static_path);
+    link_argv_push(&argv, "-o");
+    link_argv_push(&argv, exe_file);
+    push_link_options(&argv, link_options);
+    link_argv_push(&argv, "-lm");
 #endif
-    if (result != 0) {
-        fprintf(stderr, "link failed with linker exit code: %d\n", result); // 中文：链接失败，链接器退出码
+
+    int link_status = 1;
+    if (!argv.failed) link_status = run_process(argv.items);
+    link_argv_free(&argv);
+
+    // argv.failed 说明拼参数时就 OOM 了，报错在那一层已经打过，这里不重复。
+    if (argv.failed) return 1;
+    if (link_status != 0) {
+        report_link_failure(link_status, link_options);
         return 1;
     }
     return 0;
@@ -644,9 +937,10 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
 
 // 先写出临时目标文件，再链接为指定可执行文件。
 static int compile_with_temp_object(CodeGenContext *context, const char *exe_file,
-                                    const char *object_file, int static_link) {
+                                    const char *object_file, int static_link,
+                                    const LinkOptions *link_options) {
     if (write_object_to_file(context, object_file) != 0 ||
-        link_object_file(object_file, exe_file, static_link) != 0) {
+        link_object_file(object_file, exe_file, static_link, link_options) != 0) {
         fprintf(stderr, "failed to generate executable\n"); // 中文：生成可执行文件失败
         return 1;
     }
@@ -662,12 +956,13 @@ static int compile_with_temp_object(CodeGenContext *context, const char *exe_fil
 }
 
 // 将当前模块编译为可执行文件。
-int compile_to_executable(CodeGenContext *context, const char *exe_file, int static_link) {
+int compile_to_executable(CodeGenContext *context, const char *exe_file, int static_link,
+                          const LinkOptions *link_options) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
 
     int result = compile_with_temp_object(
-        context, exe_file, workspace.object_file, static_link);
+        context, exe_file, workspace.object_file, static_link, link_options);
     if (cleanup_temp_workspace(&workspace) != 0 && result == 0) result = 1;
     return result;
 }
@@ -711,13 +1006,14 @@ static int execute_file(const char *exe_file, int program_argc, char **program_a
 
 // 编译当前模块并立即执行生成的程序。
 int compile_and_run(CodeGenContext *context, const char *exe_file,
-                    int program_argc, char **program_argv, int static_link) {
+                    int program_argc, char **program_argv, int static_link,
+                    const LinkOptions *link_options) {
     TempWorkspace workspace;
     if (create_temp_workspace(&workspace) != 0) return 1;
 
     const char *run_file = exe_file ? exe_file : workspace.executable_file;
     int compile_result = compile_with_temp_object(
-        context, run_file, workspace.object_file, static_link);
+        context, run_file, workspace.object_file, static_link, link_options);
     int result = compile_result;
     if (compile_result == 0) {
         result = execute_file(run_file, program_argc, program_argv);

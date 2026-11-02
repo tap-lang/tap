@@ -1,14 +1,15 @@
 # C 互操作（extern）方案
 
-> **状态**：方案文档。第 3 节的 P0 / P1 / P2 均**未实现**，第 1 节描述的是当前已经可用的能力。
+> **状态**：方案文档。**P0（链接参数通道）已实现**，见 §2；§3 里剩下的 P1 / P2 均未实现。
+> 第 1 节描述的是当前已经可用的能力。
 > 本文的依据来自 `src/parser.c`、`src/codegen.c`、`src/run.c`、`src/main.c` 的实际代码，
-> 以及 `tests/run-pass/types/` 下的现有用例。
+> 以及 `tests/` 下的现有用例。
 
 tap 的 FFI 入口只有一个：`extern fn`。它只生成 LLVM 函数声明，不生成函数体，符号名
 不加模块前缀，所以直接绑 C 符号。
 
-**关键结论：tap 现在就能调 C。** `tests/run-pass/types/c_string.tp` 已经在调 `strlen`。
-真正缺的不是「能不能调」，而是「能不能调**第三方库**」——卡点全在链接环节。
+**关键结论：tap 现在就能调 C。** `tests/run-pass/types/c_string.tp` 已经在调 `strlen`；
+加上 P0 之后，`tap run -lz hello.tp` 也能调第三方库（`tests/run-pass/extern/link_lib.tp`）。
 
 ## 1. 现状：已经能做什么
 
@@ -27,7 +28,7 @@ tap 的 FFI 入口只有一个：`extern fn`。它只生成 LLVM 函数声明，
 | 指针解引用 `*p`、`&x`、`p[i]` | ✅ | `ast.h:47`、`dereference.tp` |
 | `extern` 全局变量 | ❌ 见 §3.2 | `parser.c:1719` |
 | 函数指针 / 回调 | ❌ 见 §3.3 | `bootstrap.md:197` |
-| 链接第三方库（`-l` / `-L`） | ❌ 见 §3.1 | `main.c:76`、`run.c:517` |
+| 链接第三方库（`-l` / `-L`） | ✅ | §2、`run.c` 的 `link_object_file` |
 | 头文件绑定生成 | ❌ 见 §3.5 | — |
 
 ### 1.2 最小可用示例
@@ -84,50 +85,98 @@ fn main(): i32 {
 }
 ```
 
-## 2. 为什么链接是唯一的硬阻塞
+## 2. 链接参数通道（P0，已实现）
 
-只要能链接进来，就能调。而现在的链接命令是**写死的定长 argv 数组**：
+只要能链接进来，就能调。原来链接命令是**写死的定长 argv 数组**，库名没有地方传下去；
+现在改成三层：
 
-| 环境 | 位置 | argv |
-|---|---|---|
-| MinGW-w64 | `run.c:531` / `run.c:535` | `gcc obj runtime.a -o exe -lws2_32` |
-| MSVC | `run.c:553` | `clang-cl /MT ... obj runtime.lib /Fe exe ws2_32.lib` |
-| macOS | `run.c:583` | `ld -o exe obj runtime.a -lSystem -syslibroot ...` |
-| Cygwin | `run.c:617` / `run.c:621` | `clang obj runtime.a -o exe -lm` |
-| Linux | `run.c:627` / `run.c:631` | `cc -no-pie obj runtime.a -o exe -lm` |
+1. **选项解析**（`main.c`）：收集成 `LinkOptions` 链表，按出现顺序保存
+2. **传参**：`compile_to_executable` / `compile_and_run` 多一个 `const LinkOptions *`，
+   一路传到 `link_object_file()`
+3. **拼命令行**（`run.c`）：`LinkArgv` 动态构建器替换掉四处定长数组，
+   `push_link_options()` 按平台把用户参数展开成链接器认识的写法
 
-`main.c` 的选项解析（`main.c:76`–`main.c:115`）只有
-`-o / -static / -ir / -emit-obj / -emit-wasm / -run-lli / -lex / -parse`，
-没有任何 `-l` / `-L`。**没有地方把库名传下去。**
-
-## 3. 缺口与方案
-
-### 3.1 P0：链接参数通道
-
-**影响**：调不了任何需要额外链接的库（zlib、sqlite3、libcurl…）。
-
-**方案**：CLI 增加三个选项，收集成链表往下传到 `link_object_file()`。
+### 2.1 选项
 
 | 选项 | 语义 |
 |---|---|
-| `-l<name>` | 追加 `-l<name>`，顺序即命令行顺序 |
-| `-L<dir>` | 追加库搜索路径 |
-| `-Wl,<arg>` | 原样透传给链接器，逗号拆分成多个参数 |
+| `-l<name>` / `-l <name>` | 追加库，两种写法都认（和 cc 一致）；顺序即命令行顺序 |
+| `-L<dir>` / `-L <dir>` | 追加库搜索路径 |
+| `-Wl,<arg>` | 透传给链接器，逗号拆成多个参数（`-Wl,-rpath,/x` → `-rpath /x`） |
 
-**实现点**：
+缺参数（`-l` 后面没东西）报 `error: -l requires a library name` 并打用法，
+不会当成源码文件名。
 
-1. `main.c:76` 附近的选项循环里加解析分支，允许 `-l foo` 和 `-lfoo` 两种写法
-2. 新增一个 `LinkOptions`（或直接 `char **` 链表）从 `main.c` 传到 `codegen.c` /
-   `run.c`；`compile_to_executable` / `compile_and_run` 的签名要跟着扩
-3. `link_object_file()`（`run.c:517`）加参数，四处 argv 数组从定长改成 `malloc` 动态拼
-4. **顺序**：用户库必须排在 `object_file` 和 `runtime.a` **之后**。静态链接对顺序敏感，
-   库在前会导致符号解析不到
-5. macOS 分支（`run.c:583`）直接调 `ld`，`-Wl,` 前缀在那里不成立，要拆成裸参数；
-   `-l` 在 `ld` 下语义相同，可以原样传
-6. `-static` 与 `-l` 的交互：`-static` 只影响驱动标志，不改用户库的顺序，无需特殊处理
-7. 交互式模式 `-run-lli` 不需要链接，选项应被忽略而不是报错
+### 2.2 顺序
 
-**风险**：低。改动集中在一个函数和选项解析，但四个平台分支都要过一遍 CI。
+`LinkOptions` 必须是**保序链表**，不能用集合：静态链接的符号解析是单向的。
+实际拼出来的顺序固定为
+
+```
+<驱动> [标志] <object_file> <runtime.a> <用户 -L/-l/-Wl,> <系统库>
+```
+
+用户库排在 `runtime.a` **之后**、系统库（`-lm` / `-lws2_32` / `-lSystem`）**之前**。
+`-L` 也保持命令行顺序，保证依赖它的 `-l` 在它后面。
+
+### 2.3 各平台的展开
+
+| 环境 | 驱动 | `-lfoo` | `-Ldir` | `-Wl,a,b` |
+|---|---|---|---|---|
+| macOS | `ld` | `-lfoo` | `-Ldir` | `a b`（拆成裸参数，`ld` 不认 `-Wl,`） |
+| Linux | `cc` | `-lfoo` | `-Ldir` | `-Wl,a,b`（驱动自己拆） |
+| Cygwin | `clang` | `-lfoo` | `-Ldir` | `-Wl,a,b` |
+| MinGW-w64 | `gcc` | `-lfoo` | `-Ldir` | `-Wl,a,b` |
+| MSVC | `clang-cl` | `foo.lib`（已有 `.lib` 后缀则不重复加） | `/link /LIBPATH:dir` | `/link <arg>`（要写 link.exe 的写法） |
+
+MSVC 那一行是唯一语义有偏差的：clang-cl 把库当输入文件，`-L` / 裸参数只能进
+`/link` 段，而 `/link` 之后的一切都归 link.exe，所以这一段必须放在最后。
+
+### 2.4 链接失败时的提示
+
+链接器自己只会说 `cannot find -lsqlite3`，不会告诉你下一步干什么。现在补一段：
+
+```
+ld: library 'nosuchlib' not found
+link failed with linker exit code: 1
+note: requested libraries: -lnosuchlib
+note: check that the library is installed and that -L points at the directory containing it
+```
+
+### 2.5 不支持链接的几种模式
+
+`-ir` / `-emit-obj` / `-emit-wasm` / `-run-lli` 都不链接，`-l` / `-L` / `-Wl,` 被
+**静默忽略**而不是报错（`-run-lli` 下 lli 恰好能从宿主进程里解析到一部分符号，
+但这属于 lli 的行为，不是 tap 的保证）。
+
+### 2.6 回归用例
+
+`tests/run-pass/extern/link_lib.tp`：`-lz` 链 zlib，调 `zlibVersion()` 和
+`compressBound()`，期望值写死（`compressBound` 的公式和 zlib 版本无关）。
+
+用例通过内嵌的 `- .flags` 段把编译选项传给 `tap run`，这个段会让用例强制走
+native 模式 —— `lli` 不链接，带 `-l` 的用例在 fast 模式下没有意义。
+zlib 在 macOS SDK 和多数 Linux 发行版上现成（Linux 上要装 `zlib1g-dev` 之类才有
+`libz.so` 符号链接），MSVC / MinGW / Cygwin 的工具链不带它，
+所以用例用 `- .skip-on windows` 整条跳过，报 `SKIP` 而不是 `FAIL`。
+
+## 3. 缺口与方案
+
+### 3.1 P0：链接参数通道 —— 已完成
+
+实现细节见 §2，这里只留状态和遗留项。
+
+- ✅ `-l` / `-L` / `-Wl,` 三种选项，保序传给链接器
+- ✅ 四处定长 argv 改成动态构建，用户库排在 object 和 runtime 之后
+- ✅ macOS 的 `ld` 分支把 `-Wl,` 拆成裸参数
+- ✅ 链接失败补 `note:` 提示
+- ✅ 回归用例 `tests/run-pass/extern/link_lib.tp`
+- ⚠️ **只在 macOS 上实测过**。Linux / Cygwin / MinGW / MSVC 四个分支的代码是按各自
+  驱动的约定写的，但没在真机上跑过，需要过一遍 CI
+- ⚠️ MSVC 的 `-l` 按 `.lib` 语义走（`-lsqlite3` → `sqlite3.lib`），和 GNU 的
+  `-lsqlite3` 找 `libsqlite3.a` / `.so` 不是一回事，跨平台脚本要注意
+- ⚠️ 还没有「库找不到」的用例：链接失败的错误文本是平台相关的，
+  run-pass / run-fail / compile-fail 三组都放不下，暂时只手工验证
 
 ### 3.2 P1：`extern` 全局变量
 
@@ -193,8 +242,8 @@ fn main(): i32 {
 
 ## 4. 过渡方案：C 胶水层
 
-在 P0 落地之前，有一条**零语言改动**的路：把第三方库包成 `__tap_xxx` 简单签名塞进
-Runtime，tap 侧只声明 Runtime 函数。
+即使 P0 已经落地，胶水层仍然是**平台差异收敛**的正路：把第三方库包成 `__tap_xxx`
+简单签名塞进 Runtime，tap 侧只声明 Runtime 函数。
 
 ```c
 // runtime/src/runtime.c
@@ -211,32 +260,38 @@ process 包跨平台改造要走的路线——把 `fork`/`execvp` 的平台差�
 
 | | 优点 | 缺点 |
 |---|---|---|
-| 胶水层 | 今天就能用；平台差异天然收敛 | 每个库都要写胶水；Runtime 会越来越胖 |
+| 胶水层 | 平台差异天然收敛；`String` 的 ABI 细节不泄漏到 .tp | 每个库都要写胶水；Runtime 会越来越胖 |
+| `-l` 直连（P0） | 零胶水，能直接摸到整个 C API | 用户要自己处理 ABI 和平台差异 |
+
+两者不冲突：能用胶水就用胶水，胶水覆盖不到的边角用 `-l` 直连。
 
 ## 5. 分阶段路线
 
 | 阶段 | 内容 | 解锁面 | 风险 |
 |---|---|---|---|
-| 1 | **P0 链接通道**（§3.1） | 打通「能链进来」，配合 `*T` + `p[0].field` 已能覆盖大部分库 | 低 |
+| 1 | **P0 链接通道**（§2）✅ | 打通「能链进来」，配合 `*T` + `p[0].field` 已能覆盖大部分库 | 低 |
 | 2 | **extern 全局变量**（§3.2） | 配置结构体、版本查询、`errno` 类 | 低 |
 | 3 | **函数指针**（§3.3） | 所有回调式 API | 高 |
 | 4 | 结构体 by-value ABI（§3.4） | 只在有明确需求时做 | 高 |
 
-阶段 1 做完，`tap -lsqlite3 -L/usr/local/lib hello.tp` 就能跑通，这是最小的可用闭环。
+阶段 1 已完成，`tap run -lsqlite3 -L/usr/local/lib hello.tp` 是现在的最小可用闭环。
 
 ## 6. 验证方式
 
 每一项都要有对应用例，且**必须在六个环境全绿**（macOS / Linux / MSVC / MINGW64 /
 UCRT64 / Cygwin），因为 FFI 的坑几乎全部是平台 ABI 差异。
 
-| 阶段 | 用例 | 验证点 |
-|---|---|---|
-| P0 | `tests/run-pass/extern/link_lib.tp` | 链接一个真实第三方库并调用 |
-| P0 | 同上 | 库顺序正确（`-l` 在 obj 之后） |
-| P0 | 同上 | `-l` 不存在时给出可读的错误，不是裸链接器报错 |
-| P1 全局 | `tests/run-pass/extern/global.tp` | 读 + 写 extern 全局 |
-| P1 函数指针 | `tests/run-pass/extern/callback.tp` | 调 `qsort` 传 tap 函数 |
-| P1 函数指针 | 同上 | `null` 赋给函数指针 |
+用例通过内嵌的 `- .flags` 段把编译选项传给 `tap run`（这个段会让用例强制走 native
+模式），通过 `- .skip-on` 声明不适用的平台（报 `SKIP`，不算失败）。
+
+| 阶段 | 用例 | 验证点 | 状态 |
+|---|---|---|---|
+| P0 | `tests/run-pass/extern/link_lib.tp` | 链接一个真实第三方库并调用 | ✅ macOS / Linux |
+| P0 | 同上 | 库顺序正确（`-l` 在 obj 之后） | ✅ |
+| P0 | 同上 | `-l` 不存在时给出可读的错误，不是裸链接器报错 | ⚠️ 只手工验证 |
+| P1 全局 | `tests/run-pass/extern/global.tp` | 读 + 写 extern 全局 | 未写 |
+| P1 函数指针 | `tests/run-pass/extern/callback.tp` | 调 `qsort` 传 tap 函数 | 未写 |
+| P1 函数指针 | 同上 | `null` 赋给函数指针 | 未写 |
 
 用例沿用 `tests/run-tests.sh` 的 `/** -- test` 内联期望格式，
 参考 `tests/run-pass/types/c_string.tp`。

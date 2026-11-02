@@ -1,4 +1,12 @@
+// 需要 POSIX 2008：mkdtemp / kill / waitpid / fork 都在这一档。
+// 但 macOS 的 <stdlib.h> 判断的是 __DARWIN_C_LEVEL，只给 _POSIX_C_SOURCE
+// 会把 mkdtemp 藏起来（本机 cc 报 implicit declaration）；glibc 那边认
+// _DEFAULT_SOURCE。三个都定义，两边都能编。
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE 1
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE 1
+#endif
 
 #include <ctype.h>
 #include <errno.h>
@@ -50,11 +58,15 @@ typedef struct {
     int has_stderr;
     int has_exit;
     int has_args;
+    int has_flags;
+    int has_skip;
     int exit_valid;
     int expected_exit;
     char *stdout_text;
     char *stderr_text;
     StringList args;
+    StringList flags;
+    StringList skip_platforms;
 } Expectations;
 
 // 一个完整测试用例及其运行时临时文件。
@@ -70,6 +82,7 @@ typedef struct {
     int process_status;
     int process_started;
     int failed;
+    int skipped;
     char *diagnostics;
 } TestCase;
 
@@ -350,12 +363,16 @@ static int section_number(const char *line) {
     if (strcmp(line, "- .stderr") == 0) return 1;
     if (strcmp(line, "- .exit") == 0) return 2;
     if (strcmp(line, "- .args") == 0) return 3;
+    if (strcmp(line, "- .flags") == 0) return 4;
+    if (strcmp(line, "- .skip-on") == 0) return 5;
     return -1;
 }
 
 static void expectations_init(Expectations *expectations) {
     memset(expectations, 0, sizeof(*expectations));
     list_init(&expectations->args);
+    list_init(&expectations->flags);
+    list_init(&expectations->skip_platforms);
     expectations->expected_exit = -1;
 }
 
@@ -363,13 +380,17 @@ static void expectations_free(Expectations *expectations) {
     free(expectations->stdout_text);
     free(expectations->stderr_text);
     list_free(&expectations->args);
+    list_free(&expectations->flags);
+    list_free(&expectations->skip_platforms);
 }
 
-// 单次扫描源码中的 /** -- test ... -- */ 块，同时提取四类期望，
-// 替代 shell 版对 stdout/stderr/exit/args 分别启动 awk 的做法。
+// 单次扫描源码中的 /** -- test ... -- */ 块，同时提取各类期望，
+// 替代 shell 版对每类期望分别启动 awk 的做法。
+#define EXPECTATION_SECTIONS 6
+
 static void parse_embedded_expectations(const char *source, Expectations *expectations) {
-    StringList sections[4];
-    for (int i = 0; i < 4; i++) list_init(&sections[i]);
+    StringList sections[EXPECTATION_SECTIONS];
+    for (int i = 0; i < EXPECTATION_SECTIONS; i++) list_init(&sections[i]);
 
     size_t length = strlen(source);
     size_t cursor = 0;
@@ -398,6 +419,8 @@ static void parse_embedded_expectations(const char *source, Expectations *expect
                 if (section == 1) expectations->has_stderr = 1;
                 if (section == 2) expectations->has_exit = 1;
                 if (section == 3) expectations->has_args = 1;
+                if (section == 4) expectations->has_flags = 1;
+                if (section == 5) expectations->has_skip = 1;
             } else if (current >= 0) {
                 list_add(&sections[current], line);
             }
@@ -407,7 +430,7 @@ static void parse_embedded_expectations(const char *source, Expectations *expect
         cursor++;
     }
 
-    for (int i = 0; i < 4; i++) trim_trailing_empty_lines(&sections[i]);
+    for (int i = 0; i < EXPECTATION_SECTIONS; i++) trim_trailing_empty_lines(&sections[i]);
 
     if (expectations->has_stdout) {
         char *joined = join_lines(&sections[0]);
@@ -439,7 +462,17 @@ static void parse_embedded_expectations(const char *source, Expectations *expect
             list_add(&expectations->args, sections[3].items[i]);
         }
     }
-    for (int i = 0; i < 4; i++) list_free(&sections[i]);
+    if (expectations->has_flags) {
+        for (size_t i = 0; i < sections[4].count; i++) {
+            list_add(&expectations->flags, sections[4].items[i]);
+        }
+    }
+    if (expectations->has_skip) {
+        for (size_t i = 0; i < sections[5].count; i++) {
+            list_add(&expectations->skip_platforms, sections[5].items[i]);
+        }
+    }
+    for (int i = 0; i < EXPECTATION_SECTIONS; i++) list_free(&sections[i]);
 }
 
 static char *external_expectation_path(const char *source_path, const char *section) {
@@ -521,7 +554,8 @@ static void collect_directory(const char *directory, StringList *files) {
 }
 
 // 按当前测试模式组装 tap 命令行：compile-fail 走 -ir，
-// fast 走 -run-lli，native 走 run；带 .args 的测试强制走 native。
+// fast 走 -run-lli，native 走 run；带 .args 或 .flags 的测试强制走 native
+// （.flags 里的 -l / -L 只有真的链接才有意义，lli 走不了这条路）。
 static int build_test_command(const TestCase *test, const char *compiler,
                               const char *run_mode, StringList *command) {
     list_init(command);
@@ -533,10 +567,14 @@ static int build_test_command(const TestCase *test, const char *compiler,
         list_add(command, test->relative_path);
     } else if (strcmp(run_mode, "native") == 0 ||
                test->expectations.has_args ||
+               test->expectations.has_flags ||
                strcmp(test->relative_path, "tests/run-pass/basics/hello.tp") == 0) {
         list_add(command, "run");
         list_add(command, "-o");
         list_add(command, test->executable_path);
+        for (size_t i = 0; i < test->expectations.flags.count; i++) {
+            list_add(command, test->expectations.flags.items[i]);
+        }
         list_add(command, test->relative_path);
         if (test->expectations.has_args) {
             list_add(command, "--");
@@ -551,8 +589,42 @@ static int build_test_command(const TestCase *test, const char *compiler,
     return 0;
 }
 
-static char **list_argv(const StringList *list) {
-    char **argv = checked_malloc((list->count + 1) * sizeof(*argv));
+// `.skip-on` 用的平台名是粗粒度的：MSVC / MinGW / Cygwin 在「哪些第三方库
+// 装得上」这件事上是同一回事，所以三者统一叫 windows。
+static const char *test_platform_name(void) {
+#if defined(_WIN32)
+    return "windows";
+#elif defined(__APPLE__)
+    return "darwin";
+#elif defined(__linux__)
+    return "linux";
+#else
+    return "unknown";
+#endif
+}
+
+// 逐行比较，忽略行尾空白 —— 内嵌块里的行可能带缩进或尾随空格。
+static int platform_entry_matches(const char *entry, const char *platform) {
+    size_t length = strlen(platform);
+    if (strncmp(entry, platform, length) != 0) return 0;
+    for (const char *rest = entry + length; *rest; rest++) {
+        if (!isspace((unsigned char)*rest)) return 0;
+    }
+    return 1;
+}
+
+static int should_skip(const TestCase *test) {
+    if (!test->expectations.has_skip) return 0;
+    const char *platform = test_platform_name();
+    for (size_t i = 0; i < test->expectations.skip_platforms.count; i++) {
+        if (platform_entry_matches(test->expectations.skip_platforms.items[i], platform)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static char **list_argv(const StringList *list) {    char **argv = checked_malloc((list->count + 1) * sizeof(*argv));
     for (size_t i = 0; i < list->count; i++) argv[i] = list->items[i];
     argv[list->count] = NULL;
     return argv;
@@ -1028,6 +1100,11 @@ int main(int argc, char **argv) {
 
         for (size_t i = 0; i < batch_count; i++) {
             TestCase *test = &tests.items[batch_start + i];
+            if (should_skip(test)) {
+                test->skipped = 1;
+                list_init(&commands[i]);
+                continue;
+            }
             build_test_command(test, compiler, run_mode, &commands[i]);
             if (start_process(&commands[i], test->stdout_path, test->stderr_path, &children[i]) != 0) {
                 test->process_status = 127;
@@ -1054,7 +1131,14 @@ int main(int argc, char **argv) {
 
     int passed = 0;
     int failed = 0;
+    int skipped = 0;
     for (size_t i = 0; i < tests.count; i++) {
+        if (tests.items[i].skipped) {
+            printf("SKIP %s (platform: %s)\n", tests.items[i].relative_path,
+                   test_platform_name());
+            skipped++;
+            continue;
+        }
         check_test(&tests.items[i]);
         if (tests.items[i].failed) {
             if (tests.items[i].diagnostics) fputs(tests.items[i].diagnostics, stderr);
@@ -1065,7 +1149,8 @@ int main(int argc, char **argv) {
             passed++;
         }
     }
-    printf("\n%zu tests: %d passed, %d failed\n", tests.count, passed, failed);
+    printf("\n%zu tests: %d passed, %d skipped, %d failed\n", tests.count, passed,
+           skipped, failed);
 
     cleanup_temp_directory(temporary, &tests);
     for (size_t i = 0; i < tests.count; i++) free_test(&tests.items[i]);

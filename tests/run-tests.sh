@@ -75,9 +75,20 @@ case $(uname -s) in
     MINGW*|MSYS*|CYGWIN*) EXE_SUFFIX=.exe ;;
 esac
 
+# 用例可以用 `.skip-on` 声明自己不适用的平台（见 run_case）。
+# 粗粒度就够了：MSVC / MinGW / Cygwin 在「哪些第三方库装得上」这件事上是同一回事，
+# 所以三者统一成 windows，用例不用为每个工具链各写一行。
+case $(uname -s) in
+    Darwin) TEST_PLATFORM=darwin ;;
+    Linux) TEST_PLATFORM=linux ;;
+    MINGW*|MSYS*|CYGWIN*) TEST_PLATFORM=windows ;;
+    *) TEST_PLATFORM=unknown ;;
+esac
+
 total=0
 passed=0
 failed=0
+skipped=0
 planned_total=0
 completed_tests=0
 
@@ -124,35 +135,38 @@ read_text_file() {
     sed -e 's/\r$//' -e 's/[[:blank:]]*$//' "$1"
 }
 
+# 从源码里的 /** -- test ... -- */ 块中抽出各类期望，写进 $2 加后缀的文件里。
+# 只有出现过的段落才会留下 .found 标记，没出现的段落由调用方回落到同名外部文件。
 extract_expectations() {
     extract_source_file=$1
-    embedded_stdout_path=$2
-    embedded_stderr_path=$3
-    embedded_exit_path=$4
-    embedded_args_path=$5
-    embedded_stdout_found_path=$6
-    embedded_stderr_found_path=$7
-    embedded_exit_found_path=$8
-    embedded_args_found_path=$9
+    embedded_base=$2
 
     awk \
-        -v stdout_file="$embedded_stdout_path" \
-        -v stderr_file="$embedded_stderr_path" \
-        -v exit_file="$embedded_exit_path" \
-        -v args_file="$embedded_args_path" \
-        -v stdout_found_file="$embedded_stdout_found_path" \
-        -v stderr_found_file="$embedded_stderr_found_path" \
-        -v exit_found_file="$embedded_exit_found_path" \
-        -v args_found_file="$embedded_args_found_path" '
+        -v stdout_file="$embedded_base.stdout" \
+        -v stderr_file="$embedded_base.stderr" \
+        -v exit_file="$embedded_base.exit" \
+        -v args_file="$embedded_base.args" \
+        -v flags_file="$embedded_base.flags" \
+        -v skip_file="$embedded_base.skip" \
+        -v stdout_found_file="$embedded_base.stdout.found" \
+        -v stderr_found_file="$embedded_base.stderr.found" \
+        -v exit_found_file="$embedded_base.exit.found" \
+        -v args_found_file="$embedded_base.args.found" \
+        -v flags_found_file="$embedded_base.flags.found" \
+        -v skip_found_file="$embedded_base.skip.found" '
         BEGIN {
             output["stdout"] = stdout_file
             output["stderr"] = stderr_file
             output["exit"] = exit_file
             output["args"] = args_file
+            output["flags"] = flags_file
+            output["skip"] = skip_file
             found_output["stdout"] = stdout_found_file
             found_output["stderr"] = stderr_found_file
             found_output["exit"] = exit_found_file
             found_output["args"] = args_found_file
+            found_output["flags"] = flags_found_file
+            found_output["skip"] = skip_found_file
         }
         { sub(/\r$/, "") }
         $0 == "/** -- test" {
@@ -164,9 +178,10 @@ extract_expectations() {
             current = ""
             next
         }
-        in_test && $0 ~ /^- \.(stdout|stderr|exit|args)$/ {
+        in_test && $0 ~ /^- \.(stdout|stderr|exit|args|flags|skip-on)$/ {
             current = substr($0, 3)
             current = substr(current, 2)
+            if (current == "skip-on") current = "skip"
             found[current] = 1
             next
         }
@@ -267,22 +282,23 @@ run_case() {
     stderr_file="$TEMP_ROOT/$case_id.stderr"
     expected_stdout_file="$TEMP_ROOT/$case_id.expected.stdout"
     expected_stderr_file="$TEMP_ROOT/$case_id.expected.stderr"
-    embedded_stdout_file="$TEMP_ROOT/$case_id.embedded.stdout"
-    embedded_stderr_file="$TEMP_ROOT/$case_id.embedded.stderr"
-    embedded_exit_file="$TEMP_ROOT/$case_id.embedded.exit"
-    embedded_args_file="$TEMP_ROOT/$case_id.embedded.args"
-    embedded_stdout_found_file="$TEMP_ROOT/$case_id.embedded.stdout.found"
-    embedded_stderr_found_file="$TEMP_ROOT/$case_id.embedded.stderr.found"
-    embedded_exit_found_file="$TEMP_ROOT/$case_id.embedded.exit.found"
-    embedded_args_found_file="$TEMP_ROOT/$case_id.embedded.args.found"
+    embedded_base="$TEMP_ROOT/$case_id.embedded"
+    embedded_stdout_file="$embedded_base.stdout"
+    embedded_stderr_file="$embedded_base.stderr"
+    embedded_exit_file="$embedded_base.exit"
+    embedded_args_file="$embedded_base.args"
+    embedded_flags_file="$embedded_base.flags"
+    embedded_skip_file="$embedded_base.skip"
+    embedded_stdout_found_file="$embedded_base.stdout.found"
+    embedded_stderr_found_file="$embedded_base.stderr.found"
+    embedded_exit_found_file="$embedded_base.exit.found"
+    embedded_args_found_file="$embedded_base.args.found"
+    embedded_flags_found_file="$embedded_base.flags.found"
+    embedded_skip_found_file="$embedded_base.skip.found"
     expected_args_file="$embedded_args_file"
     case_failed=0
 
-    extract_expectations "$case_file" \
-        "$embedded_stdout_file" "$embedded_stderr_file" \
-        "$embedded_exit_file" "$embedded_args_file" \
-        "$embedded_stdout_found_file" "$embedded_stderr_found_file" \
-        "$embedded_exit_found_file" "$embedded_args_found_file"
+    extract_expectations "$case_file" "$embedded_base"
 
     if load_expectation stdout "$case_file" "$expected_stdout_file" \
        "$embedded_stdout_file" "$embedded_stdout_found_file"; then
@@ -313,6 +329,25 @@ run_case() {
     else
         has_program_args=0
     fi
+    if [ -f "$embedded_flags_found_file" ]; then
+        has_flags=1
+    else
+        has_flags=0
+    fi
+
+    # `.skip-on` 列出本用例不适用的平台。命中就整条跳过 —— 这些用例依赖的
+    # 第三方库在某些平台上本来就不存在，报 FAIL 只会制造噪音。
+    if [ -f "$embedded_skip_found_file" ]; then
+        while IFS= read -r skip_platform || [ -n "$skip_platform" ]; do
+            skip_platform=$(printf '%s' "$skip_platform" | tr -d '[:space:]')
+            [ -z "$skip_platform" ] && continue
+            if [ "$skip_platform" = "$TEST_PLATFORM" ]; then
+                : > "$TEMP_ROOT/$case_id.skipped"
+                printf 'SKIP %s (platform: %s)\n' "$relative_file" "$TEST_PLATFORM"
+                return 0
+            fi
+        done < "$embedded_skip_file"
+    fi
 
     if [ "$case_mode" = "compile-fail" ]; then
         env "TAP_MODULE_PATH=$MODULE_PATH" "TAP_STD_PATH=$STD_PATH" \
@@ -321,13 +356,22 @@ run_case() {
         case_status=$?
     else
         use_native=0
+        # 带 `.flags` 的用例要真的链接（-l / -L / -Wl,），lli 走不了这条路。
         if [ "$TEST_RUN_MODE" = "native" ] || [ "$has_program_args" -eq 1 ] ||
+           [ "$has_flags" -eq 1 ] ||
            [ "$relative_file" = "tests/run-pass/basics/hello.tp" ]; then
             use_native=1
         fi
 
         if [ "$use_native" -eq 1 ]; then
-            set -- "$COMPILER" run -o "$TEMP_ROOT/$case_id-program$EXE_SUFFIX" "$relative_file"
+            set -- "$COMPILER" run -o "$TEMP_ROOT/$case_id-program$EXE_SUFFIX"
+            if [ "$has_flags" -eq 1 ]; then
+                while IFS= read -r compiler_flag || [ -n "$compiler_flag" ]; do
+                    [ -z "$compiler_flag" ] && continue
+                    set -- "$@" "$compiler_flag"
+                done < "$embedded_flags_file"
+            fi
+            set -- "$@" "$relative_file"
             if [ "$has_program_args" -eq 1 ]; then
                 set -- "$@" --
                 while IFS= read -r program_arg || [ -n "$program_arg" ]; do
@@ -459,7 +503,9 @@ while [ "$case_id" -le "$total" ]; do
     if [ -f "$TEMP_ROOT/$case_id.result" ]; then
         cat "$TEMP_ROOT/$case_id.result"
     fi
-    if [ -f "$TEMP_ROOT/$case_id.status" ] &&
+    if [ -f "$TEMP_ROOT/$case_id.skipped" ]; then
+        skipped=$((skipped + 1))
+    elif [ -f "$TEMP_ROOT/$case_id.status" ] &&
        [ "$(sed -n '1p' "$TEMP_ROOT/$case_id.status")" = "0" ]; then
         passed=$((passed + 1))
     else
@@ -471,5 +517,6 @@ while [ "$case_id" -le "$total" ]; do
     case_id=$((case_id + 1))
 done
 
-printf '\n%d tests: %d passed, %d failed\n' "$total" "$passed" "$failed"
+printf '\n%d tests: %d passed, %d skipped, %d failed\n' \
+    "$total" "$passed" "$skipped" "$failed"
 [ "$failed" -eq 0 ]

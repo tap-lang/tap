@@ -35,6 +35,9 @@ static void print_usage() {
     printf("  -ir               生成LLVM IR代码\n");
     printf("  -emit-obj         生成目标文件\n");
     printf("  -emit-wasm        生成WebAssembly目标文件\n");
+    printf("  -l<名字>          链接库；可重复，顺序即命令行顺序\n");
+    printf("  -L<目录>          追加库搜索路径；可重复\n");
+    printf("  -Wl,<参数>        把参数透传给链接器，逗号分隔多个\n");
     printf("  -lex              只输出词法分析结果\n");
     printf("  -parse            只输出语法分析结果\n");
     printf("  -run-lli          生成LLVM IR并使用lli运行程序\n");
@@ -63,6 +66,10 @@ int main(int argc, char *argv[]) {
     int build_package = 0;
     int program_argc = 0;
     char **program_argv = NULL;
+
+    // 链接参数按出现顺序收集，最终原样交给 link_object_file()。
+    LinkOptions link_options;
+    link_options_init(&link_options);
 
     // `new` 是包管理器的活，tap 只转发：`tap new demo` → `tapm new demo`。
     // 放在参数解析之前，`new` 之后的参数原样透传，不被 tap 自己的选项规则干扰
@@ -105,6 +112,32 @@ int main(int argc, char *argv[]) {
             lex_only = 1;
         } else if (strcmp(argv[i], "-parse") == 0) {
             parse_only = 1;
+        } else if (strcmp(argv[i], "-l") == 0) {
+            // `-l foo` 和 `-lfoo` 两种写法都认，和 cc 的惯例一致。
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: -l requires a library name\n"); // 中文：-l 选项需要指定库名
+                print_usage();
+                return 1;
+            }
+            if (link_options_add(&link_options, LINK_ARG_LIBRARY, argv[++i]) != 0) return 1;
+        } else if (strncmp(argv[i], "-l", 2) == 0) {
+            if (link_options_add(&link_options, LINK_ARG_LIBRARY, argv[i] + 2) != 0) return 1;
+        } else if (strcmp(argv[i], "-L") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: -L requires a directory\n"); // 中文：-L 选项需要指定目录
+                print_usage();
+                return 1;
+            }
+            if (link_options_add(&link_options, LINK_ARG_SEARCH_DIR, argv[++i]) != 0) return 1;
+        } else if (strncmp(argv[i], "-L", 2) == 0) {
+            if (link_options_add(&link_options, LINK_ARG_SEARCH_DIR, argv[i] + 2) != 0) return 1;
+        } else if (strncmp(argv[i], "-Wl,", 4) == 0) {
+            if (!argv[i][4]) {
+                fprintf(stderr, "error: -Wl, requires a linker argument\n"); // 中文：-Wl, 需要指定链接器参数
+                print_usage();
+                return 1;
+            }
+            if (link_options_add(&link_options, LINK_ARG_RAW, argv[i] + 4) != 0) return 1;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "error: unknown option %s\n", argv[i]); // 中文：未知选项
             print_usage();
@@ -271,13 +304,15 @@ int main(int argc, char *argv[]) {
             result = 1;
         } else {
             result = run_native
-                ? compile_and_run(codegen_context, exe_file, program_argc, program_argv, static_link)
-                : compile_to_executable(codegen_context, exe_file, static_link);
+                ? compile_and_run(codegen_context, exe_file, program_argc, program_argv,
+                                  static_link, &link_options)
+                : compile_to_executable(codegen_context, exe_file, static_link, &link_options);
         }
         free(default_exe_file);
     }
 
     // 清理资源
+    link_options_free(&link_options);
     free_codegen_context(codegen_context);
     free_ast((ASTNode *)program);
     free_parser(parser);

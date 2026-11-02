@@ -19,6 +19,10 @@
 - .args
 传给被测程序的第一个参数
 传给被测程序的第二个参数
+- .flags
+-lz
+- .skip-on
+windows
 - .exit
 0
 -- */
@@ -27,6 +31,8 @@
 - 每个用例必须提供 `.exit`。
 - `.stdout` 和 `.stderr` 可省略；省略时对应输出必须为空。
 - `.args` 可省略；提供时仅用于 `run-pass` 和 `run-fail`，每行作为一个独立程序参数，并通过 `--` 传给 `tap run` 生成的程序。
+- `.flags` 可省略；每行作为一个独立的编译器参数，插在源文件**之前**（例如 `-lz`、`-L/usr/local/lib`、`-Wl,-rpath,/x`）。提供时会强制该用例走 native 模式 —— `-run-lli` 不链接，带 `-l` 的用例在 fast 模式下没有意义。
+- `.skip-on` 可省略；每行一个平台名，命中就整条跳过并打印 `SKIP`，不计入通过也不计入失败。平台名是粗粒度的 `darwin` / `linux` / `windows`（MSVC、MinGW、Cygwin 都算 `windows`），用于「这个库某些平台本来就没装」的用例。
 - `compile-fail` 必须提供 `.stderr`，其中每个非空行都必须出现在诊断中。
 - 文本比较忽略 CRLF 差异和每行尾部空白，保留行首缩进。内嵌期望和外部期望文件都会使用相同规则归一化。
 
@@ -69,7 +75,8 @@ TEST_FILTER=module make test
 ```
 
 `make test` 默认使用 4 个并行 worker。普通 `run-pass`、`run-fail` 用例通过 `lli` 执行，
-带 `.args` 的用例和 `tests/run-pass/basics/hello.tp` 原生编译并链接，持续覆盖程序参数和链接路径。
+带 `.args` 或 `.flags` 的用例和 `tests/run-pass/basics/hello.tp` 原生编译并链接，
+持续覆盖程序参数和链接路径。
 `make test-native` 会让全部运行用例生成原生可执行文件。可以用 `TEST_JOBS=N` 调整并行度，
 或设为 `1` 排查依赖执行顺序的问题；最终结果始终按文件名顺序输出。
 `testc` 和 `testc-native` 使用 `src/scripts/run-tests.c`，由 C 运行器负责测试发现、

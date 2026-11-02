@@ -1,0 +1,37 @@
+// P0 回归用例：`-l` 能把第三方库真的链进来，并且能调到它的符号。
+//
+// zlib 在 macOS SDK 和绝大多数 Linux 发行版上都是现成的；MSVC / MinGW / Cygwin
+// 的工具链不自带 zlib，所以那边整条跳过 —— 这不是功能缺失，是「机器上没这个库」。
+// `.flags` 会让用例强制走 native 模式（lli 不链接）。
+extern fn strlen(value: c_string): uint;
+extern fn zlibVersion(): c_string;
+extern fn compressBound(source_len: uint): uint;
+
+fn main(): i32 {
+    // 链接成功 + 符号解析成功：库没链上的话这条用例连可执行文件都出不来。
+    let version: c_string = zlibVersion();
+    if (strlen(version) > 0) {
+        print("version ok\n");
+    }
+
+    // compressBound 的公式是固定的（len + len>>12 + len>>14 + len>>25 + 13），
+    // 输出和 zlib 版本无关，可以写死期望值。
+    print("%llu\n", compressBound(0));
+    print("%llu\n", compressBound(100));
+    print("%llu\n", compressBound(4096));
+    return 0;
+}
+
+/** -- test
+- .flags
+-lz
+- .skip-on
+windows
+- .stdout
+version ok
+13
+113
+4110
+- .exit
+0
+-- */
