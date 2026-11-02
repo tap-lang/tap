@@ -4,7 +4,7 @@ fn main() {
 
 /** -- test
 - .stderr
-error: function 'main' does not declare a return type
+error: function 'main' returns no value, so `return` cannot carry one
 --> tests/compile-fail/functions/return_without_type.tp:1:4
 - .exit
 1

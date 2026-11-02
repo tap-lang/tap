@@ -1,0 +1,58 @@
+// 省略返回类型 = 无返回值（void）。
+//
+// 规则和函数指针签名共用一套：`fn f()` 和 `*fn(...)` 都是 void，不再有
+// 「隐式 i32 + 末尾 return 0」那层旧语义。裸 `return;` 因此合法，只能用于提前退出。
+//
+// C 的 void 函数也终于能按真实签名声明（下面 srand 返回 void），
+// 不必借一个假的 `: i32` —— 假返回类型在 tap 侧读返回值时会读到寄存器垃圾。
+extern fn srand(seed: u32);
+
+// 无返回值函数：落到末尾就是 ret void。
+fn report(label: c_string) {
+    print("%s\n", label);
+}
+
+// 裸 `return;`：无返回值函数里的提前退出。
+fn classify(value: i32) {
+    if (value > 0) {
+        print("positive\n");
+        return;
+    }
+    print("non-positive\n");
+}
+
+// 无返回值函数指针：`*fn(i32)` 省略了 `: T`，就是「接受 i32、不返回」。
+fn twice(action: *fn(i32), value: i32) {
+    action(value);
+    action(value);
+}
+
+fn show(value: i32) {
+    print("value=%d\n", value);
+}
+
+// void main：省略返回类型，进程以 0 退出。
+fn main() {
+    report("start");
+
+    classify(1);
+    classify(-1);
+
+    twice(&show, 7);
+
+    // 调 C 的 void 函数：链接和调用都要成立。
+    srand(42);
+    report("done");
+}
+
+/** -- test
+- .stdout
+start
+positive
+non-positive
+value=7
+value=7
+done
+- .exit
+0
+-- */

@@ -68,7 +68,11 @@ enum LiteralType {
     LITERAL_C_STRING,               // C 兼容零结尾字符串指针 c_string
     LITERAL_BOOL,                   // 布尔值 bool
     LITERAL_CHAR,                   // Unicode 码点 char
-    LITERAL_NULL                    // 空指针字面量：没有自己的类型，只能赋给 *T
+    LITERAL_NULL,                   // 空指针字面量：没有自己的类型，只能赋给 *T
+    // 无返回值。**不是值类型**：只出现在函数的返回位置（省略 `: T` 的声明、
+    // 省略返回类型的函数指针签名）。它进不了变量、参数、字段，也进不了泛型实参 ——
+    // 那些位置一旦出现就是编译错误，所以 tap_type_equal / clone / generics 都不必处理它。
+    LITERAL_VOID
 };
 
 // 二元操作符类型  + - * / == != < > <= >= && ||

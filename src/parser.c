@@ -244,11 +244,11 @@ static ImportNode *parse_import(Parser *parser) {
 
 static VarTypeNode *parse_type(Parser *parser);
 
-// 解析 `fn(参数类型, ...): 返回类型`，调用方已经吃掉了前面的 `*`。
+// 解析 `fn(参数类型, ...)` 或 `fn(参数类型, ...): 返回类型`，调用方已经吃掉了前面的 `*`。
 //
-// 返回类型是**必填**的：tap 没有 void 返回类型，留空就没有能写出来的语义。
-// C 里 `void (*cb)(int)` 这类回调在 tap 侧写成 `*fn(i32): i32` —— 返回标量的
-// 调用约定和返回 void 一致（调用方直接忽略 rax），实测可用。
+// 省略 `: T` 表示无返回值，和普通函数声明省略返回类型的规则一致（tap 没有独立的
+// `void` 关键字，省略就是 void）。C 的 `void (*cb)(int)` 因此可以直写成 `*fn(i32)`，
+// 不必再借一个假返回类型。
 static VarTypeNode *parse_function_pointer_type(Parser *parser) {
     consume(parser, TOKEN_FN);
     consume(parser, TOKEN_LPAREN);
@@ -267,8 +267,7 @@ static VarTypeNode *parse_function_pointer_type(Parser *parser) {
     consume(parser, TOKEN_RPAREN);
 
     if (parser->current_token->type != TOKEN_COLON) {
-        free_ast(parameter_types);
-        parser_error(parser, "function pointer type needs a return type, e.g. `*fn(i32): i32`"); // 中文：函数指针类型必须写返回类型
+        return create_function_pointer_type(parameter_types, NULL);
     }
     consume(parser, TOKEN_COLON);
     return create_function_pointer_type(parameter_types, parse_type(parser));
@@ -556,11 +555,13 @@ static ASTNode *parse_statement(Parser *parser) {
         parser->current_token->type == TOKEN_CONST) {
         node = (ASTNode *)parse_var_decl(parser, 1);
     } else if (parser->current_token->type == TOKEN_RETURN) {
-        // 解析返回语句
+        // 解析返回语句。裸 `return;` 只允许出现在无返回值函数里，语义阶段校验。
         consume(parser, TOKEN_RETURN);
 
-        // 解析返回表达式（支持整数、变量和表达式）
-        ASTNode *expression = parse_expression(parser);
+        ASTNode *expression = NULL;
+        if (parser->current_token->type != TOKEN_SEMICOLON) {
+            expression = parse_expression(parser);
+        }
 
         consume(parser, TOKEN_SEMICOLON);
         node = (ASTNode *)create_return(expression);

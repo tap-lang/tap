@@ -1,0 +1,17 @@
+// 无返回值函数的调用只能作语句用：它产生的是「没有值」。
+fn nothing() {
+    print("x\n");
+}
+
+fn main(): i32 {
+    let value: i32 = nothing();
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: function 'nothing' returns no value and cannot be used in an expression
+--> tests/compile-fail/functions/void_call_as_value.tp:7:22
+- .exit
+1
+-- */

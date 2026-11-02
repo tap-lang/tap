@@ -234,6 +234,10 @@ static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type)
         case LITERAL_C_STRING:
             // c_string 保持原来的 C 字符串 ABI：单个零结尾字节指针。
             return LLVMPointerType(LLVMInt8TypeInContext(context->context), 0);
+        case LITERAL_VOID:
+            // 只在函数签名里出现（返回位置）。任何拿它当值用的路径都会先报错，
+            // 走不到这里生成存储。
+            return LLVMVoidTypeInContext(context->context);
         default:
             fprintf(stderr, "unsupported type: %d\n", type); // 中文：不支持的类型
             return NULL;
@@ -264,8 +268,7 @@ static LLVMTypeRef llvm_function_pointer_signature(
             get_llvm_var_type(context, (VarTypeNode *)parameter);
     }
 
-    // 没写返回类型的函数指针按 void 处理；解析器目前要求必填，
-    // 这里兜底只是为了「内部构造的类型」不至于拿到空指针。
+    // 没写返回类型的函数指针就是 void，和省略 `: T` 的普通函数声明同一套规则。
     LLVMTypeRef return_type = type->return_type
         ? get_llvm_var_type(context, type->return_type)
         : LLVMVoidTypeInContext(context->context);
@@ -705,9 +708,17 @@ static Symbol *find_symbol_with_length(
     return NULL;
 }
 
-// 返回函数的标量返回类型，未声明时使用默认整数类型。
+// 返回函数的标量返回类型；未声明返回类型即**无返回值**（LITERAL_VOID）。
+//
+// 早期这里返回默认整数类型（i32），函数末尾隐式 `return 0`，只是为了兼容
+// `fn main() { ... }` 这种写法。现在「省略返回类型」统一表示 void，和
+// 函数指针签名的 `*fn(...)`（`codegen.c` 的 llvm_function_pointer_signature 里
+// return_type 为 NULL 时同样按 void 处理）保持一致。
 static enum LiteralType function_return_type(FunctionNode *function) {
-    return function && function->return_type ? function->return_type->type : default_integer_type();
+    // 找不到函数时沿用旧的默认整数类型：真正的诊断是「未定义函数」，
+    // 不该在这里被伪装成「无返回值」而报成类型不匹配。
+    if (!function) return default_integer_type();
+    return function->return_type ? function->return_type->type : LITERAL_VOID;
 }
 
 // 返回函数的完整返回类型节点，用于数组、枚举和结构体。
@@ -3492,6 +3503,28 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
 }
 
 // 生成普通表达式的 LLVM 值。
+// 调用一个无返回值函数产生的是「没有值」，只能作语句用。当值用会生成非法 IR
+// （`%x = call void ...`），所以必须在求值之前报错。
+//
+// 两种来源都要覆盖：具名函数省略了 `: T`；函数指针签名的返回类型为空（`*fn(...)`）。
+static int call_returns_no_value(CodeGenContext *context, FunctionCallNode *call) {
+    FunctionNode *function = find_function(context, call->name);
+    if (function) return function->return_type == NULL;
+
+    Symbol *callee = find_symbol(context, call->name);
+    if (callee && callee->declared_type && callee->declared_type->is_function_pointer) {
+        return callee->declared_type->return_type == NULL;
+    }
+    return 0;
+}
+
+// 表达式本身是不是「无返回值函数的调用」。这类表达式只能作语句用，出现在任何
+// 值位置都该报「没有值可用」，而不是让它退化成类型不匹配。
+static int expression_is_void_call(CodeGenContext *context, ASTNode *expression) {
+    if (!expression || expression->type != NODE_FUNCTION_CALL) return 0;
+    return call_returns_no_value(context, (FunctionCallNode *)expression);
+}
+
 static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expression) {
     if (!expression) return NULL;
 
@@ -3636,6 +3669,13 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
         case NODE_FUNCTION_CALL:
             {
                 FunctionCallNode *call = (FunctionCallNode *)expression;
+                // 无返回值函数的调用只能作语句；走到这里说明它被当成了值。
+                if (call_returns_no_value(context, call)) {
+                    print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                        "function '%s' returns no value and cannot be used in an expression",
+                        call->name); // 中文：无返回值函数不能当表达式用
+                    exit(1);
+                }
                 // 载荷枚举构造需要目标类型才能确定结果类型，与结构体字面量一致。
                 EnumVariantNode *variant = NULL;
                 EnumNode *enum_node = variant_reference(context, call->name, &variant);
@@ -3811,6 +3851,11 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
 
 // 生成变量或结构体字段赋值语句。
 static void generate_assignment(CodeGenContext *context, AssignmentNode *assignment) {
+    if (expression_is_void_call(context, assignment->expression)) {
+        report_error((const ASTNode *)assignment->expression,
+                     "function '%s' returns no value and cannot be used in an expression", // 中文：无返回值函数不能当表达式用
+                     ((FunctionCallNode *)assignment->expression)->name);
+    }
     Symbol *symbol = find_symbol(context, assignment->name);
     if (!symbol) {
         StructFieldNode *field = NULL;
@@ -4308,32 +4353,33 @@ static void validate_match_statement(
 // 普通 if 没有 else、以及 for/while 都不能满足「函数一定返回」的要求。
 static int statement_list_definitely_returns(ASTNode *statement);
 
-// 判断语句链中是否出现了 return。这个检查和“所有路径都返回”的检查不同：
-// 对于没有显式返回类型的函数，只要任意嵌套代码块里写了 return，就应该报错。
-static int statement_list_contains_return(ASTNode *statement);
+// 判断语句链中是否出现了**带返回值**的 return。这个检查和“所有路径都返回”的检查不同：
+// 对于无返回值函数（省略了 `: T`），裸 `return;` 是合法的提前退出，只有 `return value;`
+// 才是错的。
+static int statement_list_contains_valued_return(ASTNode *statement);
 
-static int statement_contains_return(ASTNode *statement) {
+static int statement_contains_valued_return(ASTNode *statement) {
     if (!statement) return 0;
 
     switch (statement->type) {
         case NODE_RETURN:
-            return 1;
+            return ((ReturnNode *)statement)->expression != NULL;
         case NODE_IF_STATEMENT: {
             IfStatementNode *if_node = (IfStatementNode *)statement;
-            return statement_list_contains_return(if_node->consequence) ||
-                   statement_list_contains_return(if_node->alternative);
+            return statement_list_contains_valued_return(if_node->consequence) ||
+                   statement_list_contains_valued_return(if_node->alternative);
         }
         case NODE_FOR_STATEMENT: {
             ForStatementNode *for_node = (ForStatementNode *)statement;
-            return statement_list_contains_return(for_node->initializer) ||
-                   statement_list_contains_return(for_node->update) ||
-                   statement_list_contains_return(for_node->body);
+            return statement_list_contains_valued_return(for_node->initializer) ||
+                   statement_list_contains_valued_return(for_node->update) ||
+                   statement_list_contains_valued_return(for_node->body);
         }
         case NODE_MATCH_STATEMENT: {
             MatchStatementNode *match_node = (MatchStatementNode *)statement;
             for (ASTNode *node = match_node->arms; node; node = node->next) {
                 MatchArmNode *arm = (MatchArmNode *)node;
-                if (statement_list_contains_return(arm->body)) return 1;
+                if (statement_list_contains_valued_return(arm->body)) return 1;
             }
             return 0;
         }
@@ -4342,9 +4388,9 @@ static int statement_contains_return(ASTNode *statement) {
     }
 }
 
-static int statement_list_contains_return(ASTNode *statement) {
+static int statement_list_contains_valued_return(ASTNode *statement) {
     for (; statement; statement = statement->next) {
-        if (statement_contains_return(statement)) return 1;
+        if (statement_contains_valued_return(statement)) return 1;
     }
     return 0;
 }
@@ -4392,8 +4438,8 @@ static int statement_list_definitely_returns(ASTNode *statement) {
     return 0;
 }
 
-// 有显式返回类型的普通函数必须在所有路径返回值。未写 `: T` 的函数保留旧语义：
-// 返回类型默认为 i32，函数末尾隐式返回 0，兼容 `fn main() { ... }` 这类写法。
+// 有显式返回类型的普通函数必须在所有路径返回值。省略 `: T` 的函数是无返回值函数
+// （LITERAL_VOID），落到末尾就是 `ret void`，不要求返回值。
 static void validate_function_returns(FunctionNode *function) {
     if (!function || function->is_extern || !function->return_type) return;
     if (statement_list_definitely_returns(function->body)) return;
@@ -4403,15 +4449,15 @@ static void validate_function_returns(FunctionNode *function) {
     exit(1);
 }
 
-// 未声明返回类型的函数是无返回值函数；保留其旧的隐式 i32 ABI，只禁止返回值语句。
-// 这样 `fn main() { print("hello"); }` 仍然兼容，而误写 `return value;` 会在语义阶段
-// 明确报错，不再被当作隐式 i32 返回值接受。
+// 无返回值函数（省略了 `: T`）允许裸 `return;` 提前退出，但 `return value;` 是错的 ——
+// 没有返回类型能承载那个值。
 static void validate_implicit_return(FunctionNode *function) {
     if (!function || function->is_extern || function->return_type) return;
-    if (!statement_list_contains_return(function->body)) return;
+    if (!statement_list_contains_valued_return(function->body)) return;
 
     print_diagnostic(stderr, "error", function->filename, function->line, function->column,
-                     "function '%s' does not declare a return type", function->name);
+                     "function '%s' returns no value, so `return` cannot carry one",
+                     function->name);
     exit(1);
 }
 
@@ -4846,6 +4892,13 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                                   declaration->is_const);
                 }
                 if (declaration->expression) {
+                    // 无返回值函数的调用只能作语句。这里先单独判一次，否则会退化成
+                    // 「初始化类型不匹配」，报错点离真正的原因太远。
+                    if (expression_is_void_call(context, declaration->expression)) {
+                        report_error((const ASTNode *)declaration->expression,
+                                     "function '%s' returns no value and cannot be used in an expression", // 中文：无返回值函数不能当表达式用
+                                     ((FunctionCallNode *)declaration->expression)->name);
+                    }
                     if (declaration->type &&
                         !expression_assignable_to(context, declaration->expression,
                                                   declaration->type)) {
@@ -4866,6 +4919,22 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 break;
             case NODE_RETURN: {
                 ReturnNode *return_node = (ReturnNode *)statement;
+                // 无返回值函数：声明里省略了 `: T`。此时 return 语句不能带值，
+                // 有值函数也不能写裸 `return;`。
+                int returns_void = context->current_return_var_type == NULL &&
+                                   context->current_return_type == LITERAL_VOID;
+                if (!return_node->expression) {
+                    if (!returns_void) {
+                        report_error((const ASTNode *)statement,
+                                     "function must return a value"); // 中文：函数必须返回值
+                    }
+                    LLVMBuildRetVoid(context->builder);
+                    break;
+                }
+                if (returns_void) {
+                    report_error((const ASTNode *)statement,
+                                 "function returns no value, so `return` cannot carry one"); // 中文：无返回值函数不能带返回值
+                }
                 // 标量返回类型同样要校验。以前这里只查 enum/struct/pointer，
                 // `fn g(): i32 { return "x"; }` 被跳过，最后崩成 LLVM 的
                 // "Function return type does not match operand type of return inst"。
@@ -5367,11 +5436,20 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
     LLVMValueRef user_main_function = LLVMGetNamedFunction(
         context->module, llvm_function_name(user_main));
     LLVMTypeRef user_main_type = LLVMGlobalGetValueType(user_main_function);
+
+    // 无返回值 main（省略 `: T`）：调用结果没有值可命名，固定以 0 退出。
+    enum LiteralType return_type = function_return_type(user_main);
+    if (return_type == LITERAL_VOID) {
+        LLVMBuildCall2(context->builder, user_main_type, user_main_function,
+                       NULL, 0, "");
+        LLVMBuildRet(context->builder, LLVMConstInt(int32_type, 0, 0));
+        return;
+    }
+
     LLVMValueRef result = LLVMBuildCall2(
         context->builder, user_main_type, user_main_function, NULL, 0,
         "user_main_result");
 
-    enum LiteralType return_type = function_return_type(user_main);
     if (is_integer_type(return_type)) {
         result = cast_integer(context, result, return_type, LITERAL_I32);
         LLVMBuildRet(context->builder, result);
@@ -5473,9 +5551,16 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         generate_statement_list(context, function->body);
         LLVMBasicBlockRef current = LLVMGetInsertBlock(context->builder);
         if (current && !LLVMGetBasicBlockTerminator(current)) {
-            LLVMBuildRet(context->builder,
-                         zero_var_value(context, context->current_return_var_type,
-                                        context->current_return_type));
+            // 无返回值函数落到末尾就是 `ret void`；有返回值函数补一个零值返回，
+            // 保持 `fn main(): i32 { ... }` 这类「所有路径都 return」的宽松语义。
+            if (context->current_return_type == LITERAL_VOID &&
+                context->current_return_var_type == NULL) {
+                LLVMBuildRetVoid(context->builder);
+            } else {
+                LLVMBuildRet(context->builder,
+                             zero_var_value(context, context->current_return_var_type,
+                                            context->current_return_type));
+            }
         }
     }
 

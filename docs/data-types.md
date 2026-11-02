@@ -495,6 +495,40 @@ fn main(): i32 {
 普通程序优先使用标准库封装，例如 `std.memory` 和 `std.vec`，只有编写底层库、引用传参
 或对接 C ABI 时才建议直接使用 `*T`。
 
+### 函数返回值
+
+写了 `: T` 的函数必须在所有路径返回值，否则报
+`function 'f' may exit without returning a value`。
+
+**省略 `: T` 表示无返回值**（void）。tap 没有 `void` 关键字，省略就是唯一的写法：
+
+```tap
+// 无返回值：落到末尾就是 ret void
+fn report(label: c_string) {
+    print("%s\n", label);
+}
+
+// 无返回值函数可以写裸 return; 提前退出，但不能带值
+fn classify(value: i32) {
+    if (value > 0) {
+        print("positive\n");
+        return;
+    }
+    print("non-positive\n");
+}
+```
+
+无返回值函数的调用**只能作语句**。把它当值用会报
+`function 'report' returns no value and cannot be used in an expression`：
+
+```tap
+let text: String = report("x");   // 错误
+report("x");                      // 正确
+```
+
+有返回值的函数不能写裸 `return;`，报 `function must return a value`。
+函数指针类型沿用同一套规则，见 `extern.md` §3.3。
+
 ### 泛型函数
 
 函数名后使用 `<T>` 声明类型参数，调用时可以显式指定类型，也可以由函数实参或目标返回类型
