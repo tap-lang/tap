@@ -1393,7 +1393,8 @@ static char *resolve_type_name(
     return export ? export->symbol : NULL;
 }
 
-// 递归重写一个类型节点里的类型名。泛型实参在 type_arguments，数组/指针在 element_type。
+// 递归重写一个类型节点里的类型名。泛型实参在 type_arguments，数组/指针在 element_type，
+// 函数指针在 parameter_types 和 return_type。
 static void rewrite_var_type(
     LoadedModule *module, ImportBinding *bindings, VarTypeNode *type) {
     if (!type) return;
@@ -1417,6 +1418,10 @@ static void rewrite_var_type(
         rewrite_var_type(module, bindings, (VarTypeNode *)node);
     }
     rewrite_var_type(module, bindings, type->element_type);
+    for (ASTNode *node = type->parameter_types; node; node = node->next) {
+        rewrite_var_type(module, bindings, (VarTypeNode *)node);
+    }
+    rewrite_var_type(module, bindings, type->return_type);
 }
 
 // 把 `Foo.Bar` 里的枚举前缀换成本模块私有符号名。返回新名字（调用方负责释放），

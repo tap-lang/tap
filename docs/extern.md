@@ -27,7 +27,7 @@ tap 的 FFI 入口只有一个：`extern fn`。它只生成 LLVM 函数声明，
 | `String` 跨边界（特殊 lowering） | ✅ | `codegen.c:3234` |
 | 指针解引用 `*p`、`&x`、`p[i]` | ✅ | `ast.h:47`、`dereference.tp` |
 | `extern` 全局变量 | ❌ 见 §3.2 | `parser.c:1719` |
-| 函数指针 / 回调 | ❌ 见 §3.3 | `bootstrap.md:197` |
+| 函数指针 / 回调 | ✅ 见 §3.3 | `parser.c` 的 `parse_function_pointer_type` |
 | 链接第三方库（`-l` / `-L`） | ✅ | §2、`run.c` 的 `link_object_file` |
 | 头文件绑定生成 | ❌ 见 §3.5 | — |
 
@@ -198,26 +198,60 @@ zlib 在 macOS SDK 和多数 Linux 发行版上现成（Linux 上要装 `zlib1g-
 
 **风险**：低。这是性价比最高的一项。
 
-### 3.3 P1：函数指针与回调
+### 3.3 P1：函数指针与回调 —— 已完成
 
-**现状**：`*fn(i32, i32): i32` 报 `expected type`（`docs/bootstrap.md:197`）。
+**现状**：`*fn(i32, i32): i32` 已经是一种类型。`qsort` 传 tap 函数实测通过
+（`tests/run-pass/extern/callback.tp`）。
 
-**影响**：所有回调式 API 都用不了——`qsort`、libcurl 的 write callback、
-`sqlite3_exec`、各种事件循环。
+**语法**
 
-**方案**：把 `*fn(参数列表): 返回类型` 作为一种类型。
+```tap
+extern fn qsort(base: *i32, count: uint, size: uint,
+                compare: *fn(*i32, *i32): i32): i32;
 
-**实现点**：
+fn ascending(a: *i32, b: *i32): i32 {
+    return a[0] - b[0];
+}
 
-1. `VarTypeNode`（`ast.h:165`）加 `is_function_pointer`、参数类型链、返回类型
-2. `parser.c` 的类型解析里识别 `*fn(` 前缀；注意和 `*` 解引用、`*T` 指针的歧义
-3. `codegen.c` 生成 `LLVMPointerType(LLVMFunctionType(...), 0)`
-4. 调用点：函数值是表达式时走 `LLVMBuildCall2` 的 indirect call，不能只认具名函数
-5. `&tap_fn` 取函数地址：`module.c` 已有符号改写逻辑，能拿到稳定符号名
-6. `null` 要能赋给函数指针类型（C 侧常用 NULL 表示"不设置回调"）
+fn main(): i32 {
+    let values: [i32; 5] = [5, 3, 1, 4, 2];
+    qsort(&values[0], 5, sizeof(i32), &ascending);
+    return 0;
+}
+```
 
-**风险**：**高**。这是本文改动面最大的一项，涉及类型系统、parser、codegen 三处，
-且要处理与现有 `*` 语法的歧义。
+- 类型位置的 `*` 后面跟 `fn` 就按函数指针解析，和 `*T` 数据指针没有歧义
+- **返回类型必填**：tap 没有 void 返回类型，C 的 `void (*)(int)` 写成
+  `*fn(i32): i32` —— 返回标量的调用约定和返回 void 一致（调用方直接忽略 rax）
+- `&f` 取函数地址，`fp(1, 2)` 间接调用，编译期校验参数个数和每个参数的类型
+- 函数指针可以作参数、作返回值、作结构体字段、赋给变量、和 `null` 比较
+- 调空函数指针有运行时守卫（`Null function pointer call`），不是裸 SIGSEGV
+
+**实现位置**
+
+| 环节 | 位置 |
+|---|---|
+| 类型表示（`is_function_pointer` + 参数链 + 返回类型） | `ast.h` 的 `VarTypeNode` |
+| 语法 `*fn(...): T` | `parser.c` 的 `parse_function_pointer_type` |
+| LLVM 类型 + 间接调用 + `&f` + null 守卫 | `codegen.c` 的 `llvm_function_pointer_signature` / `generate_indirect_call` / `generate_reference` |
+| 类型等价与克隆 | `types.c` 的 `tap_type_equal` / `tap_type_clone` |
+| 单态化时的替换与统一 | `generics.c` 的 `substitute_type` / `unify_type_params` |
+
+**已知限制**
+
+1. **调用点只认标识符**：`handler.run(7)`、`table[0](3)` 都调不了。
+   原因是语法上 `name(...)` 只接受标识符，`a.b(...)` 一律当「类型 a 的方法 b」。
+   前者报 `'handler.run' is a function pointer field; read it into a variable first`，
+   后者是 `expected token ')'`。绕法都是先取临时变量：
+   ```tap
+   let run: *fn(i32): i32 = handler.run;
+   run(7);
+   ```
+   字段和数组元素本身**能**存函数指针，只是不能就地调用。
+2. **不做 String 的指针化 lowering**：回调签名里出现 `String` 时不保证和 C 的 ABI
+   一致（extern 边界那套 `const String *` 只对直接调用生效）。要传字符串就在 C 侧包一层。
+3. **不能解引用 / 下标**：函数指针不是数据指针，`*fp`、`fp[0]` 都报错。
+4. **没有函数重载解析**：`&f` 只能指向唯一一个叫 `f` 的函数。
 
 ### 3.4 P1：结构体按值跨 extern
 
@@ -271,7 +305,7 @@ process 包跨平台改造要走的路线——把 `fork`/`execvp` 的平台差�
 |---|---|---|---|
 | 1 | **P0 链接通道**（§2）✅ | 打通「能链进来」，配合 `*T` + `p[0].field` 已能覆盖大部分库 | 低 |
 | 2 | **extern 全局变量**（§3.2） | 配置结构体、版本查询、`errno` 类 | 低 |
-| 3 | **函数指针**（§3.3） | 所有回调式 API | 高 |
+| 3 | **函数指针**（§3.3）✅ | 所有回调式 API | 高 |
 | 4 | 结构体 by-value ABI（§3.4） | 只在有明确需求时做 | 高 |
 
 阶段 1 已完成，`tap run -lsqlite3 -L/usr/local/lib hello.tp` 是现在的最小可用闭环。
@@ -290,8 +324,10 @@ UCRT64 / Cygwin），因为 FFI 的坑几乎全部是平台 ABI 差异。
 | P0 | 同上 | 库顺序正确（`-l` 在 obj 之后） | ✅ |
 | P0 | 同上 | `-l` 不存在时给出可读的错误，不是裸链接器报错 | ⚠️ 只手工验证 |
 | P1 全局 | `tests/run-pass/extern/global.tp` | 读 + 写 extern 全局 | 未写 |
-| P1 函数指针 | `tests/run-pass/extern/callback.tp` | 调 `qsort` 传 tap 函数 | 未写 |
-| P1 函数指针 | 同上 | `null` 赋给函数指针 | 未写 |
+| P1 函数指针 | `tests/run-pass/extern/callback.tp` | 调 `qsort` 传 tap 函数 | ✅ |
+| P1 函数指针 | `tests/run-pass/types/function_pointer.tp` | `&f` / 赋值 / 参数 / 返回值 / 字段 / `null` | ✅ |
+| P1 函数指针 | `tests/compile-fail/types/function_pointer_signature.tp` | 签名不符要报错 | ✅ |
+| P1 函数指针 | `tests/compile-fail/types/function_pointer_argument_count.tp` | 实参个数不符要报错 | ✅ |
 
 用例沿用 `tests/run-tests.sh` 的 `/** -- test` 内联期望格式，
 参考 `tests/run-pass/types/c_string.tp`。

@@ -24,9 +24,25 @@ static VarTypeNode *clone_type(const VarTypeNode *source) {
     }
     copy->is_array = source->is_array;
     copy->is_pointer = source->is_pointer;
+    copy->is_function_pointer = source->is_function_pointer;
     copy->array_length = source->array_length;
     if (source->element_type) {
         copy->element_type = clone_type(source->element_type);
+    }
+    if (source->is_function_pointer) {
+        ASTNode *tail = NULL;
+        for (ASTNode *parameter = source->parameter_types; parameter;
+             parameter = parameter->next) {
+            VarTypeNode *copy_parameter = clone_type((VarTypeNode *)parameter);
+            if (!copy->parameter_types) {
+                copy->parameter_types = (ASTNode *)copy_parameter;
+            } else {
+                tail->next = (ASTNode *)copy_parameter;
+            }
+            tail = (ASTNode *)copy_parameter;
+        }
+        copy->return_type = source->return_type
+            ? clone_type(source->return_type) : NULL;
     }
     for (ASTNode *argument = source->type_arguments;
          argument; argument = argument->next) {

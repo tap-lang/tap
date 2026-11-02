@@ -114,9 +114,10 @@ static LLVMValueRef string_length(
     return LLVMBuildExtractValue(context->builder, value, 1, name);
 }
 
-// 显式转换只接受标量类型；数组、指针、结构体和枚举不能用 `as` 直接转换。
+// 显式转换只接受标量类型；数组、指针、函数指针、结构体和枚举不能用 `as` 直接转换。
 static int is_scalar_var_type(const VarTypeNode *type) {
     return type && !type->is_array && !type->is_pointer &&
+           !type->is_function_pointer &&
            !type->struct_name && !type->enum_name && !type->type_arguments;
 }
 
@@ -240,7 +241,47 @@ static LLVMTypeRef get_llvm_type(CodeGenContext *context, enum LiteralType type)
 }
 
 // 递归地将标量、结构体和多维数组类型降低为 LLVM 类型。
+// 函数指针的 LLVM 函数类型（不含外面那层指针）。
+//
+// 单独抽出来是因为 LLVM 21 的指针是 opaque 的：拿到 `ptr` 之后没法再问它「指向
+// 什么函数类型」，间接调用必须重新按 VarTypeNode 拼一次签名。
+static LLVMTypeRef llvm_function_pointer_signature(
+    CodeGenContext *context, const VarTypeNode *type) {
+    unsigned count = 0;
+    for (ASTNode *parameter = type->parameter_types; parameter;
+         parameter = parameter->next) count++;
+
+    LLVMTypeRef *parameter_types = count
+        ? malloc(sizeof(LLVMTypeRef) * count) : NULL;
+    if (count && !parameter_types) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    unsigned index = 0;
+    for (ASTNode *parameter = type->parameter_types; parameter;
+         parameter = parameter->next) {
+        parameter_types[index++] =
+            get_llvm_var_type(context, (VarTypeNode *)parameter);
+    }
+
+    // 没写返回类型的函数指针按 void 处理；解析器目前要求必填，
+    // 这里兜底只是为了「内部构造的类型」不至于拿到空指针。
+    LLVMTypeRef return_type = type->return_type
+        ? get_llvm_var_type(context, type->return_type)
+        : LLVMVoidTypeInContext(context->context);
+    LLVMTypeRef function_type =
+        LLVMFunctionType(return_type, parameter_types, count, 0);
+    free(parameter_types);
+    return function_type;
+}
+
 static LLVMTypeRef get_llvm_var_type(CodeGenContext *context, const VarTypeNode *type) {
+    // 函数指针：先拼出函数类型，再包一层指针。必须放在 is_pointer 之前 ——
+    // 它不是数据指针，element_type 是空的。
+    if (type->is_function_pointer) {
+        return LLVMPointerType(
+            llvm_function_pointer_signature(context, type), 0);
+    }
     if (type->is_pointer) {
         return LLVMPointerType(get_llvm_var_type(context, type->element_type), 0);
     }
@@ -1141,6 +1182,16 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         free_ast((ASTNode *)field_type);
         return result;
     }
+    // 函数指针：按完整签名比较（参数类型 + 返回类型），不做隐式转换。
+    if (target_type->is_function_pointer) {
+        // `null` 表示「不设置回调」，C 侧大量这么用。
+        if (is_null_literal(expression)) return 1;
+        VarTypeNode *source_type = expression_full_type(context, expression);
+        int result = source_type && source_type->is_function_pointer &&
+                     tap_type_equal(source_type, target_type);
+        free_ast((ASTNode *)source_type);
+        return result;
+    }
     if (target_type->is_pointer) {
         // null 可以赋给任意 *T。
         if (is_null_literal(expression)) return 1;
@@ -1336,7 +1387,20 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
     report_error((const ASTNode *)expression, "invalid array or pointer index target"); // 中文：数组或指针索引目标无效
 }
 
-// 根据可寻址目标推断 `&target` 的完整 *T 类型。
+// 从函数声明拼出它的函数指针类型 —— 也就是 `&fn` 的类型。
+static VarTypeNode *function_pointer_type_of(const FunctionNode *function) {
+    ASTNode *parameter_types = NULL;
+    ASTNode **tail = &parameter_types;
+    for (ASTNode *type = function->param_types; type; type = type->next) {
+        ASTNode *copy = (ASTNode *)tap_type_clone((VarTypeNode *)type);
+        *tail = copy;
+        tail = &copy->next;
+    }
+    return create_function_pointer_type(
+        parameter_types, tap_type_clone(function->return_type));
+}
+
+// 根据可寻址目标推断 `&target` 的完整类型。
 static VarTypeNode *infer_reference_type(
     CodeGenContext *context, const ReferenceNode *reference) {
     ASTNode *target = reference ? reference->target : NULL;
@@ -1356,7 +1420,13 @@ static VarTypeNode *infer_reference_type(
         } else {
             StructFieldNode *field =
                 field_access_info(context, name, NULL, NULL, NULL, NULL);
-            if (field) target_type = field->field_type;
+            if (field) {
+                target_type = field->field_type;
+            } else {
+                // `&some_function`：取函数地址，类型是函数指针而不是 `*T`。
+                FunctionNode *function = find_function(context, name);
+                if (function) return function_pointer_type_of(function);
+            }
         }
     } else if (target && target->type == NODE_INDEX_EXPRESSION) {
         target_type = indexed_value_type(context, target);
@@ -1378,7 +1448,7 @@ static VarTypeNode *infer_reference_type(
 static VarTypeNode *copy_high_level_type(const VarTypeNode *type) {
     if (!type) return NULL;
     if (!type->struct_name && !type->enum_name &&
-        !type->is_pointer && !type->is_array) {
+        !type->is_pointer && !type->is_array && !type->is_function_pointer) {
         return NULL;
     }
     return tap_type_clone(type);
@@ -1412,6 +1482,12 @@ static VarTypeNode *compute_expression_full_type(
                 context, ((IdentifierNode *)expression)->name);
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
+            // 函数指针调用：类型就是指针签名里的返回类型。
+            Symbol *callee = find_symbol(context, call->name);
+            if (callee && callee->declared_type &&
+                callee->declared_type->is_function_pointer) {
+                return tap_type_clone(callee->declared_type->return_type);
+            }
             // 载荷枚举的构造表达式产生该枚举（降级后是同名结构体）类型的值。
             EnumVariantNode *variant = NULL;
             EnumNode *enum_node = variant_reference(context, call->name, &variant);
@@ -1535,6 +1611,7 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
     // 诊断（比如「多维数组必须索引到标量元素」），跳过会丢错误报告。
     const VarTypeNode *resolved = expression->resolved_type;
     if (resolved && !resolved->is_array && !resolved->is_pointer &&
+        !resolved->is_function_pointer &&
         !resolved->struct_name && !resolved->enum_name) {
         type_cache_hits++;
         return resolved->type;
@@ -1596,6 +1673,13 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
         }
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
+            // 函数指针调用：标量类型就是签名里返回类型的种类。
+            Symbol *callee = find_symbol(context, call->name);
+            if (callee && callee->declared_type &&
+                callee->declared_type->is_function_pointer) {
+                const VarTypeNode *return_type = callee->declared_type->return_type;
+                return return_type ? return_type->type : default_integer_type();
+            }
             const char *receiver_name = NULL;
             size_t receiver_length = 0;
             FunctionNode *function = find_function(context, call->name);
@@ -1965,6 +2049,16 @@ static LLVMValueRef generate_expression_for_type(
     if (target_type->is_array) {
         return generate_array_value(context, expression, target_type);
     }
+    if (target_type->is_function_pointer) {
+        if (is_null_literal(expression)) {
+            return LLVMConstNull(get_llvm_var_type(context, target_type));
+        }
+        if (!expression_assignable_to(context, expression, target_type)) {
+            report_error((const ASTNode *)expression,
+                         "function pointer expression type mismatch"); // 中文：函数指针表达式类型不匹配
+        }
+        return generate_expression(context, expression);
+    }
     if (target_type->is_pointer) {
         // null 按目标指针类型生成零值。
         if (is_null_literal(expression)) {
@@ -2243,6 +2337,14 @@ static LLVMValueRef generate_reference(
             }
             return address;
         }
+
+        // `&some_function`：LLVM 里函数名本身就是地址，直接拿来当函数指针用。
+        FunctionNode *function = find_function(context, name);
+        if (function) {
+            LLVMValueRef llvm_function = LLVMGetNamedFunction(
+                context->module, llvm_call_name(function->name));
+            if (llvm_function) return llvm_function;
+        }
     }
 
     if (target && target->type == NODE_INDEX_EXPRESSION) {
@@ -2306,7 +2408,9 @@ static LLVMValueRef generate_null_comparison(
     ASTNode *pointer_side =
         is_null_literal(binary->left) ? binary->right : binary->left;
     VarTypeNode *pointer_type = expression_full_type(context, pointer_side);
-    if (!pointer_type || !pointer_type->is_pointer) {
+    // 函数指针也能和 null 比（C 侧用 NULL 表示「不设置回调」）。
+    if (!pointer_type ||
+        (!pointer_type->is_pointer && !pointer_type->is_function_pointer)) {
         free_ast((ASTNode *)pointer_type);
         report_error((const ASTNode *)binary,
                      "null can only be compared with a pointer"); // 中文：null 只能和指针比较
@@ -3142,7 +3246,88 @@ static LLVMValueRef generate_variant_value(
     return value;
 }
 
+// 判断 `base.field` 是不是一个函数指针字段。只用于把 `handler.run(7)` 的
+// 「类型没有该方法」换成一句能照着做的提示。
+static int symbol_has_function_pointer_field(
+    CodeGenContext *context, Symbol *symbol, const char *field_name) {
+    if (!symbol || !symbol->declared_type) return 0;
+    const char *struct_name = symbol->declared_type->struct_name;
+    if (!struct_name) return 0;
+    StructNode *structure = tap_find_struct(context->program, struct_name);
+    StructFieldNode *field = structure
+        ? tap_find_struct_field(structure, field_name, NULL) : NULL;
+    return field && field->field_type->is_function_pointer;
+}
+
+// 通过函数指针调用：`fp(1, 2)`，fp 是 `*fn(i32, i32): i32` 类型的变量。
+//
+// 这里**不做** String 的指针化 lowering：函数指针的签名是用户照 C 头文件手写的，
+// 两侧都按裸 ABI 走，和 extern 声明一致。要传 String 就自己在 C 侧包一层。
+static LLVMValueRef generate_indirect_call(
+    CodeGenContext *context, FunctionCallNode *call, Symbol *callee) {
+    const VarTypeNode *pointer_type = callee->declared_type;
+    LLVMTypeRef slot_type = get_llvm_var_type(context, pointer_type);
+    LLVMValueRef callee_value = LLVMBuildLoad2(
+        context->builder, slot_type, callee->value, "callee");
+
+    // 调空函数指针和空指针解引用一样是未定义行为，给个明确诊断而不是崩在 SIGSEGV。
+    LLVMValueRef non_null = LLVMBuildICmp(
+        context->builder, LLVMIntNE, callee_value,
+        LLVMConstNull(slot_type), "callee_non_null");
+    emit_integer_guard(context, non_null,
+                       "Null function pointer call\n", NULL, 0); // 中文：调用空函数指针
+
+    unsigned count = 0;
+    for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
+    unsigned expected = 0;
+    for (ASTNode *type = pointer_type->parameter_types; type; type = type->next) expected++;
+
+    if (count != expected) {
+        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                         "function pointer expects %u arguments, but got %u",
+                         expected, count); // 中文：函数指针参数个数不符
+        exit(1);
+    }
+
+    LLVMValueRef *arguments = count ? malloc(sizeof(LLVMValueRef) * count) : NULL;
+    if (count && !arguments) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    ASTNode *argument = call->arguments;
+    ASTNode *type = pointer_type->parameter_types;
+    for (unsigned i = 0; i < count; i++, argument = argument->next, type = type->next) {
+        const VarTypeNode *parameter_type = (const VarTypeNode *)type;
+        if (!expression_assignable_to(context, argument, parameter_type)) {
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "function pointer argument %u type mismatch",
+                             i + 1); // 中文：函数指针参数类型不匹配
+            free(arguments);
+            exit(1);
+        }
+        arguments[i] = generate_expression_for_type(context, argument, parameter_type);
+    }
+
+    LLVMTypeRef function_type =
+        llvm_function_pointer_signature(context, pointer_type);
+    int returns_void = LLVMGetReturnType(function_type) ==
+        LLVMVoidTypeInContext(context->context);
+    LLVMValueRef value = LLVMBuildCall2(
+        context->builder, function_type, callee_value, arguments, count,
+        returns_void ? "" : "indirect_call_result");
+    free(arguments);
+    return value;
+}
+
 static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCallNode *call) {
+    // 函数指针调用要先判：`fp(1, 2)` 里的 fp 是局部变量，不是顶层函数。
+    // 放在最前面，免得它被当成字符串内建 / 方法调用 / 未定义函数。
+    Symbol *callee_symbol = find_symbol(context, call->name);
+    if (callee_symbol && callee_symbol->declared_type &&
+        callee_symbol->declared_type->is_function_pointer) {
+        return generate_indirect_call(context, call, callee_symbol);
+    }
+
     const char *receiver_name = NULL;
     size_t receiver_length = 0;
     StringMethodKind string_method = internal_string_method(call);
@@ -3199,6 +3384,13 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
                 print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                                  "namespace '%s' was not imported",
                                  base_name); // 中文：未导入名称空间
+            } else if (symbol_has_function_pointer_field(
+                           context, receiver_symbol, method_name)) {
+                // `handler.run(7)`：字段里的函数指针不能直接调用 —— 调用点只认
+                // 标识符接收者，`a.b(...)` 会被当成「类型 a 的方法 b」。
+                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                                 "'%s.%s' is a function pointer field; read it into a variable first",
+                                 base_name, method_name); // 中文：函数指针字段要先取到变量再调用
             } else {
                 print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                                  "type has no method '%s'",
@@ -4626,7 +4818,8 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     report_error((const ASTNode *)declaration, "array declarations must explicitly specify [element type; length]"); // 中文：数组声明必须显式指定 [元素类型; 长度]
                 }
                 if (declaration->type &&
-                    (declaration->type->struct_name || declaration->type->is_pointer)) {
+                    (declaration->type->struct_name || declaration->type->is_pointer ||
+                     declaration->type->is_function_pointer)) {
                     LLVMTypeRef llvm_type = get_llvm_var_type(context, declaration->type);
                     LLVMValueRef storage = create_entry_alloca(
                         context, llvm_type, declaration->name);
@@ -4749,7 +4942,8 @@ static LLVMTypeRef function_tap_return_type(
     return function->return_type &&
            (function->return_type->is_array ||
             function->return_type->struct_name ||
-            function->return_type->is_pointer)
+            function->return_type->is_pointer ||
+            function->return_type->is_function_pointer)
         ? get_llvm_var_type(context, function->return_type)
         : get_llvm_type(context, function_return_type(function));
 }
@@ -4983,6 +5177,14 @@ static void validate_var_type(CodeGenContext *context, VarTypeNode *type) {
     }
     if (type->is_array) validate_var_type(context, type->element_type);
     if (type->is_pointer) validate_var_type(context, type->element_type);
+    // 函数指针的签名里也可能出现具名类型，要递归进去校验。
+    if (type->is_function_pointer) {
+        for (ASTNode *parameter = type->parameter_types; parameter;
+             parameter = parameter->next) {
+            validate_var_type(context, (VarTypeNode *)parameter);
+        }
+        validate_var_type(context, type->return_type);
+    }
 }
 
 // 递归校验语句中的枚举类型引用，覆盖嵌套 if/for/while 代码块。

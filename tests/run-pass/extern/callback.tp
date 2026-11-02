@@ -1,0 +1,34 @@
+// 函数指针的验收场景（docs/extern.md §6）：把 tap 函数传给 C 的 qsort。
+//
+// qsort 的比较器签名是 `int (*)(const void *, const void *)`。这里按 `*i32` 声明，
+// 回调里用 `a[0]` 取值 —— 指针的比较器参数在 ABI 上和 `const void *` 完全一样。
+extern fn qsort(base: *i32, count: uint, size: uint, compare: *fn(*i32, *i32): i32): i32;
+
+fn ascending(a: *i32, b: *i32): i32 {
+    return a[0] - b[0];
+}
+
+fn descending(a: *i32, b: *i32): i32 {
+    return b[0] - a[0];
+}
+
+fn main(): i32 {
+    let values: [i32; 5] = [5, 3, 1, 4, 2];
+
+    qsort(&values[0], 5, sizeof(i32), &ascending);
+    print("%d %d %d %d %d\n",
+          values[0], values[1], values[2], values[3], values[4]);
+
+    qsort(&values[0], 5, sizeof(i32), &descending);
+    print("%d %d %d %d %d\n",
+          values[0], values[1], values[2], values[3], values[4]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+1 2 3 4 5
+5 4 3 2 1
+- .exit
+0
+-- */

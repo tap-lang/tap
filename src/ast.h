@@ -164,6 +164,14 @@ typedef struct VarTypeNode {
     ASTNode *type_arguments; // 泛型具名类型的实参列表（VarTypeNode）
     int is_array;
     int is_pointer;
+    // 函数指针：`*fn(i32, i32): i32`。
+    //
+    // 和 is_pointer 互斥 —— 它不是数据指针，解引用 / 下标 / 取元素类型全都不适用。
+    // 单独一个标志位而不是复用 is_pointer，是因为几十处 `is_pointer` 的判断都默认
+    // element_type 非空，混进去会在 validate_var_type、free、dump 这些地方踩空指针。
+    int is_function_pointer;
+    ASTNode *parameter_types;        // 参数类型列表（VarTypeNode）；无参为 NULL
+    struct VarTypeNode *return_type; // 返回类型；NULL 表示不返回值
     uint64_t array_length;
     struct VarTypeNode *element_type; // 数组/指针拥有的递归元素类型
 } VarTypeNode;
@@ -473,6 +481,9 @@ VarTypeNode *create_struct_type(const char *name);
 VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length);
 // 指针类型接管 element_type 的所有权。
 VarTypeNode *create_pointer_type(VarTypeNode *element_type);
+// 函数指针类型接管 parameter_types 链表和 return_type 的所有权。
+VarTypeNode *create_function_pointer_type(ASTNode *parameter_types,
+                                          VarTypeNode *return_type);
 LiteralNode *create_int_literal(uint64_t value);
 LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);

@@ -242,9 +242,46 @@ static ImportNode *parse_import(Parser *parser) {
     return import_node;
 }
 
+static VarTypeNode *parse_type(Parser *parser);
+
+// 解析 `fn(参数类型, ...): 返回类型`，调用方已经吃掉了前面的 `*`。
+//
+// 返回类型是**必填**的：tap 没有 void 返回类型，留空就没有能写出来的语义。
+// C 里 `void (*cb)(int)` 这类回调在 tap 侧写成 `*fn(i32): i32` —— 返回标量的
+// 调用约定和返回 void 一致（调用方直接忽略 rax），实测可用。
+static VarTypeNode *parse_function_pointer_type(Parser *parser) {
+    consume(parser, TOKEN_FN);
+    consume(parser, TOKEN_LPAREN);
+
+    ASTNode *parameter_types = NULL;
+    ASTNode **tail = &parameter_types;
+    if (parser->current_token->type != TOKEN_RPAREN) {
+        for (;;) {
+            ASTNode *parameter = (ASTNode *)parse_type(parser);
+            *tail = parameter;
+            tail = &parameter->next;
+            if (parser->current_token->type != TOKEN_COMMA) break;
+            consume(parser, TOKEN_COMMA);
+        }
+    }
+    consume(parser, TOKEN_RPAREN);
+
+    if (parser->current_token->type != TOKEN_COLON) {
+        free_ast(parameter_types);
+        parser_error(parser, "function pointer type needs a return type, e.g. `*fn(i32): i32`"); // 中文：函数指针类型必须写返回类型
+    }
+    consume(parser, TOKEN_COLON);
+    return create_function_pointer_type(parameter_types, parse_type(parser));
+}
+
 static VarTypeNode *parse_type(Parser *parser) {
     if (parser->current_token->type == TOKEN_MULTIPLY) {
         consume(parser, TOKEN_MULTIPLY);
+        // `*fn(i32, i32): i32` 是函数指针，和 `*T` 数据指针是两种东西。
+        // 类型位置的 `*` 后面只会跟类型，所以看到 `fn` 就能无歧义地分开。
+        if (parser->current_token->type == TOKEN_FN) {
+            return parse_function_pointer_type(parser);
+        }
         VarTypeNode *element_type = parse_type(parser);
         return create_pointer_type(element_type);
     }

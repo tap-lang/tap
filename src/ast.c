@@ -72,6 +72,19 @@ static const char *literal_type_str(enum LiteralType t) {
 }
 
 static void print_var_type(const VarTypeNode *type) {
+    if (type->is_function_pointer) {
+        printf("*fn(");
+        for (ASTNode *param = type->parameter_types; param; param = param->next) {
+            print_var_type((VarTypeNode *)param);
+            if (param->next) printf(", ");
+        }
+        printf(")");
+        if (type->return_type) {
+            printf(": ");
+            print_var_type(type->return_type);
+        }
+        return;
+    }
     if (type->is_array) {
         printf("[");
         print_var_type(type->element_type);
@@ -939,6 +952,9 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->type_arguments = NULL;
     var_type->is_array = 0;
     var_type->is_pointer = 0;
+    var_type->is_function_pointer = 0;
+    var_type->parameter_types = NULL;
+    var_type->return_type = NULL;
     var_type->array_length = 0;
     var_type->element_type = NULL;
     return var_type;
@@ -1008,6 +1024,20 @@ VarTypeNode *create_pointer_type(VarTypeNode *element_type) {
     }
     type->is_pointer = 1;
     type->element_type = element_type;
+    return type;
+}
+
+// 创建函数指针类型节点。
+//
+// `type` 字段只是「标量种类」的占位：指针类型沿用元素类型的种类（`*i32` 的 type 是
+// LITERAL_I32），这里沿用返回类型的种类，让 print 自动挑格式之类的旧路径不至于
+// 拿到一个凭空的值。真正区分类型靠 is_function_pointer。
+VarTypeNode *create_function_pointer_type(ASTNode *parameter_types,
+                                          VarTypeNode *return_type) {
+    VarTypeNode *type = create_var_type(return_type ? return_type->type : LITERAL_I32);
+    type->is_function_pointer = 1;
+    type->parameter_types = parameter_types;
+    type->return_type = return_type;
     return type;
 }
 
@@ -1754,6 +1784,8 @@ void free_ast(ASTNode *node) {
             free(var_type->struct_name);
             free_ast(var_type->type_arguments);
             free_ast((ASTNode *)var_type->element_type);
+            free_ast(var_type->parameter_types);
+            free_ast((ASTNode *)var_type->return_type);
             break;
         }
         case NODE_VAR_DECL: {

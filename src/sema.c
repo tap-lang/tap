@@ -60,10 +60,10 @@ static void pop_symbols_to(SemaContext *context, SemaSymbol *mark) {
     }
 }
 
-// 纯标量：没有结构体 / 枚举 / 数组 / 指针外壳。
+// 纯标量：没有结构体 / 枚举 / 数组 / 指针 / 函数指针外壳。
 static int is_scalar_type(const VarTypeNode *type) {
     return type && !type->struct_name && !type->enum_name &&
-           !type->is_array && !type->is_pointer;
+           !type->is_array && !type->is_pointer && !type->is_function_pointer;
 }
 
 static FunctionNode *find_function(ProgramNode *program, const char *name) {

@@ -11,8 +11,26 @@ static void clone_type_arguments(VarTypeNode *destination, ASTNode *arguments) {
     }
 }
 
+// 深拷贝一个参数类型链表。
+static ASTNode *clone_type_list(ASTNode *types) {
+    ASTNode *head = NULL;
+    ASTNode **tail = &head;
+    for (ASTNode *type = types; type; type = type->next) {
+        ASTNode *copy = (ASTNode *)tap_type_clone((VarTypeNode *)type);
+        *tail = copy;
+        tail = &copy->next;
+    }
+    return head;
+}
+
 VarTypeNode *tap_type_clone(const VarTypeNode *source) {
     if (!source) return NULL;
+    // 函数指针要放在 is_pointer 之前判断：两者互斥，但顺序写反了会漏。
+    if (source->is_function_pointer) {
+        return create_function_pointer_type(
+            clone_type_list(source->parameter_types),
+            tap_type_clone(source->return_type));
+    }
     if (source->is_pointer) {
         return create_pointer_type(tap_type_clone(source->element_type));
     }
@@ -35,6 +53,20 @@ VarTypeNode *tap_type_clone(const VarTypeNode *source) {
 
 int tap_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     if (!left || !right) return left == right;
+    // 函数指针按签名逐项比较：参数个数、每个参数类型、返回类型都要一致。
+    if (left->is_function_pointer || right->is_function_pointer) {
+        if (!left->is_function_pointer || !right->is_function_pointer) return 0;
+        ASTNode *left_param = left->parameter_types;
+        ASTNode *right_param = right->parameter_types;
+        while (left_param && right_param) {
+            if (!tap_type_equal((VarTypeNode *)left_param,
+                                (VarTypeNode *)right_param)) return 0;
+            left_param = left_param->next;
+            right_param = right_param->next;
+        }
+        if (left_param || right_param) return 0;
+        return tap_type_equal(left->return_type, right->return_type);
+    }
     if (left->is_pointer != right->is_pointer ||
         left->is_array != right->is_array) {
         return 0;

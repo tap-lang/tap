@@ -1,0 +1,17 @@
+// 函数指针按完整签名比较：参数个数或类型不同都不算同一种类型。
+// 这里把 `fn(i32, i32): i32` 赋给 `*fn(i32): i32`，必须报错而不是悄悄截断。
+fn add(a: i32, b: i32): i32 {
+    return a + b;
+}
+
+fn main(): i32 {
+    let op: *fn(i32): i32 = &add;
+    return op(1);
+}
+
+/** -- test
+- .stderr
+error: function pointer expression type mismatch
+- .exit
+1
+-- */

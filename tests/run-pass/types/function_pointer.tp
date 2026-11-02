@@ -1,0 +1,83 @@
+// 函数指针基础能力（P1 §3.3）：取地址、赋值、间接调用、作参数、作返回值、和 null 比较。
+//
+// 语法是 `*fn(参数类型, ...): 返回类型`，和 `*T` 数据指针是两种类型 —— 类型位置的 `*`
+// 后面跟 `fn` 就按函数指针解析，不会和 `*` 解引用混淆。
+fn double_it(value: i32): i32 {
+    return value * 2;
+}
+
+fn negate(value: i32): i32 {
+    return -value;
+}
+
+fn apply(callback: *fn(i32): i32, value: i32): i32 {
+    return callback(value);
+}
+
+fn pick(want_double: bool): *fn(i32): i32 {
+    if (want_double) {
+        return &double_it;
+    }
+    return &negate;
+}
+
+struct Handler {
+    name: String,
+    run: *fn(i32): i32,
+}
+
+fn main(): i32 {
+    // 取函数地址 + 间接调用
+    let op: *fn(i32): i32 = &double_it;
+    print("%d\n", op(21));
+
+    // 重新赋值成另一个函数
+    op = &negate;
+    print("%d\n", op(21));
+
+    // 当参数传
+    print("%d\n", apply(&double_it, 5));
+    print("%d\n", apply(op, 5));
+
+    // 当返回值传
+    let chosen: *fn(i32): i32 = pick(true);
+    print("%d\n", chosen(6));
+
+    // null 表示「没设置回调」
+    let unset: *fn(i32): i32 = null;
+    if (unset == null) {
+        print("unset\n");
+    }
+
+    // 结构体字段里的函数指针要先取到变量 —— 调用点只认标识符接收者，
+    // `handler.run(7)` 会被当成「类型 Handler 的方法 run」，编译期就报错。
+    let handler: Handler = Handler { name: "h", run: &double_it };
+    let run: *fn(i32): i32 = handler.run;
+    print("%s %d\n", handler.name, run(7));
+
+    // 无类型标注时也要推断出函数指针（不能退化成标量）
+    let copy = op;
+    print("%d\n", copy(9));
+
+    // 数组元素同理：能存，但要先取到变量再调用
+    let table: [*fn(i32): i32; 2] = [&double_it, &negate];
+    let first: *fn(i32): i32 = table[0];
+    let second: *fn(i32): i32 = table[1];
+    print("%d %d\n", first(3), second(3));
+    return 0;
+}
+
+/** -- test
+- .stdout
+42
+-21
+10
+-5
+12
+unset
+h 14
+-9
+6 -3
+- .exit
+0
+-- */

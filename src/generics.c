@@ -149,6 +149,25 @@ static int unify_type_params(ASTNode *type_params, const VarTypeNode *pattern,
         if (only_unbound && existing) return 1;
         return bind_type(bindings, parameter, actual);
     }
+    if (pattern->is_function_pointer || actual->is_function_pointer) {
+        if (!pattern->is_function_pointer || !actual->is_function_pointer) return 0;
+        ASTNode *pattern_parameter = pattern->parameter_types;
+        ASTNode *actual_parameter = actual->parameter_types;
+        while (pattern_parameter && actual_parameter) {
+            if (!unify_type_params(type_params,
+                                   (VarTypeNode *)pattern_parameter,
+                                   (VarTypeNode *)actual_parameter,
+                                   bindings, only_unbound)) return 0;
+            pattern_parameter = pattern_parameter->next;
+            actual_parameter = actual_parameter->next;
+        }
+        if (pattern_parameter || actual_parameter) return 0;
+        if (!pattern->return_type || !actual->return_type) {
+            return pattern->return_type == actual->return_type;
+        }
+        return unify_type_params(type_params, pattern->return_type,
+                                 actual->return_type, bindings, only_unbound);
+    }
     if (pattern->is_pointer != actual->is_pointer ||
         pattern->is_array != actual->is_array) {
         return 0;
@@ -208,6 +227,19 @@ static VarTypeNode *substitute_type(FunctionNode *function,
     if (parameter) {
         TypeBinding *binding = find_binding(bindings, parameter);
         return binding ? tap_type_clone(binding->type) : tap_type_clone(source);
+    }
+    if (source->is_function_pointer) {
+        ASTNode *parameters = NULL;
+        ASTNode **tail = &parameters;
+        for (ASTNode *parameter = source->parameter_types; parameter;
+             parameter = parameter->next) {
+            ASTNode *copy = (ASTNode *)substitute_type(
+                function, (VarTypeNode *)parameter, bindings);
+            *tail = copy;
+            tail = &copy->next;
+        }
+        return create_function_pointer_type(parameters,
+            substitute_type(function, source->return_type, bindings));
     }
     if (source->is_pointer) {
         return create_pointer_type(
