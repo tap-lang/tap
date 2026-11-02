@@ -9,7 +9,7 @@ tap 的 FFI 入口只有一个：`extern fn`。它只生成 LLVM 函数声明，
 不加模块前缀，所以直接绑 C 符号。
 
 **关键结论：tap 现在就能调 C。** `tests/run-pass/types/c_string.tp` 已经在调 `strlen`；
-加上 P0 之后，`tap run -lz hello.tp` 也能调第三方库（`tests/run-pass/extern/link_lib.tp`）。
+加上 P0 之后，`tap run -lz hello.tp` 也能调第三方库（`tests/run-pass/extern/link_zlib.tp`）。
 
 ## 1. 现状：已经能做什么
 
@@ -151,7 +151,7 @@ note: check that the library is installed and that -L points at the directory co
 
 ### 2.6 回归用例
 
-`tests/run-pass/extern/link_lib.tp`：`-lz` 链 zlib，调 `zlibVersion()` 和
+`tests/run-pass/extern/link_zlib.tp`：`-lz` 链 zlib，调 `zlibVersion()` 和
 `compressBound()`，期望值写死（`compressBound` 的公式和 zlib 版本无关）。
 
 用例通过内嵌的 `- .flags` 段把编译选项传给 `tap run`，这个段会让用例强制走
@@ -159,6 +159,12 @@ native 模式 —— `lli` 不链接，带 `-l` 的用例在 fast 模式下没�
 zlib 在 macOS SDK 和多数 Linux 发行版上现成（Linux 上要装 `zlib1g-dev` 之类才有
 `libz.so` 符号链接），MSVC / MinGW / Cygwin 的工具链不带它，
 所以用例用 `- .skip-on windows` 整条跳过，报 `SKIP` 而不是 `FAIL`。
+
+`tests/run-pass/extern/link_winmm.tp`：`-lwinmm` 链 Windows 自带的多媒体库，
+调 `timeGetTime()` 验证链接成功 + 符号解析成功 + 返回值合理。
+winmm 在 Windows NT 起全系自带（MinGW 的 `libwinmm.a`、MSVC 的 `winmm.lib`），
+不需要额外安装，补上了 `link_zlib.tp` 在 Windows 上整条 skip 留下的覆盖缺口。
+用例用 `- .skip-on darwin` + `- .skip-on linux` 在非 Windows 平台跳过。
 
 ## 3. 缺口与方案
 
@@ -170,7 +176,7 @@ zlib 在 macOS SDK 和多数 Linux 发行版上现成（Linux 上要装 `zlib1g-
 - ✅ 四处定长 argv 改成动态构建，用户库排在 object 和 runtime 之后
 - ✅ macOS 的 `ld` 分支把 `-Wl,` 拆成裸参数
 - ✅ 链接失败补 `note:` 提示
-- ✅ 回归用例 `tests/run-pass/extern/link_lib.tp`
+- ✅ 回归用例 `tests/run-pass/extern/link_zlib.tp`
 - ⚠️ **只在 macOS 上实测过**。Linux / Cygwin / MinGW / MSVC 四个分支的代码是按各自
   驱动的约定写的，但没在真机上跑过，需要过一遍 CI
 - ⚠️ MSVC 的 `-l` 按 `.lib` 语义走（`-lsqlite3` → `sqlite3.lib`），和 GNU 的
@@ -320,7 +326,8 @@ UCRT64 / Cygwin），因为 FFI 的坑几乎全部是平台 ABI 差异。
 
 | 阶段 | 用例 | 验证点 | 状态 |
 |---|---|---|---|
-| P0 | `tests/run-pass/extern/link_lib.tp` | 链接一个真实第三方库并调用 | ✅ macOS / Linux |
+| P0 | `tests/run-pass/extern/link_zlib.tp` | 链接一个真实第三方库并调用 | ✅ macOS / Linux |
+| P0 | `tests/run-pass/extern/link_winmm.tp` | Windows 自带库（winmm）链接并调用 | ✅ Windows (UCRT64) |
 | P0 | 同上 | 库顺序正确（`-l` 在 obj 之后） | ✅ |
 | P0 | 同上 | `-l` 不存在时给出可读的错误，不是裸链接器报错 | ⚠️ 只手工验证 |
 | P1 全局 | `tests/run-pass/extern/global.tp` | 读 + 写 extern 全局 | 未写 |

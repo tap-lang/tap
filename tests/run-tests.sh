@@ -11,6 +11,15 @@ case $(uname -s) in
         ;;
 esac
 
+# MinGW / MSYS2 的 mktemp -d 默认用 Windows 风格 $TMPDIR（C:\Users\...），
+# awk 把反斜杠当转义序列导致内嵌期望解析失败。强制用 POSIX /tmp 规避。
+case $(uname -s) in
+    MINGW*|MSYS*)
+        TMPDIR=/tmp
+        export TMPDIR
+        ;;
+esac
+
 TEST_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$TEST_ROOT/.." && pwd)
 COMPILER=${1:-"$PROJECT_ROOT/build/tap"}

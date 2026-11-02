@@ -3,6 +3,20 @@
 // zlib 在 macOS SDK 和绝大多数 Linux 发行版上都是现成的；MSVC / MinGW / Cygwin
 // 的工具链不自带 zlib，所以那边整条跳过 —— 这不是功能缺失，是「机器上没这个库」。
 // `.flags` 会让用例强制走 native 模式（lli 不链接）。
+//
+// 完整编译命令（手动复现，等价于测试框架按 `.flags` 段拼出来的那行）：
+//
+//   ./build/tap run -o /tmp/link_zlib -lz tests/run-pass/extern/link_zlib.tp
+//
+// tap 展开后实际执行的链接命令（<obj> 是 tap 在临时目录生成的 program.o，
+// build/libtap_runtime.a 由 configure_runtime 相对编译器目录解析出来）：
+//
+//   macOS: ld -o <exe> <obj> build/libtap_runtime.a -lz -lSystem \
+//              -syslibroot <sdk> -arch arm64 -platform_version macos <ver> <ver>
+//   Linux: cc -no-pie <obj> build/libtap_runtime.a -o <exe> -lz -lm
+//
+// 用户库（-lz）固定在 Runtime 之后、系统库（-lSystem / -lm）之前 —— 静态链接的
+// 符号解析是单向的，顺序反了就解析不到 compressBound。
 extern fn strlen(value: c_string): uint;
 extern fn zlibVersion(): c_string;
 extern fn compressBound(source_len: uint): uint;

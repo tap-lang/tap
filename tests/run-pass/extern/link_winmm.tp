@@ -1,0 +1,52 @@
+// Windows 链接通道回归用例：验证 `-l` 能把 Windows 自带库链进来并调到符号。
+//
+// link_zlib.tp 用 zlib，但 zlib 在 Windows 工具链上不自带，整条 skip 了。
+// 这个用例补上 Windows 的覆盖：winmm 是 Windows NT 起全系自带的多媒体库，
+// MinGW（libwinmm.a）和 MSVC（winmm.lib）都有，不需要额外安装。
+// timeGetTime() 返回系统启动以来的毫秒数（DWORD = u32），两次调用必然递增，
+// 可以据此验证「链接成功 + 符号解析成功 + 调用返回了合理值」。
+//
+// 完整编译命令（手动复现，等价于测试框架按 `.flags` 段拼出来的那行）：
+//
+//   ./build/tap run -o /tmp/link_winmm.exe -lwinmm tests/run-pass/extern/link_winmm.tp
+//
+// tap 展开后实际执行的链接命令（<obj> 是 tap 在临时目录生成的 program.o）：
+//
+//   MinGW-w64: gcc <obj> build/libtap_runtime.a -o <exe> -lwinmm -lws2_32
+//   Cygwin:    clang <obj> build/libtap_runtime.a -o <exe> -lwinmm -lm
+//   MSVC:      clang-cl /nologo /MT /clang:-rtlib=compiler-rt <obj> build/tap_runtime.lib
+//                        /Fe<exe> ws2_32.lib winmm.lib
+//
+// MSVC 那行有两处不同：`-lwinmm` 被翻译成 winmm.lib 当输入文件（不加 -l 前缀），
+// ws2_32.lib 是 Runtime 自带的 winsock 依赖，固定排在用户库之前。
+extern fn timeGetTime(): u32;
+
+fn main(): i32 {
+    // 库没链上的话，这一行连可执行文件都出不来。
+    let t1: u32 = timeGetTime();
+    let t2: u32 = timeGetTime();
+
+    // 两次读取必然 >= 0；t2 >= t1 因为计时器单调递增。
+    // 不写死具体值（机器速度不同），只验证「调用成功 + 值合理」。
+    if (t2 >= t1) {
+        print("winmm ok\n");
+    }
+
+    // timeGetTime 的返回值是 u32，打印出来确认不是垃圾值。
+    // 范围检查：系统启动时间至少 > 0（机器开了才能跑测试）。
+    print("%u\n", t1 > 0);
+    return 0;
+}
+
+/** -- test
+- .flags
+-lwinmm
+- .skip-on
+darwin
+linux
+- .stdout
+winmm ok
+1
+- .exit
+0
+-- */
