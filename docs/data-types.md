@@ -335,6 +335,29 @@ match (message) {
 }
 ```
 
+把分支放进函数里，每个分支 `return` 出自己的结果：
+
+```text
+fn area(shape: Shape): f64 {
+    match (shape) {
+        Shape.Circle(radius) => {
+            return 3.141592653589793 * radius * radius;
+        }
+        Shape.Rect(width, height) => {
+            return width * height;
+        }
+        Shape.Empty => {
+            return 0.0;
+        }
+    }
+    return 0.0;
+}
+```
+
+`match` 已经覆盖全部成员，编译器据此认定函数的所有路径都返回值，所以末尾那句
+`return 0.0;` 其实执行不到，删掉同样能通过检查（对比之下，`if` 少一个分支就会报
+`may exit without returning a value`）。
+
 **表达式形式**：分支写成 `模式 => 值` 时，整个 `match` 求出一个值。分支之间可以用逗号分隔，
 也可以不写：
 

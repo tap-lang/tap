@@ -224,6 +224,11 @@ xcopy /y /q "std\*.tp"           "%PKG_DIR%\share\tap\std\" >nul
 copy /y "README.md"              "%PKG_DIR%\" >nul
 copy /y "LICENSE"                "%PKG_DIR%\" >nul
 
+REM README.md is mostly a doc index, so ship the docs it points at - otherwise
+REM every link in the packaged README is dead.
+mkdir "%PKG_DIR%\docs" 2>nul
+xcopy /y /q "docs\*.md"          "%PKG_DIR%\docs\" >nul
+
 REM Linker. run.c prefers <exe>\ld.lld.exe over PATH, and derives the CRT
 REM directory from it as <exe>\..\lib - which is exactly where the objects and
 REM import libs below land.

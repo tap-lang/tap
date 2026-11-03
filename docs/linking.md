@@ -201,6 +201,7 @@ libgcc 的只有 4 个符号，全部由 Runtime 自己提供（`runtime/src/run
 所以 `lib\` 里直接带 `crt2.o`、`libmingw32.a`、`libmsvcrt.a` 等。代价是
 `libLLVM-<ver>.dll` 有 146 MB，还要连带 `libxml2` / `libffi` / `libiconv` /
 `libzstd` / `zlib` / `libstdc++` / `libgcc_s_seh-1` 这一串 DLL，整个包约 177 MB。
+包内完整布局和冒烟步骤见[构建与安装](build.md#打包成可分发目录)。
 
 ### Cygwin
 
