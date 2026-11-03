@@ -32,6 +32,11 @@ extern char **environ;
 static char runtime_static_path[RUN_PATH_MAX];
 static char runtime_shared_path[RUN_PATH_MAX];
 
+// tap.exe 自己所在的目录（规范化后），同样只算一次。
+// 分发包里连接器、compiler-rt builtins、CRT 导入库都按这个位置摆放，
+// 所以链接时要先在这里找，找不到才回头问 PATH 和注册表。
+static char compiler_install_dir[RUN_PATH_MAX];
+
 // `-v` 的命令回显开关。见 run.h 里的说明。
 static int verbose_commands = 0;
 
@@ -161,6 +166,7 @@ void configure_runtime(const char *compiler_path) {
 
     char compiler_dir[RUN_PATH_MAX];
     compiler_directory(compiler_path, compiler_dir, sizeof(compiler_dir));
+    snprintf(compiler_install_dir, sizeof(compiler_install_dir), "%s", compiler_dir);
     const char *configured_dir = getenv("TAP_RUNTIME_PATH");
     const char *directories[3] = {
         configured_dir && *configured_dir ? configured_dir : compiler_dir,
@@ -914,7 +920,20 @@ static int split_parent_directory(
 static int find_mingw_link_tools(char *linker_path, size_t linker_path_size,
                                  char *crt_directory, size_t crt_directory_size) {
     char lld_path[RUN_PATH_MAX];
-    if (!find_program_on_path("ld.lld.exe", lld_path, sizeof(lld_path))) return 0;
+    int found_lld = 0;
+
+    // ① tap.exe 同目录的 ld.lld.exe（分发包布局：bin\ld.lld.exe + lib\ 里的 CRT）。
+    if (compiler_install_dir[0]) {
+        char beside[RUN_PATH_MAX];
+        int written = snprintf(beside, sizeof(beside), "%s/ld.lld.exe", compiler_install_dir);
+        if (written > 0 && (size_t)written < sizeof(beside) && is_executable_file(beside)) {
+            snprintf(lld_path, sizeof(lld_path), "%s", beside);
+            found_lld = 1;
+        }
+    }
+
+    // ② PATH 上的 ld.lld.exe（装了 MSYS2 / LLVM 的机器）。
+    if (!found_lld && !find_program_on_path("ld.lld.exe", lld_path, sizeof(lld_path))) return 0;
 
     char roots[2][RUN_PATH_MAX];
     int root_count = 0;
@@ -998,10 +1017,42 @@ static const char *msvc_machine_option(void) {
 //
 // builtins 的位置是 <llvm>/lib/clang/<ver>/lib/windows/clang_rt.builtins-<arch>.lib，
 // 版本号随 LLVM 版本变，所以从 lld-link 所在目录反推、遍历版本目录。
+//
+// 查找顺序：先看 tap.exe 旁边（分发包把 lld-link.exe 和 tap.exe 一起放在 bin\，
+// builtins 放在 lib\compiler-rt\），再走 PATH + 目录反推。分发包要能在没装 LLVM
+// 的机器上工作，这一步不能少。
 static int find_msvc_lld_link(char *linker_path, size_t linker_path_size,
                               char *builtins_path, size_t builtins_path_size) {
     char lld_path[RUN_PATH_MAX];
-    if (!find_program_on_path("lld-link.exe", lld_path, sizeof(lld_path))) return 0;
+    int found_lld = 0;
+
+    // ① tap.exe 同目录的 lld-link.exe（分发包布局）。
+    if (compiler_install_dir[0]) {
+        char beside[RUN_PATH_MAX];
+        int written = snprintf(beside, sizeof(beside), "%s/lld-link.exe", compiler_install_dir);
+        if (written > 0 && (size_t)written < sizeof(beside) && is_executable_file(beside)) {
+            snprintf(lld_path, sizeof(lld_path), "%s", beside);
+            found_lld = 1;
+        }
+    }
+
+    // ② PATH 上的 lld-link.exe（装了 LLVM 的机器）。
+    if (!found_lld && !find_program_on_path("lld-link.exe", lld_path, sizeof(lld_path))) return 0;
+
+    // 分发包的 builtins 位置是固定的，不必再按 LLVM 版本目录去猜。
+    if (compiler_install_dir[0]) {
+        char bundled[RUN_PATH_MAX];
+        int written = snprintf(bundled, sizeof(bundled),
+                               "%s/../lib/compiler-rt/clang_rt.builtins-%s.lib",
+                               compiler_install_dir, msvc_builtins_arch());
+        if (written > 0 && (size_t)written < sizeof(bundled) && runtime_file_exists(bundled)) {
+            if (!_fullpath(builtins_path, bundled, builtins_path_size)) {
+                snprintf(builtins_path, builtins_path_size, "%s", bundled);
+            }
+            snprintf(linker_path, linker_path_size, "%s", lld_path);
+            return 1;
+        }
+    }
 
     char bin_dir[RUN_PATH_MAX];
     if (!split_parent_directory(lld_path, bin_dir, sizeof(bin_dir))) return 0;
@@ -1080,6 +1131,18 @@ static void report_link_failure(int status, const LinkOptions *link_options) {
         "containing it\n"); // 中文：检查库是否已安装，-L 是否指向库所在目录
 }
 
+// 工具链整个不在 PATH 上时的提示。
+//
+// 直接 spawn 只会得到 `clang-cl: No such file or directory` —— 从这行看不出缺的是
+// 「编译器」还是「链接器」，也看不出该装什么。分发出去的 tap 只带 LLVM-C.dll 和
+// Runtime，本来就不含工具链，所以这条提示必须自己说清楚缺什么、怎么补。
+static int report_missing_linker(const char *tried, const char *hint) {
+    fprintf(stderr, "error: no linker toolchain found (tried: %s)\n", tried); // 中文：找不到可用的链接工具链
+    fprintf(stderr, "note: %s\n", hint);
+    fprintf(stderr, "note: run with -v to see the full link command\n"); // 中文：加 -v 可查看完整链接命令
+    return 1;
+}
+
 // 把目标文件和 Runtime 静态库链接成可执行文件。
 static int link_object_file(const char *object_file, const char *exe_file, int static_link,
                             const LinkOptions *link_options) {
@@ -1144,6 +1207,13 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
         // 退回 gcc 驱动：i128 的 __divti3 等符号由 libgcc 提供；MinGW 没有独立的
         // libm（pow 在 CRT 里）。
         const char *linker = "gcc";
+        char gcc_path[RUN_PATH_MAX];
+        if (!find_program_on_path("gcc.exe", gcc_path, sizeof(gcc_path))) {
+            link_argv_free(&argv);
+            return report_missing_linker("ld.lld, gcc",
+                "install a MinGW-w64 toolchain (it provides gcc and ld) and put its bin "
+                "directory on PATH");
+        }
         link_argv_push(&argv, linker);
         if (static_link) link_argv_push(&argv, "-static");
         link_argv_push(&argv, object_file);
@@ -1197,6 +1267,15 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
             return 1;
         }
         const char *linker = "clang-cl";
+        // 走到这里说明 lld-link 那条路没通（PATH 上没有 lld-link.exe，或有它但找不到
+        // 配套的 compiler-rt builtins）。clang-cl 也没有就真的是没有工具链了。
+        char clang_cl_path[RUN_PATH_MAX];
+        if (!find_program_on_path("clang-cl.exe", clang_cl_path, sizeof(clang_cl_path))) {
+            link_argv_free(&argv);
+            return report_missing_linker("lld-link, clang-cl",
+                "tap needs a linker toolchain: install LLVM (provides lld-link) or the MSVC "
+                "build tools, then put its bin directory on PATH");
+        }
         // clang-cl 默认按 MSVC 目标链接，不会自动加入 compiler-rt 的 builtins。i128 的
         // 除法/取模会生成 __divti3/__modti3，显式选择 compiler-rt 才能让这些符号在 Windows
         // LLVM 安装中被解析；否则普通的 i128 测试会在最终链接阶段失败。

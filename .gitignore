@@ -10,6 +10,7 @@ build/
 build-static/
 build-msvc/
 out/
+dist/
 
 CMakeSettings.json
 

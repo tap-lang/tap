@@ -130,7 +130,14 @@ PATH 上找不到 `lld-link.exe`，**或者**从它所在目录反推不到
 - `tap -v` 回显的链接行就是上面那条，里面没有 clang-cl
 - 把 `clang-cl.exe` 改名后，`hello.tp` 和 `mixed_signedness.tp`（i128 除法）都能链接并运行
 - 把 `lld-link.exe` 改名后，自动退回 clang-cl，同样正常
-- `msvc-build.bat test-native`：240 用例 239 通过 / 1 跳过 / 0 失败
+- `scripts\msvc-build.bat test-native`：240 用例 239 通过 / 1 跳过 / 0 失败
+- **不需要 `vcvars`**：把 `PATH` 压到只剩 `C:\Windows\system32`、`LIB` 清空，`lld-link`
+  仍然找得到 `libcmt.lib`（只在 MSVC 安装目录里）和 `ws2_32.lib`（只在 SDK 里）——
+  它自己按注册表 / `vswhere` 定位这两处 `lib` 目录
+- **分发包带连接器**：`scripts\msvc-build.bat package` 把 `lld-link.exe` 和
+  `lib\compiler-rt\clang_rt.builtins-*.lib` 一起打进去，`run.c` 优先用
+  `<exe>/lld-link.exe`，所以目标机不用装 LLVM。微软的 CRT / SDK 导入库**不打包**
+  （不可再分发），仍靠 lld-link 自己查注册表
 
 ### MinGW-w64：MINGW64 / UCRT64
 
@@ -183,6 +190,17 @@ libgcc 的只有 4 个符号，全部由 Runtime 自己提供（`runtime/src/run
 
 实测：把 `gcc` 换成一个必然失败的同名程序后，`TEST_RUN_MODE=native` 全量 240 个用例
 仍然 239 通过 / 1 跳过 / 0 失败 —— 说明链接路径确实不碰 gcc。
+
+#### 分发包
+
+`scripts\mingw-build.bat package` 把 `ld.lld.exe` 放进 `bin\`、CRT 目标文件和导入库放进
+`lib\`，`run.c` 先找 `<exe>\ld.lld.exe`（再退 PATH），CRT 目录按 `<exe>\..\lib`
+反推 —— 正好命中这个布局，不需要改探测逻辑。
+
+和 MSVC 包不同，这个包**能真正自包含**：mingw-w64 的 CRT 和导入库是可再分发的，
+所以 `lib\` 里直接带 `crt2.o`、`libmingw32.a`、`libmsvcrt.a` 等。代价是
+`libLLVM-<ver>.dll` 有 146 MB，还要连带 `libxml2` / `libffi` / `libiconv` /
+`libzstd` / `zlib` / `libstdc++` / `libgcc_s_seh-1` 这一串 DLL，整个包约 177 MB。
 
 ### Cygwin
 
