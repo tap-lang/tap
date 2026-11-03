@@ -234,11 +234,15 @@ jobs:
         run: cmake --build build-msvc --config Release --parallel 2
 
       - name: Test
-        shell: pwsh
+        # 直接跑 shell harness 而不是 ctest：ctest 把用例输出吞掉，只在失败时打印，
+        # 看不到 run-tests.sh 的实时进度（Testing [....] 12/240）。这里和
+        # mingw64/ucrt64 保持同一套调用方式。
+        # Visual Studio 生成器把产物放在 build-msvc\Release\，不是 ./build/。
+        shell: bash
         env:
           TEST_JOBS: "4"
           TEST_RUN_MODE: native
-        run: ctest --test-dir build-msvc --build-config Release --output-on-failure
+        run: sh tests/run-tests.sh build-msvc/Release/tap.exe
 
       - name: Save native LLVM cache
         if: steps.llvm-cache.outputs.cache-hit != 'true'
