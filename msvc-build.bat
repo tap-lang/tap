@@ -15,12 +15,12 @@ REM Usage:
 REM   msvc-build.bat configure     one-time CMake configure (also auto-run by build)
 REM   msvc-build.bat build         incremental build (tap.exe + tap_runtime + shared)
 REM   msvc-build.bat rebuild       clean + configure + build
-REM   msvc-build.bat native-test   full run-pass/compile-fail suite (RECOMMENDED)
+REM   msvc-build.bat test-native   full run-pass/compile-fail suite (RECOMMENDED)
 REM   msvc-build.bat test          same suite, fast mode (lli; unreliable here)
 REM   msvc-build.bat ctest         CMake CTest (fast mode, needs lli)
 REM   msvc-build.bat clean         remove build outputs
 REM
-REM Use native-test, not test: the lli binaries available on this machine
+REM Use test-native, not test: the lli binaries available on this machine
 REM (Cygwin) misbehave with the MSVC-built tap_runtime.dll - programs exit 0
 REM with no output. docs/test.md documents the same lli limitations.
 REM
@@ -28,7 +28,7 @@ REM Prerequisites (already present on this machine):
 REM   VS 2022 Community  D:\Program Files\Microsoft Visual Studio\2022\Community
 REM   Windows SDK 10.0.26100.0     D:\Windows Kits\10
 REM   LLVM-C.lib (for tap.exe)     E:\llvm-msvc-dev
-REM   clang-cl (links user programs) D:\dev\LLVM\bin
+REM   lld-link (links user programs; clang-cl is the fallback) D:\dev\LLVM\bin
 REM ============================================================================
 
 setlocal
@@ -49,8 +49,10 @@ set "BUILD_DIR=out\build\x64-Release"
 REM Headers and libraries for cl.exe (manual vcvars replacement).
 set "INCLUDE=%MSVC_ROOT%\include;%WIN_KITS%\Include\%WIN_KITS_VER%\ucrt;%WIN_KITS%\Include\%WIN_KITS_VER%\um;%WIN_KITS%\Include\%WIN_KITS_VER%\shared"
 set "LIB=%MSVC_ROOT%\lib\x64;%WIN_KITS%\Lib\%WIN_KITS_VER%\ucrt\x64;%WIN_KITS%\Lib\%WIN_KITS_VER%\um\x64"
-REM cl.exe must be on PATH so ninja can invoke it; clang-cl links user programs
-REM in native-test mode, so put its bin on PATH too.
+REM cl.exe must be on PATH so ninja can invoke it; tap links user programs with
+REM lld-link in native test mode, so its bin must be on PATH too. lld-link needs
+REM the compiler-rt builtins next to it (<LLVM>\lib\clang\<ver>\lib\windows) for
+REM i128 division; without them tap falls back to clang-cl.
 REM MSYS2's usr\bin goes AFTER the MSVC/LLVM entries but BEFORE the inherited
 REM PATH: cl.exe must still resolve the real link.exe (MSYS ships a coreutils
 REM link.exe that would hijack linking), while find/gawk/sed must resolve to
@@ -86,10 +88,10 @@ if "%1"=="build"       goto build
 if "%1"=="rebuild"     goto rebuild
 if "%1"=="ctest"       goto ctest
 if "%1"=="test"        goto test
-if "%1"=="native-test" goto native-test
+if "%1"=="test-native" goto test-native
 if "%1"=="clean"       goto clean
 
-echo Usage: %0 [configure^|build^|rebuild^|ctest^|test^|native-test^|clean]
+echo Usage: %0 [configure^|build^|rebuild^|ctest^|test^|test-native^|clean]
 goto end
 
 :configure
@@ -125,7 +127,7 @@ if errorlevel 1 goto end
 "%MSYS_SH%" "%PROJ_POSIX%/tests/run-tests.sh" "%PROJ_POSIX%/out/build/x64-Release/tap.exe"
 goto end
 
-:native-test
+:test-native
 call :ensure_configured
 if errorlevel 1 goto end
 call :build_impl

@@ -127,10 +127,12 @@ fn main(): i32 {
 | Linux | `cc` | `-lfoo` | `-Ldir` | `-Wl,a,b`（驱动自己拆） |
 | Cygwin | `clang` | `-lfoo` | `-Ldir` | `-Wl,a,b` |
 | MinGW-w64 | `ld.lld`（找不到时 `gcc`） | `-lfoo` | `-Ldir` | `a b`（`ld.lld` 同样不认 `-Wl,`；回退到 gcc 时才用 `-Wl,a,b`） |
-| MSVC | `clang-cl` | `foo.lib`（已有 `.lib` 后缀则不重复加） | `/link /LIBPATH:dir` | `/link <arg>`（要写 link.exe 的写法） |
+| MSVC | `lld-link`（找不到时 `clang-cl`） | `foo.lib`（已有 `.lib` 后缀则不重复加） | `/LIBPATH:dir` | `<arg>`（要写 link.exe 的写法） |
 
-MSVC 那一行是唯一语义有偏差的：clang-cl 把库当输入文件，`-L` / 裸参数只能进
-`/link` 段，而 `/link` 之后的一切都归 link.exe，所以这一段必须放在最后。
+MSVC 那一行是唯一语义有偏差的：`-lfoo` 得翻译成 `foo.lib` 当输入文件。
+直接调 `lld-link` 时 `-L` / 裸参数就是 `/LIBPATH:dir` 和 link.exe 风格的原样参数；
+只有回退到 `clang-cl` 时才需要把这两类塞进 `/link` 段（`/link` 之后的一切都归
+link.exe，所以那段必须放在最后）。
 
 ### 2.4 链接失败时的提示
 

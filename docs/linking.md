@@ -56,7 +56,7 @@ tap: keeping temporary files in /var/folders/…/tap-XJzyfn
 |---|---|---|---|
 | macOS | `ld`（直接调，不经 cc） | `libtap_runtime.a` | `-lSystem`、`-syslibroot`、`-arch`、`-platform_version` |
 | Linux | `cc` | `libtap_runtime.a` | `-no-pie`、`-lm` |
-| MSVC | `clang-cl` | `tap_runtime.lib` | `/MT`、`/clang:-rtlib=compiler-rt`、`/Fe`、`ws2_32.lib` |
+| MSVC | `lld-link`（直接调，找不到时退回 `clang-cl`） | `tap_runtime.lib` | `/machine:x64`、`/subsystem:console`、`/out:`、`ws2_32.lib`、`clang_rt.builtins-*.lib` |
 | MINGW64 | `ld.lld`（找不到时退回 `gcc`） | `libtap_runtime.a` | `-m i386pep`、显式 `crt2.o`/`crtend.o`、`-lws2_32`（**不加 `-lm`、不加 `-lgcc`**） |
 | UCRT64 | 同上 | `libtap_runtime.a` | 同上，命令完全一致 |
 | Cygwin | `clang` | `libtap_runtime.a` | `-lm`（**不加 `-rtlib=`、不加 `-no-pie`**） |
@@ -95,16 +95,42 @@ cc -static -no-pie prog.o libtap_runtime.a -o prog -lm   # --static
 ### MSVC
 
 ```bat
+:: 首选：直接调 lld-link（不需要 clang-cl）
+lld-link /nologo /machine:x64 /subsystem:console /out:prog.exe ^
+    prog.obj tap_runtime.lib ws2_32.lib ^
+    "<LLVM>\lib\clang\<ver>\lib\windows\clang_rt.builtins-x86_64.lib"
+
+:: 回退：找不到 lld-link 或它配套的 builtins 时仍用 clang-cl
 clang-cl /nologo /MT /clang:-rtlib=compiler-rt prog.obj tap_runtime.lib /Feprog.exe ws2_32.lib
 ```
 
-- 用 `clang-cl` 而非 `link.exe`：能直接吃 LLVM 生成的 obj。
-- `/MT` 必须和 Runtime 库一致（CMake 里 `MSVC_RUNTIME_LIBRARY=MultiThreaded`），
-  否则 CRT 混用。
-- `/clang:-rtlib=compiler-rt`：i128 除法/取模会生成 `__divti3`/`__modti3`，
-  clang-cl 默认不自动加 compiler-rt 的 builtins，必须显式选。
+- **CRT 不在命令行里**：`tap_runtime.lib` 的 `.drectve` 段带 `/DEFAULTLIB:LIBCMT` 和
+  `/DEFAULTLIB:OLDNAMES`，lld-link 会自动加。所以 `/MT`（libcmt）和 `/MTd`（libcmtd）
+  都不用写死 —— Debug 构建也对。CMake 里 Runtime 是 `MSVC_RUNTIME_LIBRARY=MultiThreaded`。
+- `/subsystem:console`：不指定 `/entry` 时，lld-link 按子系统去默认库里找
+  `mainCRTStartup`（在 libcmt 里），和 link.exe 的规则一致。
+- `clang_rt.builtins-<arch>.lib`：i128 除法/取模的 `__divti3` / `__udivti3` / `__modti3` /
+  `__umodti3` 只能来自 compiler-rt —— cl.exe 不支持 `__int128`，Runtime 编不出这组助手。
+  路径随 LLVM 版本变，`run.c` 从 `lld-link.exe` 所在目录反推
+  `<llvm>/lib/clang/<ver>/lib/windows/` 再遍历版本目录，取第一个存在的。
 - `ws2_32.lib`：Runtime 里的 winsock（`WSAStartup` / `socket` / `closesocket`）。
 - 静态/动态由 `/MT` 与 `/MD` 区分，没有 `-static` 这个开关。
+- `-l foo` 在直连模式下翻译成 `foo.lib`（已有 `.lib` 后缀不重复加），`-L dir` 翻成
+  `/LIBPATH:dir`，裸参数（`-Wl,...`）原样给。
+
+#### 回退条件
+
+PATH 上找不到 `lld-link.exe`，**或者**从它所在目录反推不到
+`clang_rt.builtins-*.lib`（例如 PATH 上只有 MSYS2 自带的 lld-link、没装 clang 包），
+就退回 `clang-cl`。这条退路里如果还能找到 `lld-link.exe`，会再加 `-fuse-ld=lld`，
+让 clang-cl 也走 lld 而不是 MSVC 的 `link.exe`。
+
+#### 实测（VS 2022 14.44.35207 + LLVM 21.1.1）
+
+- `tap -v` 回显的链接行就是上面那条，里面没有 clang-cl
+- 把 `clang-cl.exe` 改名后，`hello.tp` 和 `mixed_signedness.tp`（i128 除法）都能链接并运行
+- 把 `lld-link.exe` 改名后，自动退回 clang-cl，同样正常
+- `msvc-build.bat test-native`：240 用例 239 通过 / 1 跳过 / 0 失败
 
 ### MinGW-w64：MINGW64 / UCRT64
 

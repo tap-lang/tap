@@ -19,11 +19,16 @@
 //                      -lshell32 -luser32 <root>/lib/default-manifest.o <root>/lib/crtend.o
 //   MinGW-回退: gcc <obj> build/libtap_runtime.a -o <exe> -lwinmm -lws2_32
 //   Cygwin:    clang <obj> build/libtap_runtime.a -o <exe> -lwinmm -lm
-//   MSVC:      clang-cl /nologo /MT /clang:-rtlib=compiler-rt <obj> build/tap_runtime.lib
-//                        /Fe<exe> ws2_32.lib winmm.lib
+//   MSVC:      lld-link /nologo /machine:x64 /subsystem:console <obj> build/tap_runtime.lib
+//                       ws2_32.lib winmm.lib <LLVM>/lib/clang/<ver>/lib/windows/
+//                       clang_rt.builtins-x86_64.lib
+//   MSVC-回退: clang-cl /nologo /MT /clang:-rtlib=compiler-rt <obj> build/tap_runtime.lib
+//                       /Fe<exe> ws2_32.lib winmm.lib
 //
 // MinGW 首选直接调 ld.lld：链接行里没有 -lgcc，Runtime 自带 __main / ___chkstk_ms
 // 和 i128 的 __divti3 等辅助符号。PATH 上找不到 ld.lld 时退回 gcc 驱动那一行。
+// MSVC 首选直接调 lld-link：CRT（libcmt / oldnames）由 tap_runtime.lib 的 .drectve
+// 带出来，不用写死；i128 的 __divti3 只能来自 compiler-rt 的 builtins，所以显式列上。
 // MSVC 那行有两处不同：`-lwinmm` 被翻译成 winmm.lib 当输入文件（不加 -l 前缀），
 // ws2_32.lib 是 Runtime 自带的 winsock 依赖，固定排在用户库之前。
 extern fn timeGetTime(): u32;

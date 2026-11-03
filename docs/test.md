@@ -85,6 +85,23 @@ TEST_FILTER=module make test
 `TEST_RUN_MODE` 环境变量可以直接选择运行方式（`fast` 走 `lli`，`native` 生成原生可执行文件），
 不传时默认为 `fast`。
 
+### Windows 上的一键脚本
+
+仓库根目录有两个 bat，各自封装一条工具链，省得手拼 PATH 和 `LIBS`：
+
+```bat
+mingw-build.bat build | rebuild | test | test-native | clean
+msvc-build.bat  build | rebuild | test | test-native | ctest | clean
+```
+
+- `mingw-build.bat`：MSYS2 + GCC，走 Makefile。会从 `libLLVM-<ver>.dll.a` 自动读出
+  LLVM 主版本（Makefile 里写死的是 `-lLLVM-21`），并用 MSYS2 自己的 `sh` 跑测试 ——
+  从 cmd 继承的 sh 会把 `TMPDIR` 拼成 `C:Usersttt...` 这种坏路径。
+- `msvc-build.bat`：MSVC + cl.exe，走 CMake + Ninja，产物在 `out\build\x64-Release`。
+- 两边都推荐 `test-native`：Windows 上 `lli` 不可靠，见下面两节。
+- 可选环境变量：`MSYS_ENV=mingw64` 切换 MSYS2 环境、`TAP_LLVM_VERSION=23` 强制 LLVM
+  主版本、`TEST_JOBS=N` 调整并行度（默认 8）。
+
 ### Cygwin 下必须用 native 模式
 
 Cygwin 的 `lli` 有两个限制，导致 `fast` 模式固定有 5 个用例失败：

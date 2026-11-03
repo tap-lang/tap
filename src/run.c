@@ -835,6 +835,32 @@ static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
         }
     }
 }
+
+// 直接调用 lld-link 时的参数展开：没有 clang-cl 那一层，也就没有 `/link` 分隔符，
+// 库和 /LIBPATH: 都是 lld-link 自己的参数。
+static void push_link_options_lld_link(LinkArgv *argv, const LinkOptions *options) {
+    if (link_options_is_empty(options)) return;
+
+    for (int i = 0; i < options->count; i++) {
+        const LinkArg *argument = &options->items[i];
+        switch (argument->kind) {
+        case LINK_ARG_LIBRARY:
+            if (has_suffix_ignore_case(argument->value, ".lib")) {
+                link_argv_push(argv, argument->value);
+            } else {
+                link_argv_push_suffixed(argv, argument->value, ".lib");
+            }
+            break;
+        case LINK_ARG_SEARCH_DIR:
+            link_argv_push_joined(argv, "/LIBPATH:", argument->value);
+            break;
+        case LINK_ARG_RAW:
+            // lld-link 和 link.exe 的参数写法一致，原样给。
+            link_argv_push(argv, argument->value);
+            break;
+        }
+    }
+}
 #else
 static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
     if (link_options_is_empty(options)) return;
@@ -857,9 +883,9 @@ static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
 }
 #endif
 
-#if defined(_WIN32) && defined(__MINGW32__)
+#if defined(_WIN32)
 // 取路径的父目录。这里不能用 compiler_directory —— 它会去问操作系统
-// 「当前可执行文件在哪」，对 ld.lld 这种外部程序来说问错了对象。
+// 「当前可执行文件在哪」，对 ld.lld / lld-link 这种外部程序来说问错了对象。
 static int split_parent_directory(
     const char *path, char *directory, size_t directory_size) {
     const char *separator = strrchr(path, '/');
@@ -873,7 +899,9 @@ static int split_parent_directory(
     directory[length] = '\0';
     return 1;
 }
+#endif
 
+#if defined(_WIN32) && defined(__MINGW32__)
 // 在 MinGW 下找「能直接调用的 ld.lld」和它配套的 CRT 目录。
 //
 // 为什么要绕开 gcc：gcc 驱动除了拼链接行什么都不做，却顺带把 libgcc 拖了进来。
@@ -933,6 +961,96 @@ static int find_mingw_link_tools(char *linker_path, size_t linker_path_size,
         }
     }
     return 0;
+}
+#endif
+
+#if defined(_WIN32) && !defined(__MINGW32__)
+// compiler-rt builtins 里的架构名（库文件名是 clang_rt.builtins-<arch>.lib）。
+static const char *msvc_builtins_arch(void) {
+#if defined(_M_ARM64) || defined(__aarch64__)
+    return "aarch64";
+#elif defined(_M_IX86) || defined(__i386__)
+    return "i386";
+#else
+    return "x86_64";
+#endif
+}
+
+// lld-link 的 /machine 参数。
+static const char *msvc_machine_option(void) {
+#if defined(_M_ARM64) || defined(__aarch64__)
+    return "/machine:arm64";
+#elif defined(_M_IX86) || defined(__i386__)
+    return "/machine:x86";
+#else
+    return "/machine:x64";
+#endif
+}
+
+// 在 MSVC 环境下找「能直接调用的 lld-link」和它配套的 compiler-rt builtins。
+//
+// 为什么要绕开 clang-cl：和 MinGW 那边同理 —— clang-cl 只是个参数翻译器，真正的
+// 链接器是 lld-link（或 link.exe）。直接调就少一层依赖，链接行也完全看得见。
+//
+// 代价是 clang-cl 平时替我们补的默认清单要自己给：libcmt（/MT 的静态 CRT）、
+// oldnames（旧名兼容符号）、/subsystem、/machine。i128 的 __divti3 等仍然只能来自
+// compiler-rt —— cl.exe 不支持 __int128，Runtime 编不出那四个助手。
+//
+// builtins 的位置是 <llvm>/lib/clang/<ver>/lib/windows/clang_rt.builtins-<arch>.lib，
+// 版本号随 LLVM 版本变，所以从 lld-link 所在目录反推、遍历版本目录。
+static int find_msvc_lld_link(char *linker_path, size_t linker_path_size,
+                              char *builtins_path, size_t builtins_path_size) {
+    char lld_path[RUN_PATH_MAX];
+    if (!find_program_on_path("lld-link.exe", lld_path, sizeof(lld_path))) return 0;
+
+    char bin_dir[RUN_PATH_MAX];
+    if (!split_parent_directory(lld_path, bin_dir, sizeof(bin_dir))) return 0;
+
+    char clang_root[RUN_PATH_MAX];
+    int length = snprintf(clang_root, sizeof(clang_root), "%s/../lib/clang", bin_dir);
+    if (length <= 0 || (size_t)length >= sizeof(clang_root)) return 0;
+
+    char pattern[RUN_PATH_MAX];
+    length = snprintf(pattern, sizeof(pattern), "%s/*", clang_root);
+    if (length <= 0 || (size_t)length >= sizeof(pattern)) return 0;
+
+    WIN32_FIND_DATAA entry;
+    HANDLE handle = FindFirstFileA(pattern, &entry);
+    if (handle == INVALID_HANDLE_VALUE) return 0;
+
+    const char *arch = msvc_builtins_arch();
+    int found = 0;
+    do {
+        if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (entry.cFileName[0] == '.') continue;
+
+        char candidate[RUN_PATH_MAX];
+        length = snprintf(candidate, sizeof(candidate),
+                          "%s/%s/lib/windows/clang_rt.builtins-%s.lib",
+                          clang_root, entry.cFileName, arch);
+        if (length <= 0 || (size_t)length >= sizeof(candidate)) continue;
+        if (!runtime_file_exists(candidate)) continue;
+
+        // 路径里带 .. 也能用，但写进命令和报错信息里很难看，顺手规范化一次。
+        char normalized[RUN_PATH_MAX];
+        if (_fullpath(normalized, candidate, sizeof(normalized))) {
+            snprintf(builtins_path, builtins_path_size, "%s", normalized);
+        } else {
+            snprintf(builtins_path, builtins_path_size, "%s", candidate);
+        }
+        found = 1;
+        break;
+    } while (FindNextFileA(handle, &entry));
+    FindClose(handle);
+
+    if (!found) return 0;
+    char normalized_lld[RUN_PATH_MAX];
+    if (_fullpath(normalized_lld, lld_path, sizeof(normalized_lld))) {
+        snprintf(linker_path, linker_path_size, "%s", normalized_lld);
+    } else {
+        snprintf(linker_path, linker_path_size, "%s", lld_path);
+    }
+    return 1;
 }
 #endif
 
@@ -1037,29 +1155,68 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
         link_argv_push(&argv, "-lws2_32");
     }
 #elif defined(_WIN32)
-    // Match the Runtime's static MSVC CRT so generated objects and Runtime use one CRT.
-    char output_option[RUN_PATH_MAX + 4];
-    int output_length = snprintf(output_option, sizeof(output_option), "/Fe%s", exe_file);
-    if (output_length < 0 || (size_t)output_length >= sizeof(output_option)) {
-        fprintf(stderr, "output file path is too long\n");
-        return 1;
-    }
-    const char *linker = "clang-cl";
-    // clang-cl 默认按 MSVC 目标链接，不会自动加入 compiler-rt 的 builtins。i128 的
-    // 除法/取模会生成 __divti3/__modti3，显式选择 compiler-rt 才能让这些符号在 Windows
-    // LLVM 安装中被解析；否则普通的 i128 测试会在最终链接阶段失败。
-    // ws2_32.lib 提供 Runtime 里 winsock 的符号（WSAStartup / socket / closesocket 等）。
+    // MSVC 目标：优先直接调 lld-link，找不到时退回 clang-cl。
+    //
+    // 两条路的差别只在「谁拼默认清单」：
+    //   - lld-link：我们自己给 /subsystem、/machine、compiler-rt 的 builtins；
+    //     CRT 靠 Runtime 里的 .drectve（`/DEFAULTLIB:LIBCMT` / `OLDNAMES`），
+    //     所以 /MT 与 /MTd 都不用在这里写死，Debug 构建会自动对
+    //   - clang-cl：它替我们补这些，链接器默认是 link.exe（`-fuse-ld=lld` 时是 lld-link）
     (void)static_link;
-    link_argv_push(&argv, linker);
-    link_argv_push(&argv, "/nologo");
-    link_argv_push(&argv, "/MT");
-    link_argv_push(&argv, "/clang:-rtlib=compiler-rt");
-    link_argv_push(&argv, object_file);
-    link_argv_push(&argv, runtime_static_path);
-    link_argv_push(&argv, output_option);
-    link_argv_push(&argv, "ws2_32.lib");
-    // 库直接当输入文件；-L 和裸参数由 push_link_options 补 /link 段。
-    push_link_options(&argv, link_options);
+    char lld_link_path[RUN_PATH_MAX];
+    char builtins_path[RUN_PATH_MAX];
+    if (find_msvc_lld_link(lld_link_path, sizeof(lld_link_path),
+                           builtins_path, sizeof(builtins_path))) {
+        char out_option[RUN_PATH_MAX + 8];
+        int out_length = snprintf(out_option, sizeof(out_option), "/out:%s", exe_file);
+        if (out_length < 0 || (size_t)out_length >= sizeof(out_option)) {
+            fprintf(stderr, "output file path is too long\n");
+            return 1;
+        }
+        link_argv_push(&argv, lld_link_path);
+        link_argv_push(&argv, "/nologo");
+        link_argv_push(&argv, msvc_machine_option());
+        // 入口点由 CRT 提供：/subsystem:console 时 lld-link 去默认库里找
+        // mainCRTStartup（libcmt 里），和 link.exe 的规则一致。
+        link_argv_push(&argv, "/subsystem:console");
+        link_argv_push(&argv, out_option);
+        link_argv_push(&argv, object_file);
+        link_argv_push(&argv, runtime_static_path);
+        // ws2_32 提供 Runtime 里 winsock 的符号（WSAStartup / socket / closesocket）。
+        link_argv_push(&argv, "ws2_32.lib");
+        // 用户库排在 Runtime 之后、builtins 之前：静态链接的符号解析是单向的。
+        push_link_options_lld_link(&argv, link_options);
+        // i128 的 __divti3 / __udivti3 / __modti3 / __umodti3 只能来自这里：
+        // cl.exe 不支持 __int128，Runtime 编不出这四个助手。
+        link_argv_push(&argv, builtins_path);
+    } else {
+        char output_option[RUN_PATH_MAX + 4];
+        int output_length = snprintf(output_option, sizeof(output_option), "/Fe%s", exe_file);
+        if (output_length < 0 || (size_t)output_length >= sizeof(output_option)) {
+            fprintf(stderr, "output file path is too long\n");
+            return 1;
+        }
+        const char *linker = "clang-cl";
+        // clang-cl 默认按 MSVC 目标链接，不会自动加入 compiler-rt 的 builtins。i128 的
+        // 除法/取模会生成 __divti3/__modti3，显式选择 compiler-rt 才能让这些符号在 Windows
+        // LLVM 安装中被解析；否则普通的 i128 测试会在最终链接阶段失败。
+        // ws2_32.lib 提供 Runtime 里 winsock 的符号（WSAStartup / socket / closesocket 等）。
+        link_argv_push(&argv, linker);
+        link_argv_push(&argv, "/nologo");
+        link_argv_push(&argv, "/MT");
+        link_argv_push(&argv, "/clang:-rtlib=compiler-rt");
+        // 退路也尽量用 lld-link：clang-cl 只做参数翻译，链接器换成 LLVM 的 lld。
+        char fallback_lld_path[RUN_PATH_MAX];
+        if (find_program_on_path("lld-link.exe", fallback_lld_path, sizeof(fallback_lld_path))) {
+            link_argv_push(&argv, "-fuse-ld=lld");
+        }
+        link_argv_push(&argv, object_file);
+        link_argv_push(&argv, runtime_static_path);
+        link_argv_push(&argv, output_option);
+        link_argv_push(&argv, "ws2_32.lib");
+        // 库直接当输入文件；-L 和裸参数由 push_link_options 补 /link 段。
+        push_link_options(&argv, link_options);
+    }
 #elif defined(__APPLE__)
     if (static_link) {
         fprintf(stderr,
