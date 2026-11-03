@@ -41,6 +41,7 @@ static void print_usage() {
     printf("  -lex              只输出词法分析结果\n");
     printf("  -parse            只输出语法分析结果\n");
     printf("  -run-lli          生成LLVM IR并使用lli运行程序\n");
+    printf("  -v, --verbose     把实际执行的链接/运行命令回显到 stderr\n");
     printf("  -V, --version     显示版本号\n");
 }
 
@@ -63,6 +64,7 @@ int main(int argc, char *argv[]) {
     int static_link = 0;
     int lex_only = 0;
     int parse_only = 0;
+    int verbose = 0;
     int build_package = 0;
     int program_argc = 0;
     char **program_argv = NULL;
@@ -112,6 +114,8 @@ int main(int argc, char *argv[]) {
             lex_only = 1;
         } else if (strcmp(argv[i], "-parse") == 0) {
             parse_only = 1;
+        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+            verbose = 1;
         } else if (strcmp(argv[i], "-l") == 0) {
             // `-l foo` 和 `-lfoo` 两种写法都认，和 cc 的惯例一致。
             if (i + 1 >= argc) {
@@ -205,6 +209,10 @@ int main(int argc, char *argv[]) {
 
     // Runtime 库只解析一次，确保本地链接和 lli 使用一致的 ABI。
     configure_runtime(argv[0]);
+
+    // `-v` 只影响外部命令的回显，和任何输出模式都不冲突。放在这里统一打开，
+    // 后面的链接 / lli / 运行三处都读这个开关。
+    set_verbose_commands(verbose);
 
     // 1. 词法分析（在 create_lexer 内读入源文件）
     Lexer *lexer = create_lexer(input_file);

@@ -32,6 +32,13 @@ extern char **environ;
 static char runtime_static_path[RUN_PATH_MAX];
 static char runtime_shared_path[RUN_PATH_MAX];
 
+// `-v` 的命令回显开关。见 run.h 里的说明。
+static int verbose_commands = 0;
+
+void set_verbose_commands(int enabled) {
+    verbose_commands = enabled;
+}
+
 // 复制字符串。用自己的一份而不是 strdup：MSVC 下 strdup 是弃用符号，
 // 要么带 _CRT_SECURE_NO_WARNINGS，要么换名，不值得为这个引入平台分支。
 static char *duplicate_string(const char *text) {
@@ -314,6 +321,13 @@ static int remove_temp_file(const char *path) {
 
 // 清理临时工作目录和其中的中间产物。
 static int cleanup_temp_workspace(TempWorkspace *workspace) {
+    // `-v` 下保留中间产物：回显出来的链接命令里带着目标文件路径，删掉之后
+    // 那条命令就没法照着跑一遍了 —— 而照着跑一遍正是 `-v` 的主要用途。
+    if (verbose_commands) {
+        fprintf(stderr, "tap: keeping temporary files in %s\n", workspace->directory);
+        return 0;
+    }
+
     int result = 0;
     result |= remove_temp_file(workspace->ir_file);
     result |= remove_temp_file(workspace->object_file);
@@ -430,6 +444,66 @@ static int run_process(char *const argv[]) {
     if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
     return 1;
 #endif
+}
+
+// 判断一个参数在 shell 里能不能原样写出来。
+//
+// 用白名单而不是黑名单：链接命令行里出现的都是路径和选项，除了这几十个字符
+// 之外一律加引号。`~` 故意不在白名单里 —— 它在词首会被 shell 展开成家目录。
+static int argument_needs_quoting(const char *argument) {
+    if (!argument[0]) return 1;
+    for (const char *cursor = argument; *cursor; cursor++) {
+        unsigned char character = (unsigned char)*cursor;
+        if ((character >= 'a' && character <= 'z') ||
+            (character >= 'A' && character <= 'Z') ||
+            (character >= '0' && character <= '9')) {
+            continue;
+        }
+        if (strchr("-_./=:+,@%", character)) continue;
+        return 1;
+    }
+    return 0;
+}
+
+// 按各自平台的引号规则打印一个参数，让 `-v` 的输出能直接复制粘贴到终端。
+static void print_command_argument(const char *argument) {
+    if (!argument_needs_quoting(argument)) {
+        fputs(argument, stderr);
+        return;
+    }
+
+#ifdef _WIN32
+    char *quoted = quote_windows_argument(argument);
+    if (!quoted) {
+        fputs(argument, stderr);
+        return;
+    }
+    fputs(quoted, stderr);
+    free(quoted);
+#else
+    fputc('\'', stderr);
+    for (const char *cursor = argument; *cursor; cursor++) {
+        // POSIX shell 里单引号内部不能出现单引号，只能闭合再拼一个转义过的。
+        if (*cursor == '\'') {
+            fputs("'\\''", stderr);
+        } else {
+            fputc(*cursor, stderr);
+        }
+    }
+    fputc('\'', stderr);
+#endif
+}
+
+// 回显一条实际执行的外部命令，格式 `tap: <标签>: <命令>`。
+static void print_command_line(const char *label, char *const argv[]) {
+    if (!verbose_commands) return;
+
+    fprintf(stderr, "tap: %s:", label);
+    for (int i = 0; argv[i]; i++) {
+        fputc(' ', stderr);
+        print_command_argument(argv[i]);
+    }
+    fputc('\n', stderr);
 }
 
 // path 是不是可直接执行的文件。
@@ -1066,7 +1140,10 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
 #endif
 
     int link_status = 1;
-    if (!argv.failed) link_status = run_process(argv.items);
+    if (!argv.failed) {
+        print_command_line("link", argv.items);
+        link_status = run_process(argv.items);
+    }
     link_argv_free(&argv);
 
     // argv.failed 说明拼参数时就 OOM 了，报错在那一层已经打过，这里不重复。
@@ -1082,6 +1159,13 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
 static int compile_with_temp_object(CodeGenContext *context, const char *exe_file,
                                     const char *object_file, int static_link,
                                     const LinkOptions *link_options) {
+    // 目标文件由 LLVM 在本进程里直接写出，没有外部编译命令。`-v` 下把路径打出来，
+    // 需要 nm / otool / objdump 检查时能直接拿到文件（此时临时目录会保留）。
+    if (verbose_commands) {
+        fprintf(stderr, "tap: object: %s (emitted in-process, no external command)\n",
+                object_file);
+    }
+
     if (write_object_to_file(context, object_file) != 0 ||
         link_object_file(object_file, exe_file, static_link, link_options) != 0) {
         fprintf(stderr, "failed to generate executable\n"); // 中文：生成可执行文件失败
@@ -1141,6 +1225,7 @@ static int execute_file(const char *exe_file, int program_argc, char **program_a
         argv[i + 1] = program_argv[i];
     }
     argv[program_argc + 1] = NULL;
+    print_command_line("run", argv);
     int result = run_process(argv);
     free(argv);
     free(relative_path);
@@ -1192,6 +1277,7 @@ int run_with_lli(CodeGenContext *context) {
         snprintf(load_option, sizeof(load_option), "--load=%s", runtime_shared_path);
 #endif
         char *const argv[] = {"lli", load_option, workspace.ir_file, NULL};
+        print_command_line("lli", argv);
         result = run_process(argv);
     }
 

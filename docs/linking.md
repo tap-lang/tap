@@ -16,6 +16,27 @@
 
 下面重点是 ③，因为它是唯一按平台分叉、且坑最多的。
 
+**要看你这一份 tap 到底跑了什么命令，加 `-v`**（`--verbose` 同义）：
+
+```console
+$ tap -v -lz hello.tp
+tap: object: /var/folders/…/tap-XJzyfn/program.o (emitted in-process, no external command)
+tap: link: ld -o hello /var/folders/…/tap-XJzyfn/program.o …/build/libtap_runtime.a -lz -lSystem -syslibroot … -arch arm64 -platform_version macos 15.5 15.5
+tap: keeping temporary files in /var/folders/…/tap-XJzyfn
+```
+
+三行分别对应：目标文件（由 LLVM 在本进程里直接写出，**没有外部编译命令**）、
+链接命令、保留的临时目录。`-run-lli` 下打的是 `tap: lli: …`，`tap run` 还会多一行
+`tap: run: …` 表示最终执行的可执行文件。
+
+几个刻意的设计：
+
+- **走 stderr**，所以 `tap run -v prog.tp > out.txt` 的 `out.txt` 里只有程序自己的输出。
+- **命令带引号、可直接复制粘贴**（POSIX 用单引号，Windows 用双引号）。参数里的
+  空格、单引号都按各自 shell 的规则转义过。
+- **`-v` 下不删临时目录**。回显的链接命令里带着目标文件路径，删掉之后那条命令就没法
+  照着跑一遍 —— 而照着跑一遍正是 `-v` 的主要用途。目录路径会单独打一行。
+
 ## 对照表
 
 `run.c` 用编译期宏选分支，顺序是：

@@ -29,6 +29,13 @@ int link_options_add(LinkOptions *options, LinkArgKind kind, const char *value);
 int link_options_is_empty(const LinkOptions *options);
 void link_options_free(LinkOptions *options);
 
+// `-v`：把 tap 实际执行的外部命令（链接、lli、运行产物）回显到 stderr。
+//
+// 用全局开关而不是逐层传参 —— 只有三个调用点需要它，而它们都在这个文件里。
+// 输出走 stderr 是硬要求：`tap run -v prog.tp > out.txt` 时 out.txt 里必须只有
+// 程序自己的输出。
+void set_verbose_commands(int enabled);
+
 // 根据编译器路径或 TAP_RUNTIME_PATH 解析 Runtime 库位置。
 void configure_runtime(const char *compiler_path);
 int compile_to_executable(CodeGenContext *context, const char *exe_file, int static_link,
