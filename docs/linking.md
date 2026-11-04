@@ -42,12 +42,13 @@ tap: keeping temporary files in /var/folders/…/tap-XJzyfn
 `run.c` 用编译期宏选分支，顺序是：
 
 ```c
-#if defined(_WIN32) && defined(__MINGW32__)   // MinGW-w64：MINGW64 / UCRT64
-#elif defined(_WIN32)                          // MSVC
-#elif defined(__APPLE__)                       // macOS
+#if defined(_WIN32) && defined(__MINGW32__)      // MinGW-w64：MINGW64 / UCRT64
+#elif defined(_WIN32)                             // MSVC
+#elif defined(__APPLE__)                          // macOS
 #else
-#  ifdef __CYGWIN__                            // Cygwin
-#  else                                        // Linux 及其他 Unix
+#  if defined(__linux__) && !defined(__CYGWIN__) // Linux：优先直连 ld.lld，缺失时回退 cc
+#  elif defined(__CYGWIN__)                      // Cygwin
+#  else                                           // 其他 Unix
 #  endif
 #endif
 ```
@@ -55,7 +56,7 @@ tap: keeping temporary files in /var/folders/…/tap-XJzyfn
 | 环境 | 链接器 | Runtime 库 | 关键标志 |
 |---|---|---|---|
 | macOS | `ld`（直接调，不经 cc） | `libtap_runtime.a` | `-lSystem`、`-syslibroot`、`-arch`、`-platform_version` |
-| Linux | `cc` | `libtap_runtime.a` | `-no-pie`、`-lm` |
+| Linux | `ld.lld`（**优先直连，不经 cc**）；PATH 上无 `ld.lld` 或 CRT 探测失败时回退 `cc` 默认链接器 | `libtap_runtime.a` | 直连：`-dynamic-linker`、显式 CRT、`-lm`、`-lgcc` / `-lc`；回退：`-no-pie`、`-lm` |
 | MSVC | `lld-link`（直接调，找不到时退回 `clang-cl`） | `tap_runtime.lib` | `/machine:x64`、`/subsystem:console`、`/out:`、`ws2_32.lib`、`clang_rt.builtins-*.lib` |
 | MINGW64 | `ld.lld`（找不到时退回 `gcc`） | `libtap_runtime.a` | `-m i386pep`、显式 `crt2.o`/`crtend.o`、`-lws2_32`（**不加 `-lm`、不加 `-lgcc`**） |
 | UCRT64 | 同上 | `libtap_runtime.a` | 同上，命令完全一致 |
@@ -81,16 +82,67 @@ ld -o prog prog.o libtap_runtime.a \
   `TAP_MACOS_SDK_PATH` / `TAP_MACOS_SDK_VERSION`，`run.c` 优先读这两个环境变量。
 - `-arch` 由编译 tap 时的架构决定：`__aarch64__` → `arm64`，`__x86_64__` → `x86_64`。
 
-### Linux（及其他 Unix）
+### Linux
+
+**优先直接调 `ld.lld`，链接行里没有 `cc`**；工具链不齐时自动回退 `cc` 驱动。
+直连时驱动平时偷偷补上的那一套由 `run.c` 自己探测后显式给出：
+
+```sh
+ld.lld -o prog \
+  --build-id --eh-frame-hdr --hash-style=gnu \
+  -dynamic-linker /lib64/ld-linux-x86-64.so.2 \
+  <crt_dir>/crt1.o <crt_dir>/crti.o <gcc_dir>/crtbegin.o \
+  -L<crt_dir> -L<gcc_dir> -L/usr/lib -L/lib -L/usr/lib64 -L/lib64 \
+  prog.o libtap_runtime.a -lm \
+  -lgcc --as-needed -lgcc_s --no-as-needed -lc \
+  -lgcc --as-needed -lgcc_s --no-as-needed \
+  <gcc_dir>/crtend.o <crt_dir>/crtn.o
+
+# -static：换成 -static + crtbeginT.o + 静态库组，并且不给 -dynamic-linker
+ld.lld -o prog -static --build-id --eh-frame-hdr --hash-style=gnu \
+  <crt_dir>/crt1.o <crt_dir>/crti.o <gcc_dir>/crtbeginT.o \
+  -L<crt_dir> -L<gcc_dir> -L/usr/lib -L/lib ... \
+  prog.o libtap_runtime.a -lm \
+  --start-group -lgcc -lgcc_eh -lc --end-group \
+  <gcc_dir>/crtend.o <crt_dir>/crtn.o
+```
+
+找不到 `ld.lld` / CRT 时回退 `cc` 驱动（行为和引入直连之前一致）：
 
 ```sh
 cc -no-pie prog.o libtap_runtime.a -o prog -lm
-cc -static -no-pie prog.o libtap_runtime.a -o prog -lm   # --static
+cc -static -no-pie prog.o libtap_runtime.a -o prog -lm   # -static
 ```
 
-- `-lm` **必须在目标文件和静态库之后**：glibc 2.34 起 libm 并入 libc，但更早的发行版
+- **为什么能不经过 cc**：`cc` 只是拼参数的驱动。用 `cc -###` 看过它交给 collect2 的那一串
+  （CRT 启动文件、PT_INTERP、`-lc` / `-lgcc`、一串 `-L`）之后，把这些参数显式交给 `ld.lld`
+  即可。`-fuse-ld=lld` 是「换掉驱动调用的链接器」，这里是「连驱动一起去掉」。
+- **路径怎么来**：`find_linux_link_tools()` 按优先级探测 —— `ld.lld` 走 PATH；CRT 目录先
+  glob `/usr/lib/*-linux-gnu/crt1.o`（Debian/Ubuntu multiarch），再退 `/usr/lib64` / `/usr/lib`；
+  GCC 目录 glob `/usr/lib/gcc/*/*/crtbegin.o`（要求同目录有 `crtend.o` 和 `libgcc.a`）；
+  PT_INTERP 按架构宏给候选（x86_64 → `/lib64/ld-linux-x86-64.so.2` 等），找不到再 glob
+  `ld-linux*.so.*`。不写死某一台机器的路径，也不需要 `cc` 在场。
+- **前提条件与回退**：直连要求机器上有 `ld.lld`（`lld` 包）和 C 开发文件（CRT 目标文件、
+  `libgcc`、`libc`），且动态链接器能被探测到。`find_linux_link_tools()` 失败时 —— 没装
+  `lld` 包，或 musl 发行版的 CRT / PT_INTERP 不在已知路径 —— **自动回退 `cc -no-pie`**，
+  由驱动自己补齐 CRT、PT_INTERP 和默认库，链接行回到引入直连之前的写法；`-v` 下会多打
+  一行 `tap: note: ... falling back to the cc driver`。只有连 `cc` 都找不到时才报错并提示
+  安装。所以没装 lld 的 Linux 机器（含 CI 的 Ubuntu）仍能生成可执行文件，实际链接器是
+  驱动默认的 GNU ld。探测在运行期做，同一份二进制在两台机器上会走不同分支。
+- **`-lm` 必须放在目标文件和静态库之后**：glibc 2.34 起 libm 并入 libc，但更早的发行版
   仍需显式链接，否则 Runtime 里的 `pow` 报未定义符号。
-- `-no-pie`：让代码模型和 IR 里的绝对寻址一致。
+- **`-no-pie`**：直连 `ld.lld` 不需要（默认产出非 PIE 的 ET_EXEC，正好匹配 IR 里的绝对
+  寻址）；回退 `cc` 驱动时必须加。
+- **`-Wl,` 两种写法**：直连链接器不认驱动前缀，`-Wl,-rpath,/x` 变成 `-rpath /x` 两个参数
+  （`push_link_options_direct_ld()`），参数必须是 LLD 认识的；回退 `cc` 时用
+  `push_link_options_driver()` 原样透传 `-Wl,-rpath,/x`，参数得是 GNU ld 认识的。
+  **同一个 `-Wl,` 参数在两条路径下不一定都有效**，写之前先 `tap -v` 看链接行首是
+  `ld.lld` 还是 `cc`。
+- 实测（Arch / GCC 16.2.1 / LLD 23.1.4）：`hello.tp`、`mixed_signedness.tp`（i128）、
+  `link_zlib.tp -lz`、`-static`、`-Wl,-rpath,/tmp` 在两条路径下都通过；直连时 `tap -v`
+  回显的链接行首是 `/usr/bin/ld.lld`，把 PATH 里的 `ld.lld` 屏蔽后行首变成 `cc`。
+
+其他 Unix（非 Linux、非 Cygwin、非 macOS）仍走 `cc -no-pie ... -lm` 驱动路径。
 
 ### MSVC
 
@@ -351,10 +403,17 @@ Homebrew 的 LLVM **没有** `libLLVM.a`（单体静态库），只有 206 个�
    `_WIN32 && !_MSC_VER` 下自带一份约定匹配的实现。这个守卫早先是
    `_WIN32 && __clang__ && !_MSC_VER`，因为只有 clang 才会用 compiler-rt 约定；
    MinGW 的链接行去掉 libgcc 之后 gcc 构建也要靠它，所以放宽成了只看 `_WIN32`。
-2. **`-lm` 位置**：必须放最后，否则老 glibc / Cygwin 上 `pow` 报未定义。
+2. **`-lm` 位置**：必须放在目标文件和静态库之后，否则老 glibc / Cygwin 上 `pow` 报未定义；
+   Linux 直连时它后面还有 libgcc / libc / crtend.o，别机械理解成「命令行最后一个参数」。
 3. **`ws2_32`**：Windows 全系（MSVC 用 `.lib`，MinGW/Cygwin 用 `-lws2_32`）。
 4. **clang-cl 只用于 MSVC 目标**：拿它链 MinGW 会去要 MSVC 的 CRT。
-5. **`-no-pie`**：Linux 要，Cygwin 不要（驱动不认）。
-6. **`-static`**：macOS 不支持，其余平台可用。MinGW 走 `ld.lld` 时翻译成 `-Bstatic`。
-7. **`-Wl,` 只在驱动下有效**：`ld.lld` 和 macOS 的 `ld` 不认这个前缀，`run.c` 会把逗号
-   拆成多个裸参数（`push_link_options_direct_ld()`）；走 gcc 驱动时仍是原样透传。
+5. **`-no-pie`**：Linux 直连 `ld.lld` 不需要（默认非 PIE），但 Linux 回退的 `cc` 和其他
+   Unix 的 cc 驱动仍要；Cygwin 不要（驱动不认）。
+6. **`-static`**：macOS 不支持，其余平台可用。Linux 直连时换成 `-static` + `crtbeginT.o` +
+   `--start-group -lgcc -lgcc_eh -lc --end-group`，回退时是 `cc -static -no-pie`；
+   MinGW 走 `ld.lld` 时翻译成 `-Bstatic`。
+7. **`-Wl,` 只在驱动下有效**：macOS 的 `ld`、Linux 直连的 `ld.lld`、MinGW 直连的 `ld.lld`
+   都不认这个前缀，`run.c` 会把逗号拆成多个裸参数（`push_link_options_direct_ld()`）；
+   驱动路径（Linux 回退的 `cc`、Cygwin 的 clang、MinGW 回退的 gcc、其他 Unix 的 cc）用
+   `push_link_options_driver()` 原样透传。Linux 同一份二进制里两种写法都在，取决于这次
+   是否探测到 `ld.lld`。

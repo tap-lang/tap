@@ -13,7 +13,11 @@
 //
 //   macOS: ld -o <exe> <obj> build/libtap_runtime.a -lz -lSystem \
 //              -syslibroot <sdk> -arch arm64 -platform_version macos <ver> <ver>
-//   Linux: cc -no-pie <obj> build/libtap_runtime.a -o <exe> -lz -lm
+//   Linux: ld.lld -o <exe> -dynamic-linker <interp> <crt1.o> <crti.o> <crtbegin.o> \
+//              -L<crt_dir> -L<gcc_dir> <obj> build/libtap_runtime.a -lz -lm \
+//              -lgcc --as-needed -lgcc_s --no-as-needed -lc <crtend.o> <crtn.o>
+//          （PATH 上无 ld.lld / CRT 探测失败时回退 cc：
+//           cc -no-pie <obj> build/libtap_runtime.a -o <exe> -lz -lm）
 //
 // 用户库（-lz）固定在 Runtime 之后、系统库（-lSystem / -lm）之前 —— 静态链接的
 // 符号解析是单向的，顺序反了就解析不到 compressBound。

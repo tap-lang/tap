@@ -19,6 +19,10 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__linux__) && !defined(__CYGWIN__)
+// Linux 直连 ld.lld 时用 glob 探测发行版相关的 CRT / GCC 目录。
+#include <glob.h>
+#endif
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -766,10 +770,35 @@ static void push_link_options_direct_ld(LinkArgv *argv, const LinkOptions *optio
 
 // 把用户链接参数展开成当前平台链接器认识的 argv 片段。
 //
-// 三种平台三种写法，所以按平台只保留一份实现：
+// 按平台只保留一份实现：
 //   - 驱动（cc / gcc / clang）：-l / -L / -Wl, 三种写法驱动都认，原样透传
-//   - macOS 的 ld：直接调 ld，见 push_link_options_direct_ld
+//   - macOS 的 ld / Linux 直连的 ld.lld：直接调链接器，见 push_link_options_direct_ld
 //   - MSVC 的 clang-cl：库按 .lib 习惯当输入文件，其余走 /link 交给 link.exe
+//
+// Linux 特殊：默认直连 ld.lld，但工具链探测失败会回退 cc 驱动，两种写法要同时
+// 编进同一份二进制，所以下面把驱动写法单独留成一个函数给回退路径调用。
+#if !defined(__APPLE__) && !(defined(_WIN32) && !defined(__MINGW32__))
+static void push_link_options_driver(LinkArgv *argv, const LinkOptions *options) {
+    if (link_options_is_empty(options)) return;
+
+    for (int i = 0; i < options->count; i++) {
+        const LinkArg *argument = &options->items[i];
+        switch (argument->kind) {
+        case LINK_ARG_LIBRARY:
+            link_argv_push_joined(argv, "-l", argument->value);
+            break;
+        case LINK_ARG_SEARCH_DIR:
+            link_argv_push_joined(argv, "-L", argument->value);
+            break;
+        case LINK_ARG_RAW:
+            // 驱动会把 -Wl, 后面的整串按逗号切开转给链接器，原样带前缀就行。
+            link_argv_push_joined(argv, "-Wl,", argument->value);
+            break;
+        }
+    }
+}
+#endif
+
 #if defined(__APPLE__)
 static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
     push_link_options_direct_ld(argv, options);
@@ -867,25 +896,15 @@ static void push_link_options_lld_link(LinkArgv *argv, const LinkOptions *option
         }
     }
 }
+#elif defined(__linux__) && !defined(__CYGWIN__)
+// Linux 直连 ld.lld：没有驱动那一层，`-Wl,` 前缀要拆成裸参数。
+// 探测失败时回退 cc，那条路径改用 push_link_options_driver()。
+static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
+    push_link_options_direct_ld(argv, options);
+}
 #else
 static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
-    if (link_options_is_empty(options)) return;
-
-    for (int i = 0; i < options->count; i++) {
-        const LinkArg *argument = &options->items[i];
-        switch (argument->kind) {
-        case LINK_ARG_LIBRARY:
-            link_argv_push_joined(argv, "-l", argument->value);
-            break;
-        case LINK_ARG_SEARCH_DIR:
-            link_argv_push_joined(argv, "-L", argument->value);
-            break;
-        case LINK_ARG_RAW:
-            // 驱动会把 -Wl, 后面的整串按逗号切开转给链接器，原样带前缀就行。
-            link_argv_push_joined(argv, "-Wl,", argument->value);
-            break;
-        }
-    }
+    push_link_options_driver(argv, options);
 }
 #endif
 
@@ -1143,6 +1162,177 @@ static int report_missing_linker(const char *tried, const char *hint) {
     return 1;
 }
 
+#if defined(__linux__) && !defined(__CYGWIN__)
+// Linux 直连 ld.lld：cc 驱动平时偷偷补上的东西得自己给 —— CRT 启动文件、
+// PT_INTERP、libgcc / libc 的搜索路径。这些位置随发行版、架构和 GCC 版本变化，
+// 所以按候选路径 + glob 探测，而不是把某一台机器的路径写死。
+typedef struct {
+    char lld[RUN_PATH_MAX];
+    char crt_dir[RUN_PATH_MAX];   // crt1.o / crti.o / crtn.o
+    char gcc_dir[RUN_PATH_MAX];   // crtbegin*.o / crtend.o / libgcc*.a
+    char interp[RUN_PATH_MAX];    // 动态链接器（PT_INTERP）
+} LinuxLinkTools;
+
+static int link_tool_has(const char *directory, const char *name) {
+    char path[RUN_PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+    return written > 0 && (size_t)written < sizeof(path) && runtime_file_exists(path);
+}
+
+static void link_argv_push_path(LinkArgv *argv, const char *directory, const char *name) {
+    char path[RUN_PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+    if (written > 0 && (size_t)written < sizeof(path)) {
+        link_argv_push(argv, path);
+    } else {
+        argv->failed = 1;
+    }
+}
+
+// 从 glob 命中的 ".../<file>" 里截出目录部分。
+static int link_tool_directory_of(const char *path, char *out, size_t out_size) {
+    const char *slash = strrchr(path, '/');
+    if (!slash) return 0;
+    size_t length = (size_t)(slash - path);
+    if (length == 0 || length >= out_size) return 0;
+    memcpy(out, path, length);
+    out[length] = '\0';
+    return 1;
+}
+
+static int find_linux_crt_dir(char *out, size_t out_size) {
+    // Debian/Ubuntu 把 CRT 放在 multiarch 目录里，Arch/Fedora 直接在 /usr/lib(64)。
+    const char *patterns[] = {
+        "/usr/lib/*-linux-gnu/crt1.o", "/lib/*-linux-gnu/crt1.o", NULL
+    };
+    for (int pattern = 0; patterns[pattern]; pattern++) {
+        glob_t matches;
+        if (glob(patterns[pattern], 0, NULL, &matches) != 0) continue;
+        int found = 0;
+        for (size_t i = 0; i < matches.gl_pathc && !found; i++) {
+            char directory[RUN_PATH_MAX];
+            if (link_tool_directory_of(matches.gl_pathv[i], directory, sizeof(directory)) &&
+                link_tool_has(directory, "crti.o") && link_tool_has(directory, "crtn.o")) {
+                snprintf(out, out_size, "%s", directory);
+                found = 1;
+            }
+        }
+        globfree(&matches);
+        if (found) return 1;
+    }
+    const char *candidates[] = {"/usr/lib64", "/lib64", "/usr/lib", "/lib", NULL};
+    for (int i = 0; candidates[i]; i++) {
+        if (link_tool_has(candidates[i], "crt1.o") &&
+            link_tool_has(candidates[i], "crti.o") &&
+            link_tool_has(candidates[i], "crtn.o")) {
+            snprintf(out, out_size, "%s", candidates[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int find_linux_gcc_dir(char *out, size_t out_size) {
+    const char *patterns[] = {
+        "/usr/lib/gcc/*/*/crtbegin.o", "/usr/lib64/gcc/*/*/crtbegin.o", NULL
+    };
+    for (int pattern = 0; patterns[pattern]; pattern++) {
+        glob_t matches;
+        if (glob(patterns[pattern], 0, NULL, &matches) != 0) continue;
+        int found = 0;
+        for (size_t i = 0; i < matches.gl_pathc && !found; i++) {
+            char directory[RUN_PATH_MAX];
+            if (!link_tool_directory_of(matches.gl_pathv[i], directory, sizeof(directory))) {
+                continue;
+            }
+            if (link_tool_has(directory, "crtend.o") &&
+                link_tool_has(directory, "libgcc.a")) {
+                snprintf(out, out_size, "%s", directory);
+                found = 1;
+            }
+        }
+        globfree(&matches);
+        if (found) return 1;
+    }
+    return 0;
+}
+
+static int find_linux_interp(char *out, size_t out_size) {
+#if defined(__x86_64__)
+    const char *candidates[] = {
+        "/lib64/ld-linux-x86-64.so.2",
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/usr/lib64/ld-linux-x86-64.so.2", NULL
+    };
+#elif defined(__aarch64__)
+    const char *candidates[] = {
+        "/lib/ld-linux-aarch64.so.1",
+        "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", NULL
+    };
+#elif defined(__i386__)
+    const char *candidates[] = {"/lib/ld-linux.so.2", "/lib32/ld-linux.so.2", NULL};
+#elif defined(__riscv) && __riscv_xlen == 64
+    const char *candidates[] = {
+        "/lib/ld-linux-riscv64-lp64d.so.1",
+        "/lib/ld-linux-riscv64-lp64.so.1", NULL
+    };
+#else
+    const char *candidates[] = {NULL};
+#endif
+    for (int i = 0; candidates[i]; i++) {
+        if (runtime_file_exists(candidates[i])) {
+            snprintf(out, out_size, "%s", candidates[i]);
+            return 1;
+        }
+    }
+    // 兜底：发行版把它挪到别的 lib 目录时按名字找。
+    const char *patterns[] = {
+        "/lib*/ld-linux*.so.*", "/usr/lib*/ld-linux*.so.*", NULL
+    };
+    for (int pattern = 0; patterns[pattern]; pattern++) {
+        glob_t matches;
+        if (glob(patterns[pattern], 0, NULL, &matches) != 0) continue;
+        int found = 0;
+        for (size_t i = 0; i < matches.gl_pathc && !found; i++) {
+            if (runtime_file_exists(matches.gl_pathv[i])) {
+                snprintf(out, out_size, "%s", matches.gl_pathv[i]);
+                found = 1;
+            }
+        }
+        globfree(&matches);
+        if (found) return 1;
+    }
+    return 0;
+}
+
+static int find_linux_link_tools(LinuxLinkTools *tools) {
+    if (!find_program_on_path("ld.lld", tools->lld, sizeof(tools->lld))) return 0;
+    if (!find_linux_crt_dir(tools->crt_dir, sizeof(tools->crt_dir))) return 0;
+    if (!find_linux_interp(tools->interp, sizeof(tools->interp))) return 0;
+    if (!find_linux_gcc_dir(tools->gcc_dir, sizeof(tools->gcc_dir))) {
+        tools->gcc_dir[0] = '\0';
+    }
+    return 1;
+}
+#endif
+
+// 参数拼完之后统一回显、执行、报错。Linux 直连分支和驱动分支共用这一段。
+static int finish_link(LinkArgv *argv, const LinkOptions *link_options) {
+    int failed = argv->failed;
+    int link_status = 1;
+    if (!failed) {
+        print_command_line("link", argv->items);
+        link_status = run_process(argv->items);
+    }
+    link_argv_free(argv);
+    if (failed) return 1;
+    if (link_status != 0) {
+        report_link_failure(link_status, link_options);
+        return 1;
+    }
+    return 0;
+}
+
 // 把目标文件和 Runtime 静态库链接成可执行文件。
 static int link_object_file(const char *object_file, const char *exe_file, int static_link,
                             const LinkOptions *link_options) {
@@ -1338,10 +1528,99 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     link_argv_push(&argv, sdk_version);
     link_argv_push(&argv, sdk_version);
 #else
-    // 由 C 编译器驱动选择当前架构的 CRT、动态链接器和 compiler runtime。
+#if defined(__linux__) && !defined(__CYGWIN__)
+    // Linux：优先直接调 ld.lld（链接行里没有 cc）。探测不到工具链时回退 cc 驱动，
+    // 让驱动自己找 CRT / PT_INTERP / 默认库 —— 行为和引入直连之前一致。
+    LinuxLinkTools tools;
+    if (!find_linux_link_tools(&tools)) {
+        // 没装 lld 包（PATH 上没有 ld.lld），或 CRT / 动态链接器不在已知位置
+        // （例如 musl 发行版）都会走到这里。
+        char cc_path[RUN_PATH_MAX];
+        if (!find_program_on_path("cc", cc_path, sizeof(cc_path))) {
+            link_argv_free(&argv);
+            return report_missing_linker("ld.lld + CRT startup files, cc",
+                "install the lld package (provides ld.lld) or a C compiler driver "
+                "(cc) with the C development files (crt1.o / crtbegin.o / libc)");
+        }
+        if (verbose_commands) {
+            fprintf(stderr, "tap: note: ld.lld / CRT / dynamic linker not found; "
+                            "falling back to the cc driver\n");
+        }
+        link_argv_push(&argv, "cc");
+        if (static_link) link_argv_push(&argv, "-static");
+        link_argv_push(&argv, "-no-pie");
+        link_argv_push(&argv, object_file);
+        link_argv_push(&argv, runtime_static_path);
+        link_argv_push(&argv, "-o");
+        link_argv_push(&argv, exe_file);
+        // 驱动写法：`-Wl,` 必须保留前缀，不能按直连那样拆成裸参数。
+        push_link_options_driver(&argv, link_options);
+        link_argv_push(&argv, "-lm");
+        return finish_link(&argv, link_options);
+    }
+    // 直连路径：CRT 启动文件、PT_INTERP、libgcc / libc 的搜索路径都由
+    // find_linux_link_tools() 探测后显式给出。
+    link_argv_push(&argv, tools.lld);
+    link_argv_push(&argv, "-o");
+    link_argv_push(&argv, exe_file);
+    // cc 驱动默认会加这三个；缺了不影响运行，但产物和驱动链出来的更一致。
+    link_argv_push(&argv, "--build-id");
+    link_argv_push(&argv, "--eh-frame-hdr");
+    link_argv_push(&argv, "--hash-style=gnu");
+    if (static_link) {
+        link_argv_push(&argv, "-static");
+    } else {
+        link_argv_push(&argv, "-dynamic-linker");
+        link_argv_push(&argv, tools.interp);
+    }
+    // 启动文件：crt1.o 带 _start；crtbegin/crtend 由 GCC 提供（.init/.fini 钩子、
+    // .eh_frame 注册），-static 下配套的是 crtbeginT.o。
+    link_argv_push_path(&argv, tools.crt_dir, "crt1.o");
+    link_argv_push_path(&argv, tools.crt_dir, "crti.o");
+    if (tools.gcc_dir[0]) {
+        const char *begin = "crtbegin.o";
+        if (static_link && link_tool_has(tools.gcc_dir, "crtbeginT.o")) begin = "crtbeginT.o";
+        link_argv_push_path(&argv, tools.gcc_dir, begin);
+    }
+    // 库搜索路径：libc / libm 在 CRT 目录或 /usr/lib(64)，libgcc 在 gcc_dir。
+    link_argv_push_joined(&argv, "-L", tools.crt_dir);
+    if (tools.gcc_dir[0]) link_argv_push_joined(&argv, "-L", tools.gcc_dir);
+    link_argv_push(&argv, "-L/usr/lib");
+    link_argv_push(&argv, "-L/lib");
+    link_argv_push(&argv, "-L/usr/lib64");
+    link_argv_push(&argv, "-L/lib64");
+    link_argv_push(&argv, object_file);
+    link_argv_push(&argv, runtime_static_path);
+    // 用户库排在 Runtime 之后、系统库之前：静态链接的符号解析是单向的。
+    push_link_options(&argv, link_options);
+    link_argv_push(&argv, "-lm"); // 必须在目标文件和静态库之后，否则老 glibc 上 pow 未定义
+    if (static_link) {
+        link_argv_push(&argv, "--start-group");
+        link_argv_push(&argv, "-lgcc");
+        if (tools.gcc_dir[0] && link_tool_has(tools.gcc_dir, "libgcc_eh.a")) {
+            link_argv_push(&argv, "-lgcc_eh");
+        }
+        link_argv_push(&argv, "-lc");
+        link_argv_push(&argv, "--end-group");
+    } else {
+        // 照抄 cc 驱动的默认库组：i128 除法的 __divti3 来自 libgcc。
+        link_argv_push(&argv, "-lgcc");
+        link_argv_push(&argv, "--as-needed");
+        link_argv_push(&argv, "-lgcc_s");
+        link_argv_push(&argv, "--no-as-needed");
+        link_argv_push(&argv, "-lc");
+        link_argv_push(&argv, "-lgcc");
+        link_argv_push(&argv, "--as-needed");
+        link_argv_push(&argv, "-lgcc_s");
+        link_argv_push(&argv, "--no-as-needed");
+    }
+    if (tools.gcc_dir[0]) link_argv_push_path(&argv, tools.gcc_dir, "crtend.o");
+    link_argv_push_path(&argv, tools.crt_dir, "crtn.o");
+    return finish_link(&argv, link_options);
+#else
+    // Cygwin 及其他 Unix：仍由 C 编译器驱动选择 CRT、动态链接器和默认库。
     // `-lm` 必须放在目标文件和静态库之后：glibc 2.34 起 libm 并入了 libc，但更早的发行版
     // 和 Cygwin 仍需显式链接，否则 Runtime 里的 pow 会报未定义符号。
-    // macOS 走上面的 ld 分支，libm 在 libSystem 里，不需要这个标志。
 #ifdef __CYGWIN__
     // 用 clang 而不是 `cc`（Cygwin 上 cc 是 GCC 13），让驱动版本和生成 obj 的 LLVM 对齐。
     //
@@ -1374,21 +1653,9 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     push_link_options(&argv, link_options);
     link_argv_push(&argv, "-lm");
 #endif
+#endif
 
-    int link_status = 1;
-    if (!argv.failed) {
-        print_command_line("link", argv.items);
-        link_status = run_process(argv.items);
-    }
-    link_argv_free(&argv);
-
-    // argv.failed 说明拼参数时就 OOM 了，报错在那一层已经打过，这里不重复。
-    if (argv.failed) return 1;
-    if (link_status != 0) {
-        report_link_failure(link_status, link_options);
-        return 1;
-    }
-    return 0;
+    return finish_link(&argv, link_options);
 }
 
 // 先写出临时目标文件，再链接为指定可执行文件。

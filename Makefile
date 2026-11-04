@@ -133,7 +133,7 @@ $(TARGET): $(OBJECTS) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
 # 清理生成的文件
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET) $(SRC_DIR)/version.h
-	rm -rf output *.ll hello *.exe tests/*.exe *.dSYM
+	rm -rf *.ll *.exe tests/*.exe *.dSYM
 
 # 运行测试
 test: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)

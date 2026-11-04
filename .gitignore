@@ -2,6 +2,10 @@
 .cache/
 .vs/
 .workbuddy-ai/
+.workbuddy/
+
+.Trash-0/
+
 
 .DS_Store
 
