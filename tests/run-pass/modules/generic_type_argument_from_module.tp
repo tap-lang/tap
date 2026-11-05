@@ -11,7 +11,7 @@ import modules.clash_b as b;
 fn main(): i32 {
     let items: Vec<Point> = vec.new();
     let p: Point = b.make();
-    items = vec.push(items, p);
+    vec.push(&mut items, p);
 
     // 方法调用（名字里嵌了类型实参）和字段访问各来一次。
     print("len=%u y=%d\n", items.len(), items.get(0).y);

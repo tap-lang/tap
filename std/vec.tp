@@ -1,6 +1,10 @@
 import std.memory as memory;
 
 // 保存同一类型的可变数量元素；data 指向堆缓冲区，len/cap 以元素为单位。
+//
+// 读操作接收 `&Vec<T>`，写操作接收 `&mut Vec<T>`：
+//   - 写操作不再「整体读出来、改完、整体写回」，省掉一次结构体拷贝；
+//   - 更重要的是借用检查能拦住「拿着元素引用去 push」—— 扩容会让那个引用悬垂。
 pub struct Vec<T> {
     data: *T,
     len: uint,
@@ -22,20 +26,22 @@ pub fn with_capacity<T>(capacity: uint): Vec<T> {
 }
 
 // 返回当前保存的元素数量。
-pub fn len<T>(vec: Vec<T>): uint {
+pub fn len<T>(vec: &Vec<T>): uint {
     return vec.len;
 }
 
 // 返回当前无需再次分配即可容纳的元素数量。
-pub fn capacity<T>(vec: Vec<T>): uint {
+pub fn capacity<T>(vec: &Vec<T>): uint {
     return vec.cap;
 }
 
 // 确保 Vec<T> 还能追加 additional 个元素，必要时按 2 倍扩容。
-pub fn reserve<T>(vec: Vec<T>, additional: uint): Vec<T> {
+//
+// 扩容会重新分配缓冲区，之前拿到的元素引用全部失效 —— 借用检查会拦住这种用法。
+pub fn reserve<T>(vec: &mut Vec<T>, additional: uint) {
     let required: uint = vec.len + additional;
     if (required <= vec.cap) {
-        return vec;
+        return;
     }
 
     let next_capacity: uint = vec.cap;
@@ -47,37 +53,45 @@ pub fn reserve<T>(vec: Vec<T>, additional: uint): Vec<T> {
     }
     vec.data = memory.realloc<T>(vec.data, sizeof(T) * next_capacity);
     vec.cap = next_capacity;
-    return vec;
 }
 
 // 在末尾追加一个元素，并在容量不足时自动扩容。
-pub fn push<T>(vec: Vec<T>, value: T): Vec<T> {
-    vec = reserve<T>(vec, 1);
+pub fn push<T>(vec: &mut Vec<T>, value: T) {
+    reserve<T>(vec, 1);
     vec.data[vec.len] = value;
     vec.len++;
-    return vec;
 }
 
-// 返回指定索引的元素；索引越界时终止程序。
-pub fn get<T>(vec: Vec<T>, index: uint): T {
+// 返回指定索引的元素（按值拷贝）；索引越界时终止程序。
+pub fn get<T>(vec: &Vec<T>, index: uint): T {
     assert(index < vec.len, "Vec index out of bounds");
     return vec.data[index];
 }
 
+// 返回指定索引元素的**引用**，不拷贝。
+//
+// 拿到引用之后这个 Vec 就不能再改（`push` / `set` / `clear` 都会被拦下），
+// 否则扩容或覆盖会让引用指向一块已经作废的内存。
+pub fn get_ref<T>(vec: &Vec<T>, index: uint): &T {
+    assert(index < vec.len, "Vec index out of bounds");
+    return &vec.data[index];
+}
+
 // 替换指定索引的元素；索引越界时终止程序。
-pub fn set<T>(vec: Vec<T>, index: uint, value: T): Vec<T> {
+pub fn set<T>(vec: &mut Vec<T>, index: uint, value: T) {
     assert(index < vec.len, "Vec index out of bounds");
     vec.data[index] = value;
-    return vec;
 }
 
 // 清空所有元素并保留已经分配的容量。
-pub fn clear<T>(vec: Vec<T>): Vec<T> {
+pub fn clear<T>(vec: &mut Vec<T>) {
     vec.len = 0;
-    return vec;
 }
 
 // 释放内部缓冲区；元素拥有的其他资源不会被递归释放。
+//
+// 按值接收是刻意的：调用它就等于「把这个 Vec 用完了」，借用检查不允许在
+// 还有元素引用时调用它。
 pub fn free<T>(vec: Vec<T>): i32 {
     return memory.free<T>(vec.data);
 }

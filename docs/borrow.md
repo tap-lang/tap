@@ -67,6 +67,20 @@ trait Shape {
 | `*T` | `&T` / `&mut T` | 否 | 裸指针没有任何承诺，不能凭空升级成受检查的借用 |
 | `&T` | `&mut T` | 否 | 共享借用的调用方没承诺独占 |
 
+`&mut T → &T` 在**所有**位置都成立，不只是 `&mut x` 这种字面量：手里已经拿着一个
+`&mut T` 变量时（函数参数最常见），一样能当 `&T` 用。
+
+```text
+fn read(point: &Point): i32 { return point.x; }
+
+fn use_mut(point: &mut Point): i32 {
+    let shared: &Point = point;   // 赋值：可以
+    let a: i32 = read(point);     // 传参：可以
+    let b: i32 = point.peek();    // 调 &self 方法：可以
+    return a + b;
+}
+```
+
 `&T` 退化成 `*T` 是显式的，写出来就是「我知道我在干什么」：
 
 ```text
@@ -122,6 +136,18 @@ let b: &i32 = &value;               // 合法
 let c: &mut i32 = &mut value;       // error: already borrowed
 ```
 
+同一条**语句**里也一样 —— 实参位置的借用不活到语句之外，但彼此之间仍然互斥：
+
+```text
+swap(&mut x, &mut x);               // error: 'x' is already mutably borrowed
+compare(&x, &mut x);                // error: 'x' is already borrowed
+f(&mut x, &mut y);                  // 合法：不同变量
+g(&x, &x);                          // 合法：两个共享借用
+```
+
+实现上，语句内的临时借用单独记一份标记、语句边界清空，不和「活到作用域结束」的
+持久借用混在一起。
+
 通过共享引用写也是禁止的 —— 那是 `&T` 唯一的承诺：
 
 ```text
@@ -161,6 +187,37 @@ fn bad(values: &Vec<i32>): &i32 {
     return first(&numbers);      // error: 返回的是局部变量的借用
 }
 ```
+
+### 5. 方法调用也是一次借用
+
+调方法时接收者要满足方法声明的借用方式：
+
+| 接收者写法 | 对接收者的要求 |
+| --- | --- |
+| `&self` | 没有被 `&mut` 借走（共享借用之间可以共存） |
+| `&mut self` | 没有被任何借用占着 |
+| 按值接收 `self` | 没有被任何借用占着 —— 值被整个拿走，调用方手里的引用会悬垂 |
+
+```text
+let held: &Vec<i32> = &values;
+values.free();          // error: cannot call method 'free' on 'values'
+                        //        while it is borrowed
+
+let w: &i32 = r.width();
+r.grow(1);              // error: 'r' is borrowed and cannot be assigned here
+
+let p: Point = Point { x: 1 };
+let r: &i32 = p.peek();
+p.reset();              // error: 'p' is already borrowed, so it cannot be
+                        //        borrowed mutably
+```
+
+方法返回借用时，这次借用会登记到接收者身上（`let r = p.peek()` 之后 `p` 就被借走了）。
+**只对返回值是引用的方法生效** —— 否则 `let n = vec.len()` 会让后面所有
+`vec.data[i] = x` 全部误报。
+
+注意：从**裸指针**绕出去的借用不受这条保护（`&values.data[0]` 里的 `data` 是 `*T`），
+那是显式的「遗忘借用」，规则 2 也管不到它。
 
 ### 「在栈帧里」是怎么判定的
 
@@ -260,11 +317,22 @@ p.reset();              // error: 'p' is already borrowed, so it cannot be borro
 这些是**明确没做**的，不是 bug：
 
 - **引用参数最多一个**才能返回借用。需要「借自哪个参数」更细粒度时得等生命周期参数。
-- **结构体不能存借用。** `struct Parser { src: &String }` 需要生命周期参数，属于 L2。
+- **结构体存借用能编译，但不检查寿命。** 这条要说清楚：`struct Holder { src: &i32 }`
+  是合法的（引用在机器码里就是指针），但编译器不知道 `Holder` 和它借的那个值谁活得久：
+
+  ```text
+  struct Holder { src: &i32 }
+
+  fn make(): Holder {
+      let local: i32 = 7;
+      return Holder { src: &local };   // 现在能编译通过，返回的是悬垂指针
+  }
+  ```
+
+  要做对需要生命周期参数（L2），代价是单态化的 key 从「类型」变成「类型 + 区域」。
+  在那之前，**别让结构体持有借用**，用 `*T` 并自己管寿命。
 - **接收者只能是 `&self` / `&mut self` 这一层。** `&&self`、按值 + 借用的组合都不支持；
   方法签名里也不能出现生命周期标注。
-- **同一条语句里的两次 `&mut` 不查。** `f(&mut x, &mut x)` 目前放行 —— 临时借用不
-  登记别名。
 - **借用活到作用域结束**，不做 NLL。见上一节。
 - **不做自动 drop。** 借用检查只保证「引用不会悬垂」，不负责释放。`Vec` 仍然手工
   `free()`，字符串仍然由 Runtime 统一在进程退出时释放。
@@ -278,8 +346,12 @@ p.reset();              // error: 'p' is already borrowed, so it cannot be borro
   之后可以重新借用。
 - [`borrow_return.tp`](../tests/run-pass/types/borrow_return.tp)：返回借用的函数
   （`fn first(v: &Vec<T>): &T`）、借用穿过函数调用、`&param.field`。
+- [`reference_narrowing.tp`](../tests/run-pass/types/reference_narrowing.tp)：
+  `&mut T` 当 `&T` 用的三条路径（赋值、传参、调 `&self` 方法）。
 - [`self_reference.tp`](../tests/run-pass/traits/self_reference.tp)：`&self` / `&mut self`
   接收者、方法返回借用。
+- [`self_by_value.tp`](../tests/run-pass/traits/self_by_value.tp)：impl 里裸 `self`
+  （按值接收者，改的是副本）。
 - [`self_reference_generic.tp`](../tests/run-pass/traits/self_reference_generic.tp)：
   泛型约束下的 `&self` 调用、引用接收者、方法互相调用。
 - `tests/compile-fail/borrow/` 和 `tests/compile-fail/traits/` 下每条规则一个用例。

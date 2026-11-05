@@ -153,7 +153,7 @@ fn parse_array(src: String, pos: uint): Json {
     while (running) {
         let element: Json = parse_value(src, p);
         p = element.pos;
-        items = items.push(element);
+        items.push(element);
         p = skip_ws(src, p);
         let b: u8 = byte_at_or_zero(src, p);
         if (b == 44) {
@@ -190,8 +190,8 @@ fn parse_object(src: String, pos: uint): Json {
         p = skip_ws(src, p + 1);
         let value: Json = parse_value(src, p);
         p = value.pos;
-        keys = keys.push(key_value.text);
-        values = values.push(value);
+        keys.push(key_value.text);
+        values.push(value);
         p = skip_ws(src, p);
         let b: u8 = byte_at_or_zero(src, p);
         if (b == 44) {
@@ -331,12 +331,12 @@ fn main(): i32 {
     let ratio: Result<f64, String> = parse.parse_f64("1.5e-3");
     let built_keys: Vec<String> = vec.new<String>();
     let built_values: Vec<Json> = vec.new<Json>();
-    built_keys = built_keys.push("half");
-    built_values = built_values.push(number_of(0.5));
-    built_keys = built_keys.push("eighth");
-    built_values = built_values.push(number_of(1.0 / 8.0));
-    built_keys = built_keys.push("ratio");
-    built_values = built_values.push(number_of(unwrap_or(ratio, 0.0)));
+    built_keys.push("half");
+    built_values.push(number_of(0.5));
+    built_keys.push("eighth");
+    built_values.push(number_of(1.0 / 8.0));
+    built_keys.push("ratio");
+    built_values.push(number_of(unwrap_or(ratio, 0.0)));
 
     let document: Json = blank(0);
     document.kind = 5;

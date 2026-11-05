@@ -19,12 +19,12 @@ pub fn new(): StringBuilder {
 
 // 返回当前已追加的 UTF-8 字节数。
 pub fn len(builder: StringBuilder): uint {
-    return bytes.len(builder.buffer);
+    return bytes.len(&builder.buffer);
 }
 
 // 追加一个原始字节。
 pub fn append_byte(builder: StringBuilder, value: u8): StringBuilder {
-    builder.buffer = bytes.push(builder.buffer, value);
+    bytes.push(&mut builder.buffer, value);
     return builder;
 }
 
@@ -32,19 +32,19 @@ pub fn append_byte(builder: StringBuilder, value: u8): StringBuilder {
 // 具体类型由调用点推断，因此整数、浮点数和 bool 共用这一套接口。
 pub fn append<T>(builder: StringBuilder, value: T): StringBuilder {
     let text: String = value as String;
-    builder.buffer = bytes.extend(builder.buffer, text);
+    bytes.extend(&mut builder.buffer, text);
     return builder;
 }
 
 // 清空内容但保留内部容量。
 pub fn clear(builder: StringBuilder): StringBuilder {
-    builder.buffer = bytes.clear(builder.buffer);
+    bytes.clear(&mut builder.buffer);
     return builder;
 }
 
 // 返回独立字符串快照；后续修改构建器不会改变该字符串。
 pub fn to_string(builder: StringBuilder): String {
-    return bytes.to_string(builder.buffer);
+    return bytes.to_string(&builder.buffer);
 }
 
 // 释放内部缓冲区；调用后不能继续使用这个 StringBuilder。

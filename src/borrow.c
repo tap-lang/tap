@@ -22,6 +22,11 @@ typedef struct BorrowSymbol {
     int mutable_borrow_rank;
     // 被 `&` 借出时同理。多次共享借用取**最外层**的秩，保证内层块退出时不会误清。
     int shared_borrow_rank;
+    // 当前**语句**里已经发生的临时借用（`f(&mut x, &mut x)` 的实参位置）。
+    // 语句边界清空：它们不像 `let r = &mut x` 那样活到作用域末尾，所以不能记在
+    // 上面两个秩字段里 —— 那样会把「同一语句内的冲突」和「跨语句的冲突」混为一谈。
+    int temp_mutable_borrow;
+    int temp_shared_borrow;
     // 声明的完整类型，用来判断 `&a.b[i]` 到底指向栈帧还是堆。未知时为 NULL，
     // 此时一律按「还在栈帧里」处理（保守方向：宁可报错也不放过悬垂）。
     const VarTypeNode *type;
@@ -91,6 +96,8 @@ static BorrowSymbol *insert_symbol(BorrowContext *context, const char *name,
     symbol->reference_mutable = reference_mutable;
     symbol->mutable_borrow_rank = -1;
     symbol->shared_borrow_rank = -1;
+    symbol->temp_mutable_borrow = 0;
+    symbol->temp_shared_borrow = 0;
     symbol->type = type;
     symbol->next = context->symbols;
     context->symbols = symbol;
@@ -110,6 +117,17 @@ static void pop_symbols_to(BorrowContext *context, BorrowSymbol *mark, int rank)
     for (BorrowSymbol *symbol = context->symbols; symbol; symbol = symbol->next) {
         if (symbol->mutable_borrow_rank == rank) symbol->mutable_borrow_rank = -1;
         if (symbol->shared_borrow_rank == rank) symbol->shared_borrow_rank = -1;
+    }
+}
+
+// 语句边界：清掉上一句留下的临时借用标记。
+//
+// 直接遍历当前符号表就够了 —— 语句内的临时借用一定落在**当前作用域里已登记**的
+// 名字上，不需要额外维护一个链表。
+static void clear_temp_borrows(BorrowContext *context) {
+    for (BorrowSymbol *symbol = context->symbols; symbol; symbol = symbol->next) {
+        symbol->temp_mutable_borrow = 0;
+        symbol->temp_shared_borrow = 0;
     }
 }
 
@@ -435,35 +453,47 @@ static int reference_is_mutable(ASTNode *expression) {
 // 借用冲突检查的核心：source 这个符号要被借出 is_mutable。
 //
 // mark 只在借用**会持续**的地方为真（`let r = ...`）：临时借用（`f(&mut x)` 这种）
-// 在语句结束时就不存在了，不需要留下标记。
+// 在语句结束时就不存在了，不记进秩字段，只记一个语句级的临时标记。
+//
+// 反过来，检查临时借用时**必须**把同一语句里已经发生的临时借用也算进来，
+// 否则 `f(&mut x, &mut x)` 这种写法会溜过去 —— 两次借用都没留下持久标记。
 static void check_symbol_borrow_conflict(BorrowContext *context,
                                          BorrowSymbol *source, int is_mutable,
                                          int mark,
                                          const ASTNode *diagnostic_node) {
     if (!source) return;
+    int check_temp = !mark;
 
     if (is_mutable) {
-        if (source->mutable_borrow_rank >= 0) {
+        if (source->mutable_borrow_rank >= 0 ||
+            (check_temp && source->temp_mutable_borrow)) {
             report_error(diagnostic_node, "'%s' is already mutably borrowed",
                          source->name); // 中文：已经被独占借用
         }
-        if (source->shared_borrow_rank >= 0) {
+        if (source->shared_borrow_rank >= 0 ||
+            (check_temp && source->temp_shared_borrow)) {
             report_error(diagnostic_node,
                          "'%s' is already borrowed, so it cannot be borrowed mutably",
                          source->name); // 中文：已被共享借用，不能再独占借用
         }
         if (mark) source->mutable_borrow_rank = context->rank;
+        else source->temp_mutable_borrow = 1;
         return;
     }
 
-    if (source->mutable_borrow_rank >= 0) {
+    if (source->mutable_borrow_rank >= 0 ||
+        (check_temp && source->temp_mutable_borrow)) {
         report_error(diagnostic_node,
                      "'%s' is mutably borrowed, so it cannot be borrowed again",
                      source->name); // 中文：已被独占借用，不能再借用
     }
-    if (mark && (source->shared_borrow_rank < 0 ||
-                 context->rank < source->shared_borrow_rank)) {
-        source->shared_borrow_rank = context->rank;
+    if (mark) {
+        if (source->shared_borrow_rank < 0 ||
+            context->rank < source->shared_borrow_rank) {
+            source->shared_borrow_rank = context->rank;
+        }
+    } else {
+        source->temp_shared_borrow = 1;
     }
 }
 
@@ -513,25 +543,45 @@ static void mark_method_receiver_borrow(BorrowContext *context,
                                  diagnostic_node);
 }
 
-// `&mut self` 方法调用等于对接收者做一次**临时**独占借用：只要接收者当前还被
-// 别处借走，这次调用就不成立（`let r = p.peek(); p.reset();`）。
+// 方法调用本身就是一次借用，接收者当前的状态必须允许这次调用。
 //
-// 不登记标记（mark = 0）：方法调用结束借用就结束，不像 `let r = &p` 那样持续到
+// 三种接收者要求不同：
+//   `&self`      共享借用 —— 和已有的共享借用可以共存，但已被独占借走就不行
+//   `&mut self`  临时独占借用 —— 接收者不能还被任何借用占着
+//   按值接收      等于把接收者整个拿走（`values.free()`）—— 同样不能还被借走，
+//                 否则调用方手里那个引用立刻悬垂
+//
+// 都不登记标记（mark = 0）：方法调用结束借用就结束，不像 `let r = &p` 那样持续到
 // 作用域末尾。接收者本身是引用时也跳过 —— 借的是它指向的存储，不是这个槽。
 static void check_method_receiver_borrow(BorrowContext *context,
                                          ASTNode *expression) {
     if (!expression || expression->type != NODE_FUNCTION_CALL) return;
 
+    FunctionCallNode *call = (FunctionCallNode *)expression;
     BorrowSymbol *receiver = NULL;
-    FunctionNode *function = resolve_called_function(
-        context, (FunctionCallNode *)expression, &receiver);
+    FunctionNode *function = resolve_called_function(context, call, &receiver);
     if (!function || !receiver || receiver->is_reference) return;
 
     const VarTypeNode *self_type = function_parameter_type(function, 0);
-    if (!self_type || !self_type->is_reference || !self_type->reference_mutable) {
+    if (!self_type) return;
+
+    // 按值接收：单独一条诊断。说「借用了就不能再借」会让人以为只是借用冲突，
+    // 实际是「这个值被拿走了，你手上那个引用要悬垂」。
+    if (!self_type->is_reference) {
+        if (receiver->mutable_borrow_rank >= 0 ||
+            receiver->shared_borrow_rank >= 0) {
+            const char *dot = strrchr(call->name, '.');
+            report_error(expression,
+                         "cannot call method '%s' on '%s' while it is borrowed",
+                         dot ? dot + 1 : call->name, receiver->name);
+            // 中文：接收者还被借用着，不能调用按值接收的方法
+        }
         return;
     }
-    check_symbol_borrow_conflict(context, receiver, 1, 0, expression);
+
+    // `&mut self` 是独占要求；`&self` 只要接收者没被独占借走就行。
+    check_symbol_borrow_conflict(context, receiver,
+                                 self_type->reference_mutable, 0, expression);
 }
 
 // 普通使用（读取）一个已经被 `&mut` 借出的变量。
@@ -539,7 +589,9 @@ static void check_plain_use(BorrowContext *context, ASTNode *expression) {
     if (!expression || expression->type != NODE_IDENTIFIER) return;
     BorrowSymbol *symbol =
         lookup_symbol(context, ((IdentifierNode *)expression)->name);
-    if (!symbol || symbol->mutable_borrow_rank < 0) return;
+    if (!symbol) return;
+    // 临时借用也算：`f(&mut x, x)` 里第二个实参读的就是被独占借走的 x。
+    if (symbol->mutable_borrow_rank < 0 && !symbol->temp_mutable_borrow) return;
     report_error(expression,
                  "'%s' is mutably borrowed and cannot be used here",
                  symbol->name); // 中文：变量已被独占借用
@@ -683,6 +735,8 @@ static void walk_expression(BorrowContext *context, ASTNode *expression) {
 }
 
 static void walk_statement(BorrowContext *context, ASTNode *statement) {
+    // 临时借用是**语句级**的：上一句的 `&mut x` 到这一句就不存在了。
+    clear_temp_borrows(context);
     switch (statement->type) {
         case NODE_VAR_DECL: {
             VarDeclNode *declaration = (VarDeclNode *)statement;

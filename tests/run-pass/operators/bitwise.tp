@@ -42,10 +42,11 @@ fn main(): i32 {
     // 嵌套泛型结尾的 `>>` 必须继续被当作两个独立的 `>`：词法层不能把它合并成
     // 右移运算符，否则下面这两行的类型实参解析会失败。
     let inner: Vec<i32> = vec.new();
-    inner = vec.push<i32>(inner, 7);
+    vec.push<i32>(&mut inner, 7);
     let outer: Vec<Vec<i32>> = vec.new();
-    outer = vec.push<Vec<i32>>(outer, inner);
-    print("nested_vec=%d\n", vec.get<i32>(vec.get<Vec<i32>>(outer, 0), 0));
+    vec.push<Vec<i32>>(&mut outer, inner);
+    let inner_copy: Vec<i32> = vec.get<Vec<i32>>(&outer, 0);
+    print("nested_vec=%d\n", vec.get<i32>(&inner_copy, 0));
 
     return 0;
 }

@@ -5,6 +5,8 @@ extern fn __tap_bytes_to_string(data: *u8, length: uint): String;
 extern fn __tap_string_copy_bytes(value: String, destination: *u8, length: uint): i32;
 
 // 使用堆内存保存可变长度字节；len 是有效长度，cap 是已分配容量。
+//
+// 和 `std.vec.Vec` 一样：读操作接收 `&ByteVec`，写操作接收 `&mut ByteVec`。
 pub struct ByteVec {
     data: *u8,
     len: uint,
@@ -29,19 +31,19 @@ pub fn new(): ByteVec {
 }
 
 // 返回当前有效字节数。
-pub fn len(vec: ByteVec): uint {
+pub fn len(vec: &ByteVec): uint {
     return vec.len;
 }
 
 // 返回无需重新分配即可容纳的字节数。
-pub fn capacity(vec: ByteVec): uint {
+pub fn capacity(vec: &ByteVec): uint {
     return vec.cap;
 }
 
 // 确保容量不小于 minimum；需要扩容时按 2 倍增长。
-pub fn reserve(vec: ByteVec, minimum: uint): ByteVec {
+pub fn reserve(vec: &mut ByteVec, minimum: uint) {
     if (minimum <= vec.cap) {
-        return vec;
+        return;
     }
 
     let next_capacity: uint = vec.cap;
@@ -50,32 +52,29 @@ pub fn reserve(vec: ByteVec, minimum: uint): ByteVec {
     }
     vec.data = memory.realloc(vec.data, next_capacity);
     vec.cap = next_capacity;
-    return vec;
 }
 
 // 在末尾追加一个字节。
-pub fn push(vec: ByteVec, value: u8): ByteVec {
+pub fn push(vec: &mut ByteVec, value: u8) {
     if (vec.len == vec.cap) {
-        vec = reserve(vec, vec.cap * 2);
+        reserve(vec, vec.cap * 2);
     }
     vec.data[vec.len] = value;
     vec.len++;
-    return vec;
 }
 
 // 在末尾批量追加 String 的 UTF-8 原始字节。
-pub fn extend(vec: ByteVec, value: String): ByteVec {
+pub fn extend(vec: &mut ByteVec, value: String) {
     let value_length: uint = value.len();
-    vec = reserve(vec, vec.len + value_length);
+    reserve(vec, vec.len + value_length);
     if (value_length > 0) {
         __tap_string_copy_bytes(value, &vec.data[vec.len], value_length);
         vec.len = vec.len + value_length;
     }
-    return vec;
 }
 
 // 读取指定字节；越界时输出错误并返回 0。
-pub fn get(vec: ByteVec, index: uint): u8 {
+pub fn get(vec: &ByteVec, index: uint): u8 {
     if (index >= vec.len) {
         print("ByteVec index out of bounds: index=%llu, length=%llu\n", index, vec.len);
         return 0;
@@ -84,23 +83,21 @@ pub fn get(vec: ByteVec, index: uint): u8 {
 }
 
 // 修改指定字节；越界时输出错误并保持内容不变。
-pub fn set(vec: ByteVec, index: uint, value: u8): ByteVec {
+pub fn set(vec: &mut ByteVec, index: uint, value: u8) {
     if (index >= vec.len) {
         print("ByteVec index out of bounds: index=%llu, length=%llu\n", index, vec.len);
-        return vec;
+        return;
     }
     vec.data[index] = value;
-    return vec;
 }
 
 // 清空有效内容但保留已分配容量，方便后续复用。
-pub fn clear(vec: ByteVec): ByteVec {
+pub fn clear(vec: &mut ByteVec) {
     vec.len = 0;
-    return vec;
 }
 
 // 按 len 复制有效字节并返回独立字符串；允许内容包含 NUL。
-pub fn to_string(vec: ByteVec): String {
+pub fn to_string(vec: &ByteVec): String {
     return __tap_bytes_to_string(vec.data, vec.len);
 }
 

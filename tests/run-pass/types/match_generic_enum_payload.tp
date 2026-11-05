@@ -18,9 +18,9 @@ fn payload_len(items: Result<Vec<i32>, String>, fallback: u32): u32 {
 
 fn main(): i32 {
     let v: Vec<i32> = vec.new();
-    v = vec.push(v, 1);
-    v = vec.push(v, 2);
-    v = vec.push(v, 3);
+    vec.push(&mut v, 1);
+    vec.push(&mut v, 2);
+    vec.push(&mut v, 3);
 
     let ok: Result<Vec<i32>, String> = Result<Vec<i32>, String>.Ok(v);
     print("ok=%u\n", payload_len(ok, 0));

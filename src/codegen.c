@@ -1171,6 +1171,17 @@ static int reference_assignable_to(
     return 0;
 }
 
+// 源类型能否写进指针 / 借用目标。
+//
+// 除了完全相等，还允许 `&mut T` → `&T` 的能力收窄。规则只写一份
+// （`tap_reference_coerces`），函数实参、`let` 声明、返回值和方法接收者共用，
+// 否则会出现「传参可以、赋值不行」这种前后不一致。
+static int pointer_assignable(const VarTypeNode *source,
+                              const VarTypeNode *target) {
+    if (!source || !target) return 0;
+    return tap_type_equal(source, target) || tap_reference_coerces(source, target);
+}
+
 // 判断源表达式是否可以写入目标声明类型。
 static int expression_assignable_to(CodeGenContext *context, ASTNode *expression,
                                     const VarTypeNode *target_type) {
@@ -1239,22 +1250,22 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                     context, (FunctionCallNode *)expression, NULL, NULL, NULL);
             }
             const VarTypeNode *return_type = function_return_var_type(function);
-            return return_type && tap_type_equal(return_type, target_type);
+            return return_type && pointer_assignable(return_type, target_type);
         }
         if (expression && expression->type == NODE_IDENTIFIER) {
             const char *name = ((IdentifierNode *)expression)->name;
             Symbol *symbol = find_symbol(context, name);
             if (symbol && symbol->declared_type) {
-                return tap_type_equal(symbol->declared_type, target_type);
+                return pointer_assignable(symbol->declared_type, target_type);
             }
             StructFieldNode *field =
                 field_access_info(context, name, NULL, NULL, NULL, NULL);
-            return field && tap_type_equal(field->field_type, target_type);
+            return field && pointer_assignable(field->field_type, target_type);
         }
         if (expression && expression->type == NODE_INDEX_EXPRESSION) {
             const VarTypeNode *element_type =
                 indexed_value_type(context, expression);
-            return element_type && tap_type_equal(element_type, target_type);
+            return element_type && pointer_assignable(element_type, target_type);
         }
         return 0;
     }

@@ -1,0 +1,22 @@
+// 同一条语句里的两次 `&mut` 也要查。
+//
+// 临时借用不记在作用域秩上（`f(&mut x)` 到语句结束就没了），所以必须在语句内部
+// 单独记一份 —— 否则两次借用都「没留下痕迹」，检查就成了空转。
+fn swap(left: &mut i32, right: &mut i32) {
+    let temp: i32 = left[0];
+    left[0] = right[0];
+    right[0] = temp;
+}
+
+fn main(): i32 {
+    let x: i32 = 1;
+    swap(&mut x, &mut x);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'x' is already mutably borrowed
+- .exit
+1
+-- */

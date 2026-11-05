@@ -1,0 +1,45 @@
+// `&mut T` 可以当 `&T` 用（能力收窄：独占降级成共享），反方向不行。
+//
+// 这条规则在三个地方都要成立：函数实参、`let` 赋值、方法接收者。
+// 只对 `&mut x` 字面量放行是不够的 —— 手里已经拿着一个 `&mut T` 变量时
+// （函数参数最常见）同样得能用。
+
+struct Point { x: i32 }
+
+trait Peek {
+    fn peek(&self): i32;
+}
+
+impl Peek for Point {
+    fn peek(&self): i32 {
+        return self.x;
+    }
+}
+
+fn read(point: &Point): i32 {
+    return point.x;
+}
+
+fn use_mut(point: &mut Point): i32 {
+    // 1. 当实参传给 `&T` 参数
+    let a: i32 = read(point);
+    // 2. 赋给 `&T` 变量
+    let shared: &Point = point;
+    let b: i32 = read(shared);
+    // 3. 调 `&self` 方法
+    let c: i32 = point.peek();
+    return a + b + c;
+}
+
+fn main(): i32 {
+    let point: Point = Point { x: 3 };
+    print("%d\n", use_mut(&mut point));
+    return 0;
+}
+
+/** -- test
+- .stdout
+9
+- .exit
+0
+-- */

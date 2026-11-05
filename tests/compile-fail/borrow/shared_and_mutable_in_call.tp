@@ -1,0 +1,15 @@
+// 同一语句里共享借用和独占借用也不能并存。
+fn compare(shared: &i32, exclusive: &mut i32) {}
+
+fn main(): i32 {
+    let x: i32 = 1;
+    compare(&x, &mut x);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'x' is already borrowed, so it cannot be borrowed mutably
+- .exit
+1
+-- */

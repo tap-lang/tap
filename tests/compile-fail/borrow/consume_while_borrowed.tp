@@ -1,0 +1,32 @@
+// 按值接收的方法等于把接收者整个拿走（`consume(self)` 语义），
+// 此时调用方手里那个引用会立刻悬垂，必须拦下。
+trait Api {
+    fn peek(&self): &i32;
+    fn consume(self): i32;
+}
+
+struct Buffer { value: i32 }
+
+impl Api for Buffer {
+    fn peek(&self): &i32 {
+        return &self.value;
+    }
+    fn consume(v: Buffer): i32 {
+        return v.value;
+    }
+}
+
+fn main(): i32 {
+    let b: Buffer = Buffer { value: 5 };
+    let r: &i32 = b.peek();
+    print("%d\n", b.consume());
+    print("%d\n", *r);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot call method 'consume' on 'b' while it is borrowed
+- .exit
+1
+-- */

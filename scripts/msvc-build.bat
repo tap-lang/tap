@@ -233,6 +233,8 @@ REM README.md is mostly a doc index, so ship the docs it points at - otherwise
 REM every link in the packaged README is dead.
 mkdir "%PKG_DIR%\docs" 2>nul
 xcopy /y /q "docs\*.md"                "%PKG_DIR%\docs\" >nul
+mkdir "%PKG_DIR%\docs\todo" 2>nul
+xcopy /y /q "docs\todo\*.md"  "%PKG_DIR%\docs\todo\" >nul
 
 REM LLVM-C.dll is the one non-system DLL tap.exe needs. CMake copies it next to
 REM the binary when TAP_LLVM_C_ROOT is set; fall back to the LLVM package itself.

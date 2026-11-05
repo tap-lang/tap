@@ -29,6 +29,12 @@ int tap_type_equal(const VarTypeNode *left, const VarTypeNode *right);
 int tap_receiver_type_matches(const VarTypeNode *parameter,
                               const VarTypeNode *receiver);
 
+// `&mut T` 能不能当 `&T` 用（能力收窄：独占降级成共享）。
+//
+// 反方向永远不行；借用和裸指针之间也不走这条（`*T` 是「遗忘借用」，另一套规则）。
+// 只比较元素类型，因为两者在机器码里是同一个指针。
+int tap_reference_coerces(const VarTypeNode *source, const VarTypeNode *target);
+
 // 在程序里按名字查找声明。
 //
 // 单态化和 Codegen 都要查结构体 / 枚举 / 字段，两边原本各写了一份 —— 而且

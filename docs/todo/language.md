@@ -1,0 +1,334 @@
+# 语言与类型系统：还没做的
+
+本文记语言层面的缺口，**不含**借用检查（见 [`borrow.md`](borrow.md)）和字符串能力
+（见 [`string.md`](string.md)）。每条都附实测的错误信息，都是 2026-11-06 用
+`build/tap -ir -o /dev/null` 跑出来的。
+
+## 缺口一览
+
+| # | 缺口 | 现在什么表现 | 收益 | 代价 |
+|---|---|---|---|---|
+| 1 | 没有固有 impl（`impl Point { }`） | `expected 'for' after trait name in impl` | 高 | 小 |
+| 2 | 泛型类型不能 impl | `impl for a generic type is not supported yet` | 高 | 大 |
+| 3 | 限定类型名 `vec.Vec<i32>` | `expected token '=' but got '.'` | 中 | 小 |
+| 4 | match 无嵌套模式、无分支守卫 | `expected '(' but got 'identifier'` | 中 | 中 |
+| 5 | 载荷枚举不能按值递归 | `struct` 报类型不匹配；`enum` 直接炸 LLVM IR 校验 | 中 | 中 |
+| 6 | 没有 for-each | `expected '(' but got 'identifier'` | 高 | 大 |
+| 7 | 表达式结果上不能调方法 | `calling a method on an expression result is not supported` | 高 | 中 |
+| 8 | `if` 不是表达式 | 无 `let x = if (c) { 1 } else { 2 }` | 低 | 小 |
+| 9 | 没有切片类型 `[T]` / `&[T]` | `expected token ';' but got ']'` | 中 | 大 |
+
+## 1. 固有 impl（没有 trait 的 impl）
+
+### 现在什么表现
+
+```text
+struct Point { x: i32 }
+
+impl Point {
+    fn peek(&self): i32 { return self.x; }
+}
+```
+
+```text
+error: expected `for` after trait name in impl
+```
+
+**整个仓库里没有一个不带 `for` 的 `impl`** —— 所有方法都必须挂在一个 trait 上。想给
+一个类型加一个方法，就得先定义一个只用一次的单方法 trait：
+
+```text
+trait Peek { fn peek(&self): i32; }
+impl Peek for Point { fn peek(&self): i32 { return self.x; } }
+```
+
+标准库里 `std.vec` 之类因为全是自由函数反而绕开了这个问题，但一旦写面向对象的代码，
+样板量立刻翻倍。
+
+### 改法
+
+`parser.c` 的 `parse_impl`：`impl` 之后读到的名字如果下一个 token 不是 `for`，就把它当
+**目标类型**，`trait_name` 置空。后面登记方法、校验签名、`find_method_function` 的查找
+路径都不用改 —— 它们本来就是按「类型 + 方法名」找的，只是现在多了一种没有 trait 约束的
+来源。
+
+需要额外定的规则：
+
+- **同名冲突**：固有 impl 的方法和 trait impl 的方法同名时谁优先。建议固有 impl 优先
+  （Rust 就是这条），并给一条明确的诊断说明另一个来自哪个 trait。
+- **`impl Point` 里的方法不参与 trait 约束**：`fn f<T: Peek>(p: &T)` 不能调到固有方法，
+  这是对的，不用特殊处理。
+
+代价：小。`parse_impl` 一个分支 + 查找路径一个回退。
+
+## 2. 泛型类型不能 impl
+
+### 现在什么表现
+
+```text
+impl Sized2 for Vec<i32> {          // 连具体实例化都不行
+    fn size(&self): uint { return self.len; }
+}
+```
+
+```text
+error: impl for a generic type is not supported yet
+```
+
+`impl<T> Show for Vec<T>` 更没有讨论的必要 —— 解析阶段就拒了。
+
+### 为什么难
+
+impl 表现在以「类型名」为 key。泛型类型要参与约束求解，key 必须变成「类型构造器 +
+类型实参」，还要在单态化时按实参做匹配（`impl Show for Vec<T>` 能不能覆盖
+`impl Show for Vec<i32>`？优先级怎么定？）。这和关联类型（见 [`../TODO.md`](../TODO.md)
+的 trait 后续）是同一个量级的工作。
+
+### 折中
+
+先支持**具体实例化**（`impl Sized2 for Vec<i32>`）：把类型实参拼进 impl 表的 key
+（`Vec<i32>` 而不是 `Vec`），单态化时按完全相同的类型名匹配。这能覆盖「给某个具体容器
+加一个方法」的常见需求，改动局限在 impl 表的 key 生成和查找。
+
+泛型形式（`impl<T> Show for Vec<T>`）留到关联类型那一期一起做。
+
+## 3. 限定类型名 `vec.Vec<i32>`
+
+### 现在什么表现
+
+```text
+import std.vec as vec;
+
+let v: vec.Vec<i32> = vec.new();
+```
+
+```text
+error: expected token `=` but got `.`
+```
+
+`parse_type` 只读一个标识符就返回，后面的 `.` 留给外层的 `let` 解析，于是报「期待 `=`」。
+
+### 为什么需要
+
+类型名的三级查找（本模块 / 裸名导入 / 命名空间导入兜底）在**同时导入两个都导出 `Point`
+的模块**时只能报歧义，唯一能显式消歧的写法就是 `a.Point`，而它恰好不支持。现在的绕法是
+不写类型名、靠推断，或者改名。
+
+### 改法
+
+`parse_type` 里加一个和 `parse_primary` 一样的点号循环：读到标识符后如果跟 `.`，就把
+前一个当模块名、后一个当类型名，走「显式模块前缀」这一级查找（优先级最高）。
+
+代价：小。但要注意和 `*fn(...)`、`[T; N]` 这些类型的组合位置。
+
+## 4. match 没有嵌套模式，也没有分支守卫
+
+### 现在什么表现
+
+```text
+enum Shape { Dot(Point), Empty }
+struct Point { x: i32, y: i32 }
+
+let r: i32 = match s {
+    Shape.Dot(Point { x: a, y: b }) => a + b,   // error: expected `(` but got `identifier`
+    Shape.Empty => 0,
+};
+```
+
+```text
+let r: i32 = match s {
+    Shape.Dot(n) if n > 0 => n,                 // error: expected `(` but got `identifier`
+    Shape.Dot(n) => 0,
+};
+```
+
+载荷位置只接受标识符列表（`Variant(a, b)`）或单个 `_`，不能再嵌套一层模式，也不能挂
+条件。
+
+### 改法
+
+**嵌套模式**：把 `parse_match_pattern` 从「变体名 + 标识符列表」改成递归 —— 每个载荷位置
+要么是标识符、要么是 `_`、要么是另一个变体模式、要么是结构体模式。降级阶段要跟着递归
+生成字段提取。
+
+**分支守卫**：在 `=>` 前接受 `if <表达式>`，生成的代码里在分支体前加一个条件跳转；
+穷尽性检查要放宽（带守卫的分支不算「覆盖」，除非守卫恒真 —— 保守做法是要求末尾仍有
+无守卫的兜底分支，和 Rust 一致）。
+
+代价：中。模式语法和降级逻辑都要动，穷尽性检查要重新想。
+
+### 收益
+
+「枚举套结构体」是很常见的形状（`std.json` 的值类型就是），现在必须在 match 里先绑到
+局部变量再逐字段取。
+
+## 5. 载荷枚举不能按值递归
+
+先澄清一件事：**用指针递归已经是能用的**，两条都实测通过：
+
+```text
+struct Node { value: i32, next: *Node }        // 可以
+enum Node { Leaf(i32), Pair(*Node, *Node) }    // 可以
+```
+
+不行的是**按值**递归 —— 类型大小依赖自身：
+
+```text
+struct Node { value: i32, next: Node }
+```
+
+```text
+error: struct 'Node' field 'next' type mismatch
+```
+
+```text
+enum Node { Leaf(i32), Pair(Node, Node) }
+```
+
+```text
+LLVM IR verification failed: Cannot allocate unsized type
+  %a = alloca %Node, align 8
+storing unsized types is not allowed
+```
+
+`enum` 这条是**先漏到 LLVM 才炸**的：前端没查出来，报错信息对用户毫无意义，还带着
+IR 片段。这本身就是一个该修的小 bug（不管要不要支持按值递归）。
+
+### 要做的事
+
+1. **必做**：在 sema 阶段检测「类型大小依赖自身」，给出明确诊断
+   （`recursive type 'Node' has infinite size; use *Node instead`）。要按结构体 / 枚举
+   的字段图做一次环检测，环上不能全是按值边。
+2. **可选**：按值递归自动装箱（Rust 的 `Box`），需要先有所有权模型，不建议现在做。
+
+所以这一条的实际工作量在**诊断**上，不在语言能力上。
+
+## 6. 没有 for-each / 迭代协议
+
+### 现在什么表现
+
+```text
+for x in v { ... }
+```
+
+```text
+error: expected `(` but got `identifier`
+```
+
+`for` 只有三段式（`for (let i: i32 = 0; i < n; i++)`），没有任何迭代器概念。
+
+### 三条路线
+
+**a. 编译器内建**：`for (x in expr)` 按容器类型展开成 `while` + `len` + `get` 或
+下标访问。改动在 `parser.c` + 降级阶段，能覆盖数组和 `Vec`，但对用户自定义类型无效。
+
+**b. 结构化协议**：约定 `len` / `get` 两个方法的形状，编译器按名字查。比 a 通用，
+但「按名字查方法」是一种隐式契约，容易出错。
+
+**c. 真正的 `Iterator` trait**：需要关联类型（`type Item`），也就是
+[`../TODO.md`](../TODO.md) 里「trait v1 的后续」第一条。代价最大，但方向最正。
+
+**建议**：先做 a（覆盖 `[T; N]` 和 `Vec<T>`，这两个占了绝大多数场景），等关联类型
+落地再考虑 c。
+
+## 7. 表达式结果上不能调方法
+
+### 现在什么表现
+
+```text
+let list: Vec<Point> = vec.new();
+list.push(inner);
+print("%d\n", list.get(0).peek());
+```
+
+```text
+error: calling a method on an expression result is not supported; bind the value to a variable first
+```
+
+`Vec` 套 `Vec`、结构体字段套结构体、`get` 之后再取字段 —— 全都要先绑临时变量：
+
+```text
+let first: Point = list.get(0);
+print("%d\n", first.peek());
+```
+
+`outer.get(0).get(1)`、`items[1].peek()` 是同一个错误。
+
+**但嵌套字段的诊断是坏的**：`o.inner.peek()` 报的是
+
+```text
+error: undefined function 'o.inner.peek'
+```
+
+因为它被解析成「调用一个叫 `o.inner.peek` 的函数」，而数组下标那条走的是另一条路径、
+报得清楚。同一个语义限制给出两种质量完全不同的诊断，这个至少该统一。
+
+### 为什么
+
+语法上 `a.b(...)` 一律按「类型 `a` 的方法 `b`」解析，接收者只能是**标识符**；
+`codegen` 的 `generate_method_call` 需要接收者符号的地址，表达式结果没有符号。
+
+### 改法
+
+在 sema 阶段把 `expr.method(args)` 降级成：
+
+```text
+let __tmp_N = expr;
+__tmp_N.method(args);
+```
+
+关键是**借用不能逃逸**：`__tmp_N` 的生命周期要覆盖整个调用表达式，而且返回值是引用时
+要禁止（`let r = list.get(0).peek_ref();` 会让 `r` 指向一个已经消失的临时变量）。
+`borrow.c` 里对「临时变量的借用不能出语句」已经有一套（`temp_mutable_borrow`），
+可以扩展成「临时变量的引用不能绑到变量上」。
+
+代价：中。收益很高 —— 这是目前写容器代码最频繁的摩擦点。
+
+## 8. `if` 不是表达式
+
+```text
+let x: i32 = if (c) { 1 } else { 2 };   // 不支持
+```
+
+`match` 是表达式，`if` 是语句。要么加 `if` 表达式（要求两个分支类型一致、必须有
+`else`），要么维持现状并在文档里引导用 `match`。
+
+代价：小（AST 已有 `match` 表达式的实现可以照搬），收益低 —— 三目运算式
+`cond ? a : b` 可能更符合 tap 的 C 风格，值得先决定要哪个。
+
+## 9. 没有切片类型 `[T]` / `&[T]`
+
+```text
+fn sum(values: &[i32]): i32 { ... }
+```
+
+```text
+error: expected token `;` but got `]`
+```
+
+只有定长数组 `[T; N]`，函数没法接收「任意长度的数组」。现在的替代是 `&Vec<T>`，
+但栈上的定长数组传不进去，`&[i32; 3]` 和 `&[i32; 4]` 也不能互相替代。
+
+要做需要引入「胖指针」（data + length），和 `&T` 现在是单个指针的表示冲突 ——
+要么给切片单独一种表示，要么统一改成胖指针（后者会动全部 `&T` 的 ABI）。
+代价：大，且和 [`borrow.md`](borrow.md) 的 L2 在同一片区域。
+
+## 其余
+
+- **trait 的高级形态**（关联类型、默认方法、`dyn Trait`、运算符重载）：见
+  [`../TODO.md`](../TODO.md) 的「trait v1 的后续」一节。
+- **`tap` 的 `pub` 可见性只作用于类型和函数**，字段没有单独的可见性，结构体字段全公开。
+- **不算 bug 但容易踩的**（窄类型求值宽度、泛型实参不能从枚举载荷反推等）：见
+  [`../BUG.md`](../BUG.md) 末尾。
+
+## 建议顺序
+
+| 顺序 | 项目 | 理由 |
+|---|---|---|
+| 1 | **7 表达式结果上调用方法** | 日常写代码最痛的一条；不改语法，纯降级 |
+| 2 | **1 固有 impl** | 样板量减半；改动小 |
+| 3 | **3 限定类型名** | 补上唯一的显式消歧手段；改动小 |
+| 4 | **4 嵌套模式 + 守卫** | 枚举套结构体的常见形状；中等代价 |
+| 5 | **6a for-each（内建版）** | 覆盖数组和 Vec 的主流场景 |
+| 6 | **2 具体实例化的 impl** | 泛型形式留到关联类型那一期 |
+| 7 | 5 / 8 / 9 | 各有前置依赖 |

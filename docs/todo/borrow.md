@@ -1,0 +1,302 @@
+# 借用检查：还没做的
+
+[`../borrow.md`](../borrow.md) 写的是**已经能用**的部分。本文记还没做的，每条都给出
+「现在什么表现」「为什么现在不行」「改起来多大」。文中所有「现在什么表现」都在
+2026-11-06 用 `build/tap` 实测过，不是推测。
+
+已经落地的：L0（`&T` / `&mut T` + 词法作用域检查）、L1（跨函数借用签名）、
+`&self` / `&mut self` 接收者、`&mut T → &T` 收窄、语句内临时借用互斥、
+`std.vec` / `std.byte_vec` 的 `&` / `&mut` 接口。
+
+## 缺口一览
+
+| # | 缺口 | 现在什么表现 | 收益 | 代价 |
+|---|---|---|---|---|
+| 1 | 结构体存借用不查寿命 | 编译通过，返回悬垂指针 | 高 | 大 |
+| 2 | 没有 NLL | 借用活到作用域结束，与之后用不用无关 | 中 | 中 |
+| 3 | 借用粒度是变量，不是字段 | `&p.left` 借走整个 `p`，改 `p.right` 也报错 | 中 | 中 |
+| 4 | `Vec<&T>` 推不出类型实参 | `cannot infer compatible generic arguments for 'push'` | 低 | 中 |
+| 5 | 不支持 `&&T` | `expected type` | 低 | 小 |
+| 6 | 多引用参数不能返回借用 | 报「两个引用参数，无法确定借自哪个」 | 中 | 大（等于 1） |
+| 7 | `StringBuilder` 仍是按值接口 | 32 处 `sb.append(b, ...)` 写回式 | 中 | 小 |
+
+## 1. L2：结构体存借用的寿命
+
+### 现在什么表现
+
+能编译，能跑，返回的是悬垂指针：
+
+```text
+struct Holder { src: &i32 }
+
+fn make(): Holder {
+    let local: i32 = 7;
+    return Holder { src: &local };   // 编译通过
+}
+
+fn main(): i32 {
+    let h: Holder = make();
+    print("%d\n", h.src[0]);          // 读的是已出栈的内存
+    return 0;
+}
+```
+
+`tap -ir` 退出码 0，无任何诊断。
+
+### 为什么现在不行
+
+借用检查只在**单个函数体内**维护「栈帧秩」：`storage_rank` 是符号在符号表里的深度，
+`pointee_rank` 是引用指向的东西在哪个帧（`-1` 表示函数外）。跨函数只知道一条约定 ——
+「返回借用的函数恰好有一个引用参数，返回值借自它」（规则 4）。
+
+结构体把借用藏进字段之后，类型里**没有寿命信息**，`Holder` 和 `i32` 的关系在类型系统
+里根本不存在，调用方无从判断。
+
+### 三条路线
+
+**a. 直接禁止**（`struct Holder { src: &i32 }` 报错）
+
+```text
+error: struct field cannot hold a reference; use a raw pointer instead
+```
+
+改动最小：`sema` 或 `borrow.c` 里扫一遍结构体字段类型，见到 `is_reference` 就报。
+代价是砍掉合法用法（「函数内临时组装一个持有借用的视图结构体」是很自然的写法）。
+
+**b. 生命周期参数**（`struct Holder<'a> { src: &'a i32 }`）
+
+Rust 的路线，要做对必须连单态化一起改：**单态化的 key 从「类型」变成「类型 + 区域」**，
+`substitute_type` / `unify_type` / impl 表查找全都要带上区域变量。改动量大概是 L0+L1
+的总和，且会渗透到 `generics.c` 的每一处。
+
+**c. 折中：允许存，但禁止从函数返回**（推荐先做）
+
+规则改成「结构体字面量里的借用，其源必须来自本函数的参数（`pointee_rank < 0`）」：
+
+```text
+fn view(pair: &Pair): Holder {
+    return Holder { src: &pair.left };   // 合法：借自参数
+}
+
+fn bad(): Holder {
+    let local: i32 = 7;
+    return Holder { src: &local };       // error: 结构体把本帧的借用带出了函数
+}
+```
+
+实现上不需要改类型系统：`borrow.c` 已经能算「这个借用来自本帧还是别处」（规则 1 用的
+就是这套判定），只要在**返回结构体字面量**时对每个字段递归检查一遍即可。能挡住
+`make(): Holder` 这类最常见、也最危险的悬垂，代价小一个数量级。
+
+剩下的洞（把借用装进结构体后，结构体活得比源长）仍然存在，但那种情况通常需要显式
+存到别的变量里再跨作用域，比「函数直接返回」少见得多。
+
+## 2. 没有 NLL
+
+### 现在什么表现
+
+```text
+let value: i32 = 1;
+let exclusive: &mut i32 = &mut value;
+exclusive[0] = 7;
+print("%d\n", value);      // error: 'value' is mutably borrowed and cannot be used here
+```
+
+`exclusive` 在上一行之后就没再用过，但 `value` 依然被独占借到作用域结束。
+
+### 为什么现在不行
+
+检查器是**作用域秩**模型：`&mut x` 一旦绑到变量，就把 `x` 的 `mutable_borrow_rank` 设成
+该变量的作用域秩，出作用域才清。没有「最后一次使用」的概念，也就没有活跃点分析。
+
+### 改法
+
+给每个引用符号记一个 `last_use_stmt`（遍历 AST 时给每条语句编号，任何读取该符号的地方
+都刷新它），冲突判定从「借用秩 >= 当前秩」改成「借用秩 >= 当前秩 **且** last_use >= 当前语句」。
+
+代价是要在 `borrow.c` 里加一趟编号 + 一遍活跃性扫描（现在的实现是单趟前向遍历）。
+副作用是**报错位置会漂移**：以前错误固定落在 `&mut` 所在作用域，之后会落在第一次冲突的
+语句上 —— 这正是 `borrow.md` 里说的「有意的保守」被放弃的部分。
+
+### 建议
+
+先只对 `&mut` 做（`&` 共享借用的冲突本来就少），并且保留一个开关（`TAP_BORROW_LEXICAL=1`）
+回到词法语义，方便对比排查。
+
+## 3. 借用粒度是变量，不是字段
+
+### 现在什么表现
+
+```text
+struct Pair { left: i32, right: i32 }
+
+let p: Pair = Pair { left: 1, right: 2 };
+let a: &i32 = &p.left;
+let b: &mut i32 = &mut p.right;   // error: 'p' is already borrowed,
+                                  //        so it cannot be borrowed mutably
+p.right = 5;                      // error: 'p' is borrowed and cannot be assigned here
+```
+
+读 `p.right` 是允许的（`check_plain_use` 只拦 `&mut` 借出时的独占冲突），但**写另一个
+字段**被拦。两个字段在内存上完全不重叠，这里报错是纯保守。
+
+### 为什么现在不行
+
+`BorrowSymbol` 只存 `mutable_borrow_rank` / `shared_borrow_rank` 两个整数，记的是
+「这个**变量**被借走了」，没有记「被借走的是哪个字段」。
+
+### 改法
+
+把两个秩换成一张「借用路径」小表：每条借用记 `base 符号 + 字段/下标链`（例如
+`p.left`、`items[2].x`）。冲突判定从「同一个符号」改成「路径有前缀关系」：
+
+- `p` 和 `p.left` → 冲突（前者包含后者）
+- `p.left` 和 `p.right` → 不冲突
+- `p.left` 和 `p.left` → 冲突
+
+`codegen.c` 的 `generate_field_address` 已经在走这条路径了，判定逻辑可以直接复用
+`borrow.c` 里已有的 `resolve_lvalue` 那套「左值路径」遍历。
+
+### 风险
+
+路径里一旦穿过 `*T` / `&T`（`&pair.left` 里 `pair` 是 `&Pair`），路径的「根」就是函数外
+的对象，前缀比较要做特殊处理（两个不同的引用参数可能指向同一块内存，保守起见仍按冲突算）。
+
+## 4. `Vec<&T>` 推不出类型实参
+
+### 现在什么表现
+
+```text
+let a: i32 = 1;
+let refs: Vec<&i32> = vec.new();   // 这一行没问题
+refs.push(&a);                     // error: cannot infer compatible generic arguments for 'push'
+```
+
+显式写 `refs.push<&i32>(&a)` 也一样报错。
+
+### 为什么现在不行
+
+P2 为了修 `values.push2(10)`（接收者是 `Vec2<i32>`、模板首参是 `&mut Vec2<T>`），在
+`generics.c` 加了 `receiver_core_type()`，**只在接收者位置**两边各剥一层引用。
+普通实参的类型统一仍然要求引用与非引用严格相等，而 `push<T>(vec: &mut Vec<T>, value: T)`
+的 `T` 要绑定到 `&i32`，`unify_type` 遇到「模板参数 vs 引用类型」这条路没打通。
+
+### 改法
+
+1. `unify_type` 里允许模板参数直接绑定到引用类型（`&i32` 整体作为实参）；
+2. `substitute_type` 要能替换 `element_type` 里的类型参数 —— 否则 `Vec<&T>` 的
+   `element_type` 里的 `T` 不会被特化；
+3. `sizeof(&T)` 按指针大小算（现在应该已经是，但要有用例守着）。
+
+顺带会把 `Option<&T>`、`Holder { src: &T }`（泛型版）一起打通。
+
+### 注意
+
+这条和 1、6 是耦合的：`Vec<&i32>` 一旦能构造，就出现了「借用存在堆上的容器里」，
+寿命更没人管。所以**建议排在 1 之后**，或者先做 1c 再做这条。
+
+## 5. 不支持 `&&T`
+
+```text
+let a: &i32 = &x;
+let b: &&i32 = &a;      // error: expected type
+```
+
+`parse_type` 里 `&` 之后只接受 `mut` 或类型名，不接受第二个 `&`。
+
+顺带一提：反方向也没有「把裸指针包回受检查借用」的语法。现在只允许 `&T → *T`（遗忘
+借用），想写 `&*raw` 把 `*T` 显式升级成 `&T`（仍然不验证寿命，但至少进检查器视野）
+没有语法支持。
+
+改动都很小（`parse_type` 加一个分支；`&*expr` 加一个一元运算符），但价值取决于是否
+做 1、4 —— 单做没有实际用途。
+
+## 6. 多引用参数不能返回借用
+
+```text
+fn pick(left: &i32, right: &i32): &i32 {
+    return left;      // error: 两个引用参数，无法确定借自哪个
+}
+```
+
+这是规则 4 的直接后果。要解决只有两条路：
+
+- **显式生命周期参数**：`fn pick<'a>(left: &'a i32, right: &'a i32): &'a i32` —— 就是 1b；
+- **调用点推断**：每个调用点按实参的秩决定返回借用的秩，等于给每个调用点单独特化 ——
+  和「单态化 key 是类型」的现状冲突，实际上也退化成 1b。
+
+所以这条**不建议单独做**，跟着 1 一起。
+
+## 7. `StringBuilder` 仍是按值接口
+
+P2 把 `Vec` / `ByteVec` 改成了 `&` / `&mut`，但 `StringBuilder` 没动：
+
+```text
+pub fn append<T>(builder: StringBuilder, value: T): StringBuilder {
+    let text: String = value as String;
+    bytes.extend(&mut builder.buffer, text);
+    return builder;                    // 每次都要返回、每次都要写回
+}
+```
+
+`std/json.tp` 里有 **32 处** `sb.append(builder, ...)` / `builder.append(builder, ...)`
+的写回式调用。
+
+### 改法
+
+```text
+pub fn append<T>(builder: &mut StringBuilder, value: T) { ... }
+pub fn append_byte(builder: &mut StringBuilder, value: u8) { ... }
+pub fn len(builder: &StringBuilder): uint { ... }
+pub fn to_string(builder: &StringBuilder): String { ... }
+pub fn free(builder: StringBuilder): i32 { ... }   // 保持按值，同 Vec
+```
+
+调用点从 `builder = sb.append(builder, x);` 变成 `builder.append(x);`，`std.json` 里
+每个 `append_escaped_byte` 之类的辅助函数也要跟着改签名（它们现在靠返回值串起来）。
+
+### 收益
+
+- 少一次结构体拷贝（`StringBuilder` 只有一个 `ByteVec` 字段，拷贝本身便宜，但写回是
+  每个字符一次）；
+- 借用检查能拦住「拿着 builder 的借用再 append」（现在按值接收者只在**调用**那一刻
+  要求没被借走，写回之后新结构体是另一份）。
+
+### 风险
+
+`StringBuilder` 是 `pub` API，`docs/std.md` 里的示例要同步改。没有外部用户，风险低。
+
+## 建议顺序
+
+按「收益 / 代价」排，前面几条做完再考虑后面：
+
+| 顺序 | 项目 | 理由 |
+|---|---|---|
+| 1 | **1c 结构体借用禁止出函数** | 堵住唯一能稳定复现的悬垂；不动类型系统 |
+| 2 | **7 `StringBuilder` 迁移** | 纯收益，把 P2 收尾；顺便验证一遍 `&mut self` 在真实代码里的手感 |
+| 3 | **3 借用粒度到字段** | 日常写代码最容易撞上的误报；改动局限在 `borrow.c` |
+| 4 | **2 NLL** | 减少「必须把 `&mut` 塞进小作用域」的别扭写法；需要加一趟活跃性分析 |
+| 5 | **1b 生命周期参数** | 真正的 L2；会动单态化，单独一期做 |
+| 6 | 4 / 5 / 6 | 都依赖 1b 或 3，跟着做 |
+
+如果只做一件：**1c**。它是目前唯一「能编译、能跑、结果是错的」的洞。
+
+## 怎么验证
+
+临时探针（`-ir` 会跑完整流水线但跳过链接，最快的全量检查）：
+
+```bash
+build/tap -ir -o /dev/null probe.tp
+```
+
+改完 `borrow.c` 之后跑借用相关用例：
+
+```bash
+TEST_FILTER=borrow/ sh tests/run-tests.sh build/tap
+TEST_FILTER=types/reference sh tests/run-tests.sh build/tap
+TEST_FILTER=types/borrow sh tests/run-tests.sh build/tap
+TEST_FILTER=traits/self sh tests/run-tests.sh build/tap
+```
+
+`TAP_NO_BORROW=1` 跳过整个借用检查，用来确认某段代码到底是被借用检查还是别的阶段
+拦下的。

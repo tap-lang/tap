@@ -24,8 +24,8 @@ fn describe(h: Holder) {
 
 fn main(): i32 {
     let v: Vec<i32> = vec.new();
-    v = vec.push(v, 7);
-    v = vec.push(v, 8);
+    vec.push(&mut v, 7);
+    vec.push(&mut v, 8);
 
     describe(Holder.Item(v));
     describe(Holder.Pair(v, 9));

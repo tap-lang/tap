@@ -1,0 +1,17 @@
+// 反方向不允许：共享借用的调用方没承诺独占，不能升级成 `&mut T`。
+struct Point { x: i32 }
+
+fn main(): i32 {
+    let point: Point = Point { x: 1 };
+    let shared: &Point = &point;
+    let exclusive: &mut Point = shared;
+    exclusive.x = 2;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: pointer expression type mismatch
+- .exit
+1
+-- */

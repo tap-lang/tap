@@ -1,0 +1,19 @@
+// 拿着元素引用去 push：扩容会重新分配缓冲区，引用立刻悬垂。
+// 这是借用检查对 Vec 最实际的一次拦截。
+import std.vec as vec;
+
+fn main(): i32 {
+    let values: Vec<i32> = vec.new();
+    values.push(1);
+    let held: &i32 = values.get_ref(0);
+    values.push(2);
+    print("%d\n", *held);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'values' is already borrowed, so it cannot be borrowed mutably
+- .exit
+1
+-- */

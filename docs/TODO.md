@@ -10,12 +10,31 @@
 7. [x] 泛型载荷枚举（`Option<T>`、`Result<T, E>`），支持多种实例化共存与嵌套实例化。
 8. [x] 构造时显式写类型实参（`Option<i32>.Some(42)`），并校验实参数量与逐项类型。
 9. [x] `match` 作为表达式（`let x = match ...`），分支值可以是标量或结构体，支持嵌套。
-   仍缺嵌套模式（`Shape.Dot(Point { x: 0, y: 0 })`）和分支守卫。
+   仍缺嵌套模式（`Shape.Dot(Point { x: 0, y: 0 })`）和分支守卫，见
+   [`todo/language.md`](todo/language.md) 第 4 条。
 10. [x] JSON 转义 API（`std.json` 的 `escape` / `escape_quoted` / `append_escaped` /
     `append_quoted` / `unescape`，覆盖控制字符、`\uXXXX` 和代理对）。
 11. [x] format_f64：`std.parse` 的 `format_f64` 通过 Runtime 的 `__tap_format_f64` 调用
     C 库转换，输出最短可往返的十进制字符串（精确展开需要大整数算法）。
-12. 递归载荷枚举：成员载荷不能是枚举自身，需要先有指针或 Box 语义。
+12. 递归载荷枚举：**用指针递归已经可用**（`enum Node { Pair(*Node, *Node) }` 能编译），
+    不行的只是按值递归（`Pair(Node, Node)`），而且会漏到 LLVM 才炸出
+    `Cannot allocate unsized type`。实际要做的是补一条前端诊断，见
+    [`todo/language.md`](todo/language.md) 第 5 条。
+
+## 深度待办（`docs/todo/`）
+
+上面是「近期要补的能力」清单。下面按主题记**更远的缺口**，每条都带实测的错误信息、
+为什么现在不行、以及改动代价的评估：
+
+- [借用检查](todo/borrow.md) —— 结构体存借用的寿命（L2）、NLL、借用粒度到字段、
+  `Vec<&T>` 推不出类型、`StringBuilder` 迁移。**目前唯一「能编译、能跑、结果错」的洞
+  在第一条**。
+- [语言与类型系统](todo/language.md) —— 固有 impl、泛型类型的 impl、限定类型名、
+  match 嵌套模式与分支守卫、for-each、表达式结果上调用方法、切片类型。
+- [字符串能力](todo/string.md) —— UTF-8 边界、二进制数据、常用字符串 API、转义、
+  格式化。
+- [工具链](todo/tooling.md) —— 一次只报一个错误、没有调试信息、没有 `tap check`、
+  `tap new` 依赖仓库外的 `tapm`、没有增量编译。
 
 ## trait v1 的后续
 
@@ -29,7 +48,8 @@
   泛型信息」的方针冲突，是另一个量级的工程。
 - **运算符重载**：`+` / `==` 现在由 `scalar_types_compatible()` 统一管隐式转换，让 trait
   接管要改类型检查入口。
-- **泛型类型的 impl**（`impl Show for Vec<T>`）：现在解析阶段就拒绝。
+- **泛型类型的 impl**（`impl Show for Vec<T>`）：现在解析阶段就拒绝，连具体实例化
+  （`impl Show for Vec<i32>`）也拒绝，见 [`todo/language.md`](todo/language.md) 第 2 条。
 
 ## `pub` 类型的模块前缀（已完成，只剩限定类型名）
 
@@ -48,7 +68,8 @@
 **还剩一件事：限定类型名（`a.Point`）不支持。** `parse_type` 只读一个标识符，写
 `a.Point` 会报 `expected token '='`。这是唯一能显式消歧的写法，缺了它，「同时导入两个都
 导出 `Point` 的模块、又确实需要写出类型名」就只能靠改名绕过（不写类型名、靠推断也可以）。
-改动不大（照 `parse_primary` 的点号循环），但属于独立一期。
+改动不大（照 `parse_primary` 的点号循环），但属于独立一期。详见
+[`todo/language.md`](todo/language.md) 第 3 条。
 
 ## 已知问题
 

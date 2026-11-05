@@ -327,8 +327,25 @@ fn main(): i32 {
 
 `Vec<T>` 的 `len` 和 `capacity` 使用 `uint`，索引也使用 `uint`。`get()` 和 `set()` 会在
 索引越界时终止程序。`clear()` 只把长度归零并保留容量；`free()`
-只释放 Vec 自己的元素缓冲区，不会递归释放元素持有的资源。`push()`、`set()`、`clear()`
-和 `reserve()` 作为方法语句调用时会自动把返回的新结构体写回接收者。
+只释放 Vec 自己的元素缓冲区，不会递归释放元素持有的资源。
+
+**读操作接收 `&Vec<T>`，写操作接收 `&mut Vec<T>`**：
+
+| 函数 | 接收者 | 说明 |
+| --- | --- | --- |
+| `len` / `capacity` | `&Vec<T>` | 只读 |
+| `get` | `&Vec<T>` | 返回元素副本 |
+| `get_ref` | `&Vec<T>` | 返回 `&T`，不拷贝 |
+| `push` / `set` / `clear` / `reserve` | `&mut Vec<T>` | 就地修改，不返回新结构体 |
+| `free` | `Vec<T>`（按值） | 用完即弃 |
+
+`get_ref` 拿到的引用会让整个容器在它存活期间不能再改 —— 扩容会重新分配缓冲区，
+旧引用立刻悬垂，这条规则正是拦这个的：
+
+```text
+let held: &i32 = values.get_ref(0);
+values.push(1);      // error: 'values' is already borrowed, so it cannot be borrowed mutably
+```
 
 字符串动态数组直接用 `Vec<String>`：
 
@@ -348,9 +365,8 @@ fn main(): i32 {
 }
 ```
 
-`Vec` 是值类型。直接写 `values.push("hello");` 或 `values.set(0, "HELLO");`
-时，编译器会把返回的结构体自动写回 `values`。`free` 只释放内部缓冲区，
-不会清空原结构体字段；释放后不要继续访问同一个容器。
+`Vec` 是值类型，但写操作**不再需要写回**：`push` / `set` / `clear` 直接改调用方那个容器。
+`free` 只释放内部缓冲区，不会清空原结构体字段；释放后不要继续访问同一个容器。
 
 `std.byte_vec` 示例：
 

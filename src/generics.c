@@ -1465,6 +1465,15 @@ static int function_base_matches(const char *function_name, const char *method_n
     return strlen(method_name) == length && strncmp(base, method_name, length) == 0;
 }
 
+// 方法接收者在类型推断里的「内核类型」：剥掉一层引用。
+//
+// 首参写成 `&T` / `&mut T` 时，接收者表达式本身是 `T`（调用点自动取地址），
+// 直接拿 `&Vec<T>` 去 unify `Vec<i32>` 会卡在 is_pointer 上，T 就解不出来 ——
+// 表现是「type has no method」。两边都剥一层再比，两种情况都能对上。
+static const VarTypeNode *receiver_core_type(const VarTypeNode *type) {
+    return (type && type->is_reference) ? type->element_type : type;
+}
+
 // 查找 receiver.method(...) 对应的泛型函数模板。
 static FunctionNode *find_generic_method_template(
     GenericContext *context, const char *method_name,
@@ -1475,8 +1484,8 @@ static FunctionNode *find_generic_method_template(
             function_base_matches(function->name, method_name)) {
             TypeBinding *bindings = NULL;
             int matches = unify_type(
-                function, (VarTypeNode *)function->param_types,
-                receiver_type, &bindings, 0);
+                function, receiver_core_type((VarTypeNode *)function->param_types),
+                receiver_core_type(receiver_type), &bindings, 0);
             free_bindings(bindings);
             if (matches) return function;
         }
@@ -1534,8 +1543,8 @@ static FunctionNode *specialize_method_call(
         type_argument = type_argument->next;
     }
 
-    if (!unify_type(template, (VarTypeNode *)template->param_types,
-                    receiver->type, &bindings, 0)) {
+    if (!unify_type(template, receiver_core_type((VarTypeNode *)template->param_types),
+                    receiver_core_type(receiver->type), &bindings, 0)) {
         generic_call_error(call,
             "cannot infer compatible generic receiver for '%s'", dot + 1);
     }

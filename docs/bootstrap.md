@@ -143,7 +143,8 @@ p[0].value = 9;              // error: only String methods 'len', 'byte_at', 'sl
 ```
 
 `Vec<Cell>.data` 是 `*Cell`，同样写不进去。唯一能改结构体的办法是
-`let c = vec.get(...); c.field = x; vec = vec.set(..., c)` —— 整体读出来、改完、整体写回。
+`let c = vec.get(...); c.field = x; vec.set(..., c)` —— 整体读出来、改完、写回
+（`set` 现在接收 `&mut Vec<T>`，不用再赋值回变量）。
 
 **A3. 没有空指针** —— ✅ 已解决（2026-10-27 加了 `null`，解引用有运行时检查）
 

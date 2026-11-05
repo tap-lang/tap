@@ -177,7 +177,7 @@ pub fn read_dir(path: String): Result<Vec<String>, String> {
         if (name.len() == 0) {
             running = false;
         } else {
-            names = vec.push(names, name);
+            names.push(name);
         }
     }
     close_dir(directory);

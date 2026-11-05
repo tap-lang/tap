@@ -894,6 +894,11 @@ static FunctionNode *parse_function(Parser *parser, int is_extern,
     } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
         // 解析第一个参数
         char *param_name = strdup(parser->current_token->lexeme);
+        // impl 里的裸 `self` 是**按值接收者**，类型就是 impl 的目标类型。
+        // 不这样处理它会被当成「名字叫 self、没写类型所以默认 i32 的参数」，
+        // 最后报成 `takes 'i32' as its receiver`，完全指不到问题所在。
+        int is_value_receiver =
+            self_type_name && strcmp(param_name, "self") == 0;
         consume(parser, TOKEN_IDENTIFIER);
         IdentifierNode *param = create_identifier(param_name);
         free(param_name);
@@ -905,6 +910,9 @@ static FunctionNode *parse_function(Parser *parser, int is_extern,
             consume(parser, TOKEN_COLON);
             free(param_type);
             param_type = parse_type(parser);
+        } else if (is_value_receiver) {
+            free(param_type);
+            param_type = create_struct_type(self_type_name);
         }
         add_param_type(function, param_type);
         

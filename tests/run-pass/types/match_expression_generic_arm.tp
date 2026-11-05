@@ -27,7 +27,7 @@ fn with_ops(source: Result<i32, String>): Vec<String> {
         Result.Ok(value) => vec.new<String>(),
         Result.Err(reason) => vec.new<String>(),
     };
-    names = vec.push(names, "added");
+    vec.push(&mut names, "added");
     return names;
 }
 
@@ -38,7 +38,7 @@ fn main(): i32 {
     vec.free(a);
 
     let seeded: Vec<String> = vec.new();
-    seeded = vec.push(seeded, "first");
+    vec.push(&mut seeded, "first");
     let generic: Result<Vec<String>, String> = Result<Vec<String>, String>.Ok(seeded);
     let b: Vec<String> = from_generic(generic);
     print("generic=%u %s\n", b.len(), b.get(0));

@@ -28,12 +28,12 @@ fn main(): i32 {
     let a: *Symbol = memory.malloc<Symbol>(sizeof(Symbol));
     a.name = "alpha";
     a.value = 11;
-    table = table.push(a);
+    table.push(a);
 
     let b: *Symbol = memory.malloc<Symbol>(sizeof(Symbol));
     b.name = "beta";
     b.value = 22;
-    table = table.push(b);
+    table.push(b);
 
     print("alpha: %d\n", lookup(table, "alpha"));
     print("beta: %d\n", lookup(table, "beta"));

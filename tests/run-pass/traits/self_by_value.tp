@@ -1,0 +1,43 @@
+// impl 里的裸 `self` 就是按值接收者：类型是 impl 的目标类型，方法拿到一份副本。
+//
+// 不写类型标注是必要的 —— `self` 的类型由 impl 的目标类型决定，用户不该重复一遍。
+// 注意和 `&self` 的区别：按值接收改的是副本，调用方看不到。
+
+struct Counter {
+    value: i32,
+}
+
+trait Api {
+    fn value(self): i32;
+    fn scaled(self, factor: i32): i32;
+    fn bump(self);
+}
+
+impl Api for Counter {
+    fn value(self): i32 {
+        return self.value;
+    }
+    fn scaled(self, factor: i32): i32 {
+        return self.value * factor;
+    }
+    fn bump(self) {
+        // 改的是副本，调用方的 counter 不受影响。
+        self.value = self.value + 1;
+    }
+}
+
+fn main(): i32 {
+    let counter: Counter = Counter { value: 7 };
+    print("%d %d\n", counter.value(), counter.scaled(3));
+    counter.bump();
+    print("%d\n", counter.value());
+    return 0;
+}
+
+/** -- test
+- .stdout
+7 21
+7
+- .exit
+0
+-- */
