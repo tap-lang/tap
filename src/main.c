@@ -13,6 +13,7 @@
 #include "tagged.h"
 #include "generics.h"
 #include "sema.h"
+#include "borrow.h"
 #include "codegen.h"
 #include "run.h"
 #include "helpers.h"
@@ -257,6 +258,14 @@ int main(int argc, char *argv[]) {
         free_parser(parser);
         free_lexer(lexer);
         return 1;
+    }
+
+    // 借用检查紧跟在 Sema 之后：它只看 AST 和类型标注，不依赖 Codegen 的推断结果，
+    // 所以放在生成任何 IR 之前就能给出诊断。TAP_NO_BORROW=1 可以跳过，
+    // 用来确认「某段代码编不过」到底是借用检查还是别的阶段拦下的。
+    const char *skip_borrow = getenv("TAP_NO_BORROW");
+    if (!(skip_borrow && skip_borrow[0])) {
+        check_borrows(program);
     }
 
     // 3. 代码生成

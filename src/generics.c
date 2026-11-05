@@ -241,6 +241,11 @@ static VarTypeNode *substitute_type(FunctionNode *function,
         return create_function_pointer_type(parameters,
             substitute_type(function, source->return_type, bindings));
     }
+    if (source->is_reference) {
+        return create_reference_type(
+            substitute_type(function, source->element_type, bindings),
+            source->reference_mutable);
+    }
     if (source->is_pointer) {
         return create_pointer_type(
             substitute_type(function, source->element_type, bindings));
@@ -319,7 +324,8 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
         }
         case NODE_REFERENCE:
             return (ASTNode *)create_reference(clone_expression(
-                ((ReferenceNode *)source)->target, template, bindings));
+                ((ReferenceNode *)source)->target, template, bindings),
+                ((ReferenceNode *)source)->is_mutable);
         case NODE_DEREFERENCE:
             return (ASTNode *)create_dereference(clone_expression(
                 ((DereferenceNode *)source)->operand, template, bindings));

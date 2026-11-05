@@ -28,6 +28,9 @@ enum TokenType {
     TOKEN_MATCH,     // match 载荷枚举解构
     TOKEN_TRAIT,     // trait 接口声明
     TOKEN_IMPL,      // impl 接口实现
+    // `mut` 只出现在借用语法里：`&mut T` 是独占借用，`&T` 是共享借用。
+    // 它不是变量修饰符 —— tap 的局部变量本来就可写。
+    TOKEN_MUT,       // mut 独占借用标记
 
     // 标识符和字面量
     TOKEN_IDENTIFIER,  // 标识符
@@ -96,7 +99,8 @@ enum TokenType {
     TOKEN_EOF          // 文件结束
 };
 
-// 各 TokenType 对应的可读名称（与枚举顺序一致）
+// 各 TokenType 对应的可读名称。用指定初始化器按下标填，**不依赖枚举顺序** ——
+// 往枚举中间插新关键字不会让诊断里的名字错位。
 extern const char *TokenNames[];
 
 // 标记结构体

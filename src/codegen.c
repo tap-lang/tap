@@ -1138,6 +1138,12 @@ static int reference_assignable_to(
         !reference->target) {
         return 0;
     }
+    // `&T` 不能当成 `&mut T` 用：共享借用的调用方没承诺独占，转成独占就是骗人。
+    // 反方向（`&mut T` → `&T`）允许，那是能力收窄。
+    if (pointer_type->is_reference && pointer_type->reference_mutable &&
+        !reference->is_mutable) {
+        return 0;
+    }
 
     if (reference->target->type == NODE_IDENTIFIER) {
         const char *name = ((IdentifierNode *)reference->target)->name;
@@ -1206,6 +1212,17 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
     if (target_type->is_pointer) {
         // null 可以赋给任意 *T。
         if (is_null_literal(expression)) return 1;
+        // 借用可以退化成裸指针（`&T` → `*T`），这是「遗忘借用」：调用方显式放弃
+        // 借用检查，之后的别名和寿命由它自己负责。反方向不允许 —— 裸指针没有
+        // 任何承诺，不能凭空升级成受检查的借用。
+        if (!target_type->is_reference) {
+            VarTypeNode *source_type = expression_full_type(context, expression);
+            int decays = source_type && source_type->is_reference &&
+                         tap_type_equal(source_type->element_type,
+                                        target_type->element_type);
+            free_ast((ASTNode *)source_type);
+            if (decays) return 1;
+        }
         if (expression && expression->type == NODE_FUNCTION_CALL &&
             is_runtime_memory_pointer_result((FunctionCallNode *)expression)) {
             return 1;
@@ -1449,7 +1466,9 @@ static VarTypeNode *infer_reference_type(
 
     VarTypeNode *element_type = tap_type_clone(target_type);
     free_ast((ASTNode *)inferred_scalar);
-    return create_pointer_type(element_type);
+    // `&x` / `&mut x` 产生借用类型，而不是裸指针。表示上仍然是同一个 LLVM 指针，
+    // 所以这里只影响类型系统：`&T` 和 `*T` 不再互相赋值，借用检查也有了落脚点。
+    return create_reference_type(element_type, reference->is_mutable);
 }
 
 // 复制带高层类型信息（结构体 / 枚举 / 指针 / 数组）的类型节点；标量返回 NULL。

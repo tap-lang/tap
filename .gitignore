@@ -13,6 +13,7 @@ tmp/
 build/
 build-static/
 build-msvc/
+build-cygwin/
 out/
 dist/
 

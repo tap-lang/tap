@@ -1431,13 +1431,16 @@ int32_t __tap_socket_close(int64_t handle) {
 // 不触发任何二次 libcall。正确性已在 macOS 上和原生 `__int128 /`、`%` 对拍
 // ~220 万随机 + 边界用例，0 失败（算法是纯 C、与目标平台无关）。
 //
-// 守卫：Windows 且非 MSVC 全编译（MinGW 的 gcc / clang、Cygwin 的 gcc / clang）。
+// 守卫：Windows 且非 MSVC 全编译（MinGW 的 gcc / clang），**外加 Cygwin**。
+// 注意 Cygwin 的编译器不定义 _WIN32（只定义 __CYGWIN__），所以它得单独列出来 ——
+// 少了这一条，Cygwin 上就只能用 libgcc 里那份 GCC 约定的 __divti3，一做 i128
+// 除法就崩（回归点 tests/run-pass/operators/mixed_signedness.tp）。
 // 以前只在 clang 下编译，是为了让 MinGW+gcc 继续用 libgcc 里那份；现在链接侧改成
-// 优先走 ld.lld 且不再链 libgcc，必须由本 Runtime 自给自足，否则 i128 除法直接
+// 优先走 ld.lld 且不再依赖 libgcc，必须由本 Runtime 自给自足，否则 i128 除法直接
 // 报 undefined symbol。
 //   - MSVC 的 clang-cl：不编译，继续走 compiler-rt（本来就正常，不添乱）。
 //   - macOS / Linux：不编译，行为零变化。
-#if defined(_WIN32) && !defined(_MSC_VER)
+#if (defined(_WIN32) && !defined(_MSC_VER)) || defined(__CYGWIN__)
 
 typedef unsigned __int128 tap_u128;
 typedef __int128 tap_i128;

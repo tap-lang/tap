@@ -125,7 +125,7 @@ fn main(): i32 {
 |---|---|---|---|---|
 | macOS | `ld` | `-lfoo` | `-Ldir` | `a b`（拆成裸参数，`ld` 不认 `-Wl,`） |
 | Linux | `cc` | `-lfoo` | `-Ldir` | `-Wl,a,b`（驱动自己拆） |
-| Cygwin | `clang` | `-lfoo` | `-Ldir` | `-Wl,a,b` |
+| Cygwin | `ld.lld`（找不到时 `cc`） | 展开成完整路径（`libfoo.a` / `libfoo.dll.a` / `foo.lib`）—— LLD 的 COFF 模式不认 `-lfoo`；找不到就原样留 `-lfoo` | `-Ldir` | `a b`（`ld.lld` 同样不认 `-Wl,`；回退到 cc 时才用 `-Wl,a,b`） |
 | MinGW-w64 | `ld.lld`（找不到时 `gcc`） | `-lfoo` | `-Ldir` | `a b`（`ld.lld` 同样不认 `-Wl,`；回退到 gcc 时才用 `-Wl,a,b`） |
 | MSVC | `lld-link`（找不到时 `clang-cl`） | `foo.lib`（已有 `.lib` 后缀则不重复加） | `/LIBPATH:dir` | `<arg>`（要写 link.exe 的写法） |
 

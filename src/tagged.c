@@ -24,6 +24,8 @@ static VarTypeNode *clone_type(const VarTypeNode *source) {
     }
     copy->is_array = source->is_array;
     copy->is_pointer = source->is_pointer;
+    copy->is_reference = source->is_reference;
+    copy->reference_mutable = source->reference_mutable;
     copy->is_function_pointer = source->is_function_pointer;
     copy->array_length = source->array_length;
     if (source->element_type) {

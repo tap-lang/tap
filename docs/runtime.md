@@ -106,16 +106,20 @@ ARM64 给 `nan`），而 C 的 `printf` 会原样暴露这个差异。归一化�
 | `__tap_pow_f64(base, exponent): f64` | 浮点幂，底层是 C 库的 `pow` |
 
 指数是小数或负数时没法用快速幂算，必须走 libm。**这是 Runtime 里唯一需要 `-lm` 的符号**：
-macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 和 Cygwin 的链接命令显式带了 `-lm`
-（放在目标文件之后），因为 glibc 2.34 之前 libm 是独立的。Windows 的 msvcrt/UCRT 自带
+macOS 的 `ld -lSystem` 里含 libm，不用额外标志；Linux 的链接命令显式带了 `-lm`
+（放在目标文件之后），因为 glibc 2.34 之前 libm 是独立的。Cygwin 直连 `ld.lld` 时给的是
+`/usr/lib/libm.a` 完整路径（COFF 模式不认 `-lfoo`），回退到 cc 驱动时是 `-lm`。
+Windows 的 msvcrt/UCRT 自带
 `pow`，MSVC（clang-cl）和 MinGW（`ld.lld` 或回退的 gcc）都不需要 `-lm`；MinGW 额外要
 `-lws2_32` 提供 winsock 符号，MSVC 则是 `ws2_32.lib`。
 
 ## 编译器辅助符号（替掉 libgcc）
 
 MinGW 下链接不再经过 gcc 驱动，也就没有 libgcc 了。LLVM 后端和 CRT 会无条件引用下面几个
-符号，所以 Runtime 自己提供一份（`_WIN32 && !_MSC_VER && !__CYGWIN__`，Cygwin 仍经 clang
-驱动链 libgcc，这两个符号本来就有）：
+符号，所以 Runtime 自己提供一份。守卫是
+`(defined(_WIN32) && !defined(_MSC_VER)) || defined(__CYGWIN__)` —— 注意 Cygwin 的编译器
+**不定义 `_WIN32`**（只定义 `__CYGWIN__`），所以它得在守卫里单独列出来，否则这份实现
+在 Cygwin 上根本不编译，i128 除法会崩。
 
 | C ABI | 行为 |
 |---|---|

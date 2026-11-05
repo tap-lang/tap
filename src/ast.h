@@ -168,6 +168,16 @@ typedef struct VarTypeNode {
     ASTNode *type_arguments; // 泛型具名类型的实参列表（VarTypeNode）
     int is_array;
     int is_pointer;
+    // 借用引用 `&T` / `&mut T`。
+    //
+    // 和 is_pointer **同时为 1**：借用在内存里就是一个指针，Codegen 的所有指针路径
+    // （GEP、load/store、按引用传参）原样复用，不必逐处改判断。额外的两个标志只服务
+    // 类型系统 —— 让 `&T` 和 `*T` 在 tap_type_equal 里不相等，并且能被借用检查区分。
+    //
+    // 语义差别：`*T` 是裸指针，编译器不管别名也不管寿命；`&T` 承诺「借用期内源对象
+    // 有效且不被独占修改」，由 src/borrow.c 在编译期检查。
+    int is_reference;
+    int reference_mutable; // 1 表示 `&mut T`（独占借用），0 表示 `&T`（共享只读借用）
     // 函数指针：`*fn(i32, i32): i32`。
     //
     // 和 is_pointer 互斥 —— 它不是数据指针，解引用 / 下标 / 取元素类型全都不适用。
@@ -288,9 +298,13 @@ typedef struct {
 } BinaryOpNode;
 
 // 取地址表达式节点
+//
+// `&x` 产生共享借用 `&T`，`&mut x` 产生独占借用 `&mut T`。两者生成同一个指针值，
+// 区别只在类型和借用检查。
 typedef struct {
     ASTNode base;
     ASTNode *target;       // 被取地址的可寻址表达式
+    int is_mutable;        // 1 表示 `&mut x`
 } ReferenceNode;
 
 // 解引用表达式节点（`*p`）。只用于**取值**；`*p = x` 这种左值写法暂不支持，
@@ -485,6 +499,8 @@ VarTypeNode *create_struct_type(const char *name);
 VarTypeNode *create_array_type(VarTypeNode *element_type, uint64_t length);
 // 指针类型接管 element_type 的所有权。
 VarTypeNode *create_pointer_type(VarTypeNode *element_type);
+// 借用类型 `&T` / `&mut T`。element_type 的所有权被接管。
+VarTypeNode *create_reference_type(VarTypeNode *element_type, int is_mutable);
 // 函数指针类型接管 parameter_types 链表和 return_type 的所有权。
 VarTypeNode *create_function_pointer_type(ASTNode *parameter_types,
                                           VarTypeNode *return_type);
@@ -499,7 +515,7 @@ LiteralNode *create_null_literal(void);
 LiteralNode *create_char_literal(uint32_t value);
 ReturnNode *create_return(ASTNode *expression);
 BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode *right);
-ReferenceNode *create_reference(ASTNode *target);
+ReferenceNode *create_reference(ASTNode *target, int is_mutable);
 // 创建解引用表达式节点，并接管 operand 的所有权。
 DereferenceNode *create_dereference(ASTNode *operand);
 SizeofNode *create_sizeof(VarTypeNode *operand_type);

@@ -79,6 +79,7 @@ add_executable(tap
     src/module.c
     src/generics.c
     src/sema.c
+    src/borrow.c
     src/tagged.c
     src/prelude.c
     src/lexer.c

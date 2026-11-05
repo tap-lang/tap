@@ -196,7 +196,8 @@ static VarTypeNode *compute_expression_type(SemaContext *context, ASTNode *expre
             ReferenceNode *reference = (ReferenceNode *)expression;
             VarTypeNode *target = analyze_expression(context, reference->target);
             if (!target) return NULL;
-            return create_pointer_type(target); // 接管 target 的所有权
+            // 接管 target 的所有权；is_pointer 同时置位，Codegen 照旧按指针处理。
+            return create_reference_type(target, reference->is_mutable);
         }
 
         case NODE_DEREFERENCE: {

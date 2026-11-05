@@ -274,6 +274,21 @@ static VarTypeNode *parse_function_pointer_type(Parser *parser) {
 }
 
 static VarTypeNode *parse_type(Parser *parser) {
+    // 借用类型：`&T` 共享、`&mut T` 独占。
+    //
+    // 类型位置的 `&` 没有歧义（二元按位与不会出现在类型里），所以直接吃掉即可。
+    // `mut` 只在这里和取地址表达式里被消费，不是变量修饰符。
+    if (parser->current_token->type == TOKEN_REFERENCE) {
+        consume(parser, TOKEN_REFERENCE);
+        int is_mutable = 0;
+        if (parser->current_token->type == TOKEN_MUT) {
+            consume(parser, TOKEN_MUT);
+            is_mutable = 1;
+        }
+        VarTypeNode *element_type = parse_type(parser);
+        return create_reference_type(element_type, is_mutable);
+    }
+
     if (parser->current_token->type == TOKEN_MULTIPLY) {
         consume(parser, TOKEN_MULTIPLY);
         // `*fn(i32, i32): i32` 是函数指针，和 `*T` 数据指针是两种东西。
@@ -1250,7 +1265,14 @@ static ASTNode *parse_factor(Parser *parser) {
 
     if (parser->current_token->type == TOKEN_REFERENCE) {
         consume(parser, TOKEN_REFERENCE);
-        return (ASTNode *)create_reference(parse_factor(parser));
+        // `&mut x` 是独占借用；`&x` 是共享借用。词法层只有一个 `&`，`mut` 紧跟其后
+        // 就一定是借用标记 —— 标识符不可能叫 `mut`（它已经是关键字）。
+        int is_mutable = 0;
+        if (parser->current_token->type == TOKEN_MUT) {
+            consume(parser, TOKEN_MUT);
+            is_mutable = 1;
+        }
+        return (ASTNode *)create_reference(parse_factor(parser), is_mutable);
     }
 
     // 前缀 `*` 解引用：`*p`、`**pp`。

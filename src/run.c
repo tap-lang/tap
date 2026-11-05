@@ -23,6 +23,10 @@
 // Linux 直连 ld.lld 时用 glob 探测发行版相关的 CRT / GCC 目录。
 #include <glob.h>
 #endif
+#if defined(__CYGWIN__)
+// Cygwin 直连 ld.lld 时同样用 glob 找 GCC 目录（/usr/lib/gcc/<target>/<ver>）。
+#include <glob.h>
+#endif
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -660,6 +664,20 @@ typedef struct {
     int failed;
 } LinkArgv;
 
+#if defined(__CYGWIN__)
+// Cygwin 直连 ld.lld 时要用的工具链路径。
+//
+// Cygwin 的目标是 PE/COFF，ld.lld 走 COFF 模式。它的库搜索只认 .lib 和
+// lib*.dll.a，不认 Cygwin 的裸 .a（libc.a / libcygwin.a / w32api 下的
+// libadvapi32.a），所以库名得自己展开成完整路径。
+typedef struct {
+    char lld[RUN_PATH_MAX];        // ld.lld 可执行文件
+    char lib_dir[RUN_PATH_MAX];    // /usr/lib：crt0.o / libc.a / libcygwin.a / libm.a
+    char gcc_dir[RUN_PATH_MAX];    // /usr/lib/gcc/<target>/<ver>：crtbegin.o / libgcc.a
+    char w32api_dir[RUN_PATH_MAX]; // /usr/lib/w32api：libadvapi32.a 等 Windows 导入库
+} CygwinLinkTools;
+#endif
+
 static void link_argv_init(LinkArgv *argv) {
     argv->items = NULL;
     argv->count = 0;
@@ -767,6 +785,39 @@ static void push_link_options_direct_ld(LinkArgv *argv, const LinkOptions *optio
         }
     }
 }
+
+// 工具链目录探测的三个小工具。Linux 和 Cygwin 共用：两边都要在没有驱动的情况下
+// 自己找出 CRT 启动文件、libgcc 和系统库在哪。
+#if (defined(__linux__) && !defined(__CYGWIN__)) || defined(__CYGWIN__)
+// 目录里有没有这个文件。
+static int link_tool_has(const char *directory, const char *name) {
+    char path[RUN_PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+    return written > 0 && (size_t)written < sizeof(path) && runtime_file_exists(path);
+}
+
+// 把「目录 + 文件名」拼成一个路径压进 argv。
+static void link_argv_push_path(LinkArgv *argv, const char *directory, const char *name) {
+    char path[RUN_PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+    if (written > 0 && (size_t)written < sizeof(path)) {
+        link_argv_push(argv, path);
+    } else {
+        argv->failed = 1;
+    }
+}
+
+// 从 glob 命中的 ".../<file>" 里截出目录部分。
+static int link_tool_directory_of(const char *path, char *out, size_t out_size) {
+    const char *slash = strrchr(path, '/');
+    if (!slash) return 0;
+    size_t length = (size_t)(slash - path);
+    if (length == 0 || length >= out_size) return 0;
+    memcpy(out, path, length);
+    out[length] = '\0';
+    return 1;
+}
+#endif
 
 // 把用户链接参数展开成当前平台链接器认识的 argv 片段。
 //
@@ -902,6 +953,12 @@ static void push_link_options_lld_link(LinkArgv *argv, const LinkOptions *option
 static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
     push_link_options_direct_ld(argv, options);
 }
+#elif defined(__CYGWIN__)
+// Cygwin 直连 ld.lld：没有驱动那一层，`-Wl,` 前缀要拆成裸参数；但 LLD 的 COFF
+// 模式不认 Cygwin 的裸 .a，库名得展开成完整路径 —— 见 push_link_options_cygwin()。
+// 探测失败时回退 cc，那条路径用 push_link_options_driver()。
+static void push_link_options_cygwin(LinkArgv *argv, const LinkOptions *options,
+                                      const CygwinLinkTools *tools);
 #else
 static void push_link_options(LinkArgv *argv, const LinkOptions *options) {
     push_link_options_driver(argv, options);
@@ -1173,33 +1230,6 @@ typedef struct {
     char interp[RUN_PATH_MAX];    // 动态链接器（PT_INTERP）
 } LinuxLinkTools;
 
-static int link_tool_has(const char *directory, const char *name) {
-    char path[RUN_PATH_MAX];
-    int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
-    return written > 0 && (size_t)written < sizeof(path) && runtime_file_exists(path);
-}
-
-static void link_argv_push_path(LinkArgv *argv, const char *directory, const char *name) {
-    char path[RUN_PATH_MAX];
-    int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
-    if (written > 0 && (size_t)written < sizeof(path)) {
-        link_argv_push(argv, path);
-    } else {
-        argv->failed = 1;
-    }
-}
-
-// 从 glob 命中的 ".../<file>" 里截出目录部分。
-static int link_tool_directory_of(const char *path, char *out, size_t out_size) {
-    const char *slash = strrchr(path, '/');
-    if (!slash) return 0;
-    size_t length = (size_t)(slash - path);
-    if (length == 0 || length >= out_size) return 0;
-    memcpy(out, path, length);
-    out[length] = '\0';
-    return 1;
-}
-
 static int find_linux_crt_dir(char *out, size_t out_size) {
     // Debian/Ubuntu 把 CRT 放在 multiarch 目录里，Arch/Fedora 直接在 /usr/lib(64)。
     const char *patterns[] = {
@@ -1313,6 +1343,154 @@ static int find_linux_link_tools(LinuxLinkTools *tools) {
         tools->gcc_dir[0] = '\0';
     }
     return 1;
+}
+#endif
+
+#if defined(__CYGWIN__)
+// ---------------------------------------------------------------------------
+// Cygwin：直连 ld.lld
+// ---------------------------------------------------------------------------
+//
+// Cygwin 的 clang 驱动平时替我们做了这些事：挑 CRT 启动文件、给 -Bdynamic、
+// 按 cyg 前缀找 DLL、串好 libgcc / libc / libcygwin / w32api 这一串库。
+// 直连链接器就得自己来。
+//
+// 目标格式是 PE/COFF，所以直连的是 ld.lld 的 COFF 模式（Cygwin 打包的 LLD
+// 自带 COFF 支持）。它的库搜索规则和 GNU ld 不一样：只认 .lib、lib*.dll.a
+// 和直接给的 .a/.obj 输入文件，**不认 `-lfoo` 这种名字** —— Cygwin 的系统库
+// 全是裸 .a（libc.a / libcygwin.a / libm.a / w32api/libadvapi32.a），所以
+// 库名必须自己展开成完整路径。
+//
+// 找不到 ld.lld、或者 CRT 不在已知位置时回退 cc 驱动，行为和引入直连之前一致。
+
+// ld.lld 在 Cygwin 上是 ld.lld.exe（Windows 可执行文件带后缀），Linux 上没有后缀。
+static int find_cygwin_lld(char *out, size_t out_size) {
+    const char *names[] = {"ld.lld", "ld.lld.exe", NULL};
+    for (int i = 0; names[i]; i++) {
+        if (find_program_on_path(names[i], out, out_size)) return 1;
+    }
+    return 0;
+}
+
+// GCC 目录：/usr/lib/gcc/<target>/<ver>/，里面是 crtbegin.o / crtend.o / libgcc.a。
+// 版本号随 Cygwin 的 GCC 版本变，所以按 glob 找，不写死。
+static int find_cygwin_gcc_dir(char *out, size_t out_size) {
+    const char *patterns[] = {
+        "/usr/lib/gcc/*/*/crtbegin.o", "/usr/lib/gcc/*/crtbegin.o", NULL
+    };
+    for (int pattern = 0; patterns[pattern]; pattern++) {
+        glob_t matches;
+        if (glob(patterns[pattern], 0, NULL, &matches) != 0) continue;
+        int found = 0;
+        for (size_t i = 0; i < matches.gl_pathc && !found; i++) {
+            char directory[RUN_PATH_MAX];
+            if (!link_tool_directory_of(matches.gl_pathv[i], directory, sizeof(directory))) {
+                continue;
+            }
+            if (link_tool_has(directory, "crtend.o") &&
+                link_tool_has(directory, "libgcc.a")) {
+                snprintf(out, out_size, "%s", directory);
+                found = 1;
+            }
+        }
+        globfree(&matches);
+        if (found) return 1;
+    }
+    return 0;
+}
+
+static int find_cygwin_link_tools(CygwinLinkTools *tools) {
+    memset(tools, 0, sizeof(*tools));
+    if (!find_cygwin_lld(tools->lld, sizeof(tools->lld))) return 0;
+    // CRT 启动文件在 /usr/lib：crt0.o 带入口点（WinMainCRTStartup）。
+    if (!link_tool_has("/usr/lib", "crt0.o")) return 0;
+    snprintf(tools->lib_dir, sizeof(tools->lib_dir), "%s", "/usr/lib");
+    // GCC 目录给 crtbegin.o / crtend.o / libgcc.a。
+    if (!find_cygwin_gcc_dir(tools->gcc_dir, sizeof(tools->gcc_dir))) {
+        tools->gcc_dir[0] = '\0';
+    }
+    // w32api 是 Windows API 的导入库目录（libadvapi32.a / libkernel32.a ...）。
+    if (link_tool_has("/usr/lib/w32api", "libkernel32.a")) {
+        snprintf(tools->w32api_dir, sizeof(tools->w32api_dir), "%s", "/usr/lib/w32api");
+    }
+    return 1;
+}
+
+// 把 `-lfoo` 展开成完整路径。
+//
+// LLD 的 COFF 模式不认 Cygwin 的裸 .a，所以按 Cygwin 的命名习惯找：
+// lib<name>.a（libc.a / libcygwin.a / libm.a）、lib<name>.dll.a（libgcc_s.dll.a），
+// 以及 LLD 自己也认的 <name>.lib。找不到就原样留 -lname，让 lld 按它自己的
+// 规则找 —— 用户指的可能就是个 .lib。
+static int resolve_cygwin_library(const char *name, const LinkOptions *options,
+                                  const CygwinLinkTools *tools,
+                                  char *out, size_t out_size) {
+    const char *directories[8];
+    size_t directory_count = 0;
+
+    // 搜索顺序：用户给的 -L 目录 → GCC 目录 → /usr/lib → w32api。
+    for (int i = 0; i < options->count && directory_count < 4; i++) {
+        if (options->items[i].kind == LINK_ARG_SEARCH_DIR) {
+            directories[directory_count++] = options->items[i].value;
+        }
+    }
+    if (tools->gcc_dir[0]) directories[directory_count++] = tools->gcc_dir;
+    directories[directory_count++] = tools->lib_dir;
+    if (tools->w32api_dir[0]) directories[directory_count++] = tools->w32api_dir;
+
+    for (size_t d = 0; d < directory_count; d++) {
+        char file_name[RUN_PATH_MAX];
+        for (int pattern = 0; pattern < 3; pattern++) {
+            if (pattern == 0) {
+                snprintf(file_name, sizeof(file_name), "lib%s.a", name);
+            } else if (pattern == 1) {
+                snprintf(file_name, sizeof(file_name), "lib%s.dll.a", name);
+            } else {
+                snprintf(file_name, sizeof(file_name), "%s.lib", name);
+            }
+            char candidate[RUN_PATH_MAX];
+            int written = snprintf(candidate, sizeof(candidate), "%s/%s",
+                                   directories[d], file_name);
+            if (written > 0 && (size_t)written < sizeof(candidate) &&
+                runtime_file_exists(candidate)) {
+                snprintf(out, out_size, "%s", candidate);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// Cygwin 直连 ld.lld 时的参数展开。
+//
+//   - `-lfoo`：库名展开成完整路径（LLD 的 COFF 模式不认 Cygwin 的裸 .a）。
+//   - `-L dir`：LLD 认，原样给。
+//   - `-Wl,...`：没有驱动那一层，逗号拆成裸参数。
+static void push_link_options_cygwin(LinkArgv *argv, const LinkOptions *options,
+                                      const CygwinLinkTools *tools) {
+    if (link_options_is_empty(options)) return;
+
+    for (int i = 0; i < options->count; i++) {
+        const LinkArg *argument = &options->items[i];
+        switch (argument->kind) {
+        case LINK_ARG_LIBRARY: {
+            char resolved[RUN_PATH_MAX];
+            if (resolve_cygwin_library(argument->value, options, tools,
+                                       resolved, sizeof(resolved))) {
+                link_argv_push(argv, resolved);
+            } else {
+                link_argv_push_joined(argv, "-l", argument->value);
+            }
+            break;
+        }
+        case LINK_ARG_SEARCH_DIR:
+            link_argv_push_joined(argv, "-L", argument->value);
+            break;
+        case LINK_ARG_RAW:
+            link_argv_push_raw_split(argv, argument->value);
+            break;
+        }
+    }
 }
 #endif
 
@@ -1617,35 +1795,91 @@ static int link_object_file(const char *object_file, const char *exe_file, int s
     if (tools.gcc_dir[0]) link_argv_push_path(&argv, tools.gcc_dir, "crtend.o");
     link_argv_push_path(&argv, tools.crt_dir, "crtn.o");
     return finish_link(&argv, link_options);
+#elif defined(__CYGWIN__)
+    // Cygwin：优先直接调 ld.lld（Cygwin 打包的 LLD 自带 COFF 模式），找不到时回退 cc。
+    //
+    // 不用驱动的原因和 MinGW 一样：驱动只是拼参数，却顺手把 libgcc 拖进来。Cygwin 的
+    // libgcc 里的 __divti3 是 GCC 约定，和 LLVM Win64 后端的 libcall 约定（i128 按 byval
+    // 指针传、返回值走 XMM0）对不上 —— 一做 i128 除法就崩。Runtime 自带了按 compiler-rt
+    // 约定实现的 __divti3 / __udivti3 / __modti3 / __umodti3，链接时优先取我们那份。
+    //
+    // 静态链接（-static）先走 cc 驱动：直连要换一整套库组（libgcc_s.dll.a → libgcc.a、
+    // 去掉 --as-needed、还得自己处理 cygwin1.dll 的静态版），收益不大。
+    CygwinLinkTools tools;
+    if (!static_link && find_cygwin_link_tools(&tools)) {
+        link_argv_push(&argv, tools.lld);
+        link_argv_push(&argv, "-m");
+        link_argv_push(&argv, "i386pep");
+        link_argv_push(&argv, "--tsaware");
+        link_argv_push(&argv, "-o");
+        link_argv_push(&argv, exe_file);
+        // CRT 启动文件：crt0.o 带入口点（WinMainCRTStartup），crtbegin / crtend 由
+        // GCC 提供（.init/.fini 钩子、.eh_frame 注册）。
+        link_argv_push_path(&argv, tools.lib_dir, "crt0.o");
+        if (tools.gcc_dir[0]) link_argv_push_path(&argv, tools.gcc_dir, "crtbegin.o");
+        // 搜索路径：libgcc 在 GCC 目录，libc / libcygwin / libm 在 /usr/lib，
+        // Windows API 的导入库在 w32api。
+        if (tools.gcc_dir[0]) link_argv_push_joined(&argv, "-L", tools.gcc_dir);
+        link_argv_push_joined(&argv, "-L", tools.lib_dir);
+        if (tools.w32api_dir[0]) link_argv_push_joined(&argv, "-L", tools.w32api_dir);
+        link_argv_push(&argv, object_file);
+        link_argv_push(&argv, runtime_static_path);
+        // 用户库排在 Runtime 之后、系统库之前：静态链接的符号解析是单向的。
+        push_link_options_cygwin(&argv, link_options, &tools);
+        // 和 clang 驱动的默认链接行保持一致。
+        link_argv_push(&argv, "--disable-high-entropy-va");
+        link_argv_push(&argv, "--disable-nxcompat");
+        // 系统库。libgcc 给编译器辅助符号；libc 是 C 运行时；libcygwin 是 Cygwin 的
+        // POSIX 层（fork / signal / 路径转换都在里面，socket 也走它）；libm 要显式给，
+        // Cygwin 的 pow 在 libm.a 里。
+        if (tools.gcc_dir[0]) {
+            link_argv_push_path(&argv, tools.gcc_dir, "libgcc.a");
+            link_argv_push_path(&argv, tools.gcc_dir, "libgcc_s.dll.a");
+        }
+        link_argv_push_path(&argv, tools.lib_dir, "libc.a");
+        link_argv_push_path(&argv, tools.lib_dir, "libcygwin.a");
+        link_argv_push_path(&argv, tools.lib_dir, "libm.a");
+        // w32api：Windows API 的导入库。
+        const char *w32api_libs[] = {
+            "libadvapi32.a", "libshell32.a", "libuser32.a", "libkernel32.a"
+        };
+        for (size_t i = 0; i < sizeof(w32api_libs) / sizeof(w32api_libs[0]); i++) {
+            if (tools.w32api_dir[0]) {
+                link_argv_push_path(&argv, tools.w32api_dir, w32api_libs[i]);
+            }
+        }
+        if (tools.gcc_dir[0]) link_argv_push_path(&argv, tools.gcc_dir, "crtend.o");
+    } else {
+        // 回退 cc 驱动：PATH 上没有 ld.lld，或 CRT / 库不在已知位置时走这里。
+        // `-lm` 必须放在目标文件和静态库之后，否则 Cygwin 上 pow 会报未定义符号。
+        char cc_path[RUN_PATH_MAX];
+        if (!find_program_on_path("cc", cc_path, sizeof(cc_path))) {
+            link_argv_free(&argv);
+            return report_missing_linker("ld.lld + Cygwin CRT startup files, cc",
+                "install the Cygwin lld package (provides ld.lld) or a C compiler driver "
+                "(cc) with the C development files (crt0.o / crtbegin.o / libc.a)");
+        }
+        if (verbose_commands) {
+            fprintf(stderr, "tap: note: ld.lld / Cygwin CRT files not found; "
+                            "falling back to the cc driver\n");
+        }
+        link_argv_push(&argv, "cc");
+        if (static_link) link_argv_push(&argv, "-static");
+        link_argv_push(&argv, object_file);
+        link_argv_push(&argv, runtime_static_path);
+        link_argv_push(&argv, "-o");
+        link_argv_push(&argv, exe_file);
+        // 驱动写法：`-Wl,` 必须保留前缀，不能按直连那样拆成裸参数。
+        push_link_options_driver(&argv, link_options);
+        link_argv_push(&argv, "-lm");
+    }
 #else
-    // Cygwin 及其他 Unix：仍由 C 编译器驱动选择 CRT、动态链接器和默认库。
-    // `-lm` 必须放在目标文件和静态库之后：glibc 2.34 起 libm 并入了 libc，但更早的发行版
-    // 和 Cygwin 仍需显式链接，否则 Runtime 里的 pow 会报未定义符号。
-#ifdef __CYGWIN__
-    // 用 clang 而不是 `cc`（Cygwin 上 cc 是 GCC 13），让驱动版本和生成 obj 的 LLVM 对齐。
-    //
-    // 不能加 `-rtlib=compiler-rt`：Cygwin 的 clang 包不随附 compiler-rt，
-    // `clang -print-resource-dir` 是 /usr/lib/clang/21，但下面只有 include、没有 lib，
-    // 链接时会直接报 `cannot find .../libclang_rt.builtins.a`。
-    //
-    // i128 除法/取模：LLVM 的 Win64 后端把 `sdiv i128` 降级成 __divti3/__modti3 libcall，
-    // 约定是「按 byval 指针传参、XMM0 返回」，只和 compiler-rt 匹配；Cygwin 默认 rtlib 是
-    // libgcc，它的 __divti3 是 GCC 约定，对不上 → 一做 i128 除法就段错误（崩在首次输出前，
-    // 回归点 tests/run-pass/operators/mixed_signedness.tp）。这里不依赖 libgcc 的那份：
-    // Runtime（runtime.c）在 clang 构建的 Windows 下自带了约定匹配的 __divti3/__udivti3/
-    // __modti3/__umodti3，链接静态库时优先取我们这份、盖过 libgcc。见 runtime.c 末尾注释。
-    //
-    // 也不加 `-no-pie`：Cygwin 的 clang 驱动不认这个参数（报 unused），Cygwin 目标本身
-    // 就是非 PIE 的。
-    const char *linker = "clang";
-    const char *pie_option = NULL;
-#else
-    const char *linker = "cc";
-    const char *pie_option = "-no-pie";
-#endif
-    link_argv_push(&argv, linker);
+    // 其他 Unix（非 Linux、非 Cygwin、非 macOS）：由 C 编译器驱动选择 CRT、动态链接器
+    // 和默认库。`-lm` 必须放在目标文件和静态库之后：glibc 2.34 起 libm 并入了 libc，
+    // 但更早的发行版仍需显式链接，否则 Runtime 里的 pow 会报未定义符号。
+    link_argv_push(&argv, "cc");
     if (static_link) link_argv_push(&argv, "-static");
-    if (pie_option) link_argv_push(&argv, pie_option);
+    link_argv_push(&argv, "-no-pie");
     link_argv_push(&argv, object_file);
     link_argv_push(&argv, runtime_static_path);
     link_argv_push(&argv, "-o");

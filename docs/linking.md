@@ -47,7 +47,7 @@ tap: keeping temporary files in /var/folders/…/tap-XJzyfn
 #elif defined(__APPLE__)                          // macOS
 #else
 #  if defined(__linux__) && !defined(__CYGWIN__) // Linux：优先直连 ld.lld，缺失时回退 cc
-#  elif defined(__CYGWIN__)                      // Cygwin
+#  elif defined(__CYGWIN__)                      // Cygwin：优先直连 ld.lld（COFF），缺失时回退 cc
 #  else                                           // 其他 Unix
 #  endif
 #endif
@@ -60,7 +60,7 @@ tap: keeping temporary files in /var/folders/…/tap-XJzyfn
 | MSVC | `lld-link`（直接调，找不到时退回 `clang-cl`） | `tap_runtime.lib` | `/machine:x64`、`/subsystem:console`、`/out:`、`ws2_32.lib`、`clang_rt.builtins-*.lib` |
 | MINGW64 | `ld.lld`（找不到时退回 `gcc`） | `libtap_runtime.a` | `-m i386pep`、显式 `crt2.o`/`crtend.o`、`-lws2_32`（**不加 `-lm`、不加 `-lgcc`**） |
 | UCRT64 | 同上 | `libtap_runtime.a` | 同上，命令完全一致 |
-| Cygwin | `clang` | `libtap_runtime.a` | `-lm`（**不加 `-rtlib=`、不加 `-no-pie`**） |
+| Cygwin | `ld.lld`（**优先直连**，走 COFF 模式；找不到时回退 `cc`） | `libtap_runtime.a` | 直连：`-m i386pep`、`--tsaware`、显式 CRT、`libgcc.a` / `libc.a` / `libcygwin.a` / `libm.a`；回退：`-lm`（**不加 `-rtlib=`、不加 `-no-pie`**） |
 
 ## 逐平台命令
 
@@ -258,15 +258,45 @@ libgcc 的只有 4 个符号，全部由 Runtime 自己提供（`runtime/src/run
 ### Cygwin
 
 ```sh
-clang prog.o libtap_runtime.a -o prog.exe -lm
-clang -static prog.o libtap_runtime.a -o prog.exe -lm   # --static
+# 首选：直接调 ld.lld（Cygwin 打包的 LLD，自带 COFF 模式）
+ld.lld -m i386pep --tsaware -o prog.exe \
+    /usr/lib/crt0.o /usr/lib/gcc/x86_64-pc-cygwin/<ver>/crtbegin.o \
+    -L/usr/lib/gcc/x86_64-pc-cygwin/<ver> -L/usr/lib -L/usr/lib/w32api \
+    prog.o libtap_runtime.a \
+    --disable-high-entropy-va --disable-nxcompat \
+    /usr/lib/gcc/x86_64-pc-cygwin/<ver>/libgcc.a \
+    /usr/lib/gcc/x86_64-pc-cygwin/<ver>/libgcc_s.dll.a \
+    /usr/lib/libc.a /usr/lib/libcygwin.a /usr/lib/libm.a \
+    /usr/lib/w32api/libadvapi32.a /usr/lib/w32api/libshell32.a \
+    /usr/lib/w32api/libuser32.a /usr/lib/w32api/libkernel32.a \
+    /usr/lib/gcc/x86_64-pc-cygwin/<ver>/crtend.o
+
+# 回退：PATH 上没有 ld.lld，或 CRT 不在已知位置时用 cc 驱动
+cc prog.o libtap_runtime.a -o prog.exe -lm
+cc -static prog.o libtap_runtime.a -o prog.exe -lm   # --static
 ```
 
-- 用 `clang` 而不是 `cc`：Cygwin 的 `cc` 是 GCC 13，驱动版本和生成 obj 的 LLVM 对不上。
+- **为什么能直连**：Cygwin 的目标是 PE/COFF，Cygwin 打包的 LLD 自带 COFF 模式
+  （`--subsystem` / `--Xlink` / `--tsaware` 这些都是 COFF 专有选项）。
+- **库名要展开成完整路径**：LLD 的 COFF 模式只认 `.lib`、`lib*.dll.a` 和直接给的
+  `.a` 输入文件，**不认 `-lfoo`** —— 而 Cygwin 的系统库全是裸 `.a`
+  （`libc.a` / `libcygwin.a` / `libm.a` / `w32api/libadvapi32.a`）。
+  `run.c` 因此自己按 `lib<name>.a` → `lib<name>.dll.a` → `<name>.lib` 的顺序，在
+  用户给的 `-L` 目录、GCC 目录、`/usr/lib`、`/usr/lib/w32api` 里找；找不到就原样留
+  `-lname`，让 lld 按它自己的规则找。
+- **CRT 启动文件**：入口点是 `crt0.o`（带 `WinMainCRTStartup`），`crtbegin.o` /
+  `crtend.o` 由 GCC 提供，在 `/usr/lib/gcc/x86_64-pc-cygwin/<ver>/`。版本号随 GCC
+  版本变（现在是 14），`run.c` 用 glob 探测，不写死。
+- **libgcc 照链，但 i128 靠 Runtime 那份**：libgcc 里的 `__divti3` 是 GCC 约定，和
+  LLVM Win64 后端的 libcall 约定对不上；Runtime 自带了按 compiler-rt 约定实现的
+  `__divti3` / `__udivti3` / `__modti3` / `umodti3`，链接时优先取我们那份，盖过
+  libgcc 的（见「坑」第 1 条）。
 - **不能加 `-rtlib=compiler-rt`**：Cygwin 的 clang 包不随附 compiler-rt，
   `clang -print-resource-dir` 指向的目录下只有 `include`、没有 `lib`，链接直接报
   `cannot find .../libclang_rt.builtins.a`。
-- **不能加 `-no-pie`**：Cygwin 的 clang 驱动不认（报 unused），目标本身非 PIE。
+- **不能加 `-no-pie`**：Cygwin 的驱动不认（报 unused），目标本身非 PIE。
+- **`-static` 走 cc 驱动**：直连要换一整套库组（`libgcc_s.dll.a` → `libgcc.a`、
+  去掉 `--as-needed`、还要处理 cygwin1.dll 的静态版），收益不大。
 - i128 除法见下面「坑」第 1 条。
 
 ## 构建 Runtime 库（环节 ②）
@@ -400,20 +430,27 @@ Homebrew 的 LLVM **没有** `libLLVM.a`（单体静态库），只有 206 个�
    约定是「按 byval 指针传参 + XMM0 返回」，**只和 compiler-rt 匹配**。Cygwin 默认 rtlib
    是 libgcc，它的 `__divti3` 是 GCC 约定，对不上 → 一做 i128 除法就段错误（崩在首次输出前，
    回归点 `tests/run-pass/operators/mixed_signedness.tp`）。解法：`runtime.c` 在
-   `_WIN32 && !_MSC_VER` 下自带一份约定匹配的实现。这个守卫早先是
-   `_WIN32 && __clang__ && !_MSC_VER`，因为只有 clang 才会用 compiler-rt 约定；
-   MinGW 的链接行去掉 libgcc 之后 gcc 构建也要靠它，所以放宽成了只看 `_WIN32`。
-2. **`-lm` 位置**：必须放在目标文件和静态库之后，否则老 glibc / Cygwin 上 `pow` 报未定义；
+   `(defined(_WIN32) && !defined(_MSC_VER)) || defined(__CYGWIN__)` 下自带一份约定匹配的
+   实现。这个守卫早先是 `_WIN32 && __clang__ && !_MSC_VER`，因为只有 clang 才会用
+   compiler-rt 约定；MinGW 的链接行去掉 libgcc 之后 gcc 构建也要靠它，所以放宽成了只看
+   `_WIN32`。**再后来发现 Cygwin 的编译器不定义 `_WIN32`**（只定义 `__CYGWIN__`），守卫里
+   得把 Cygwin 单独列出来 —— 否则 Cygwin 上这份实现根本不编译，i128 除法照样崩。
+2. **LLD 的 COFF 模式不认 `-lfoo`**：Cygwin 的 `ld.lld` 走 COFF 模式，库搜索只认 `.lib`、
+   `lib*.dll.a` 和直接给的 `.a` 输入文件。而 Cygwin 的系统库全是裸 `.a`
+   （`libc.a` / `libcygwin.a` / `libm.a` / `w32api/libadvapi32.a`），所以直连时必须把库名
+   展开成完整路径。同一个 `ld.lld`，Linux 的 ELF 模式可以照抄 `-lgcc`，Cygwin 的 COFF 模式
+   不行 —— 「同名链接器、不同 flavor、不同库约定」的典型例子。
+3. **`-lm` 位置**：必须放在目标文件和静态库之后，否则老 glibc / Cygwin 上 `pow` 报未定义；
    Linux 直连时它后面还有 libgcc / libc / crtend.o，别机械理解成「命令行最后一个参数」。
-3. **`ws2_32`**：Windows 全系（MSVC 用 `.lib`，MinGW/Cygwin 用 `-lws2_32`）。
-4. **clang-cl 只用于 MSVC 目标**：拿它链 MinGW 会去要 MSVC 的 CRT。
-5. **`-no-pie`**：Linux 直连 `ld.lld` 不需要（默认非 PIE），但 Linux 回退的 `cc` 和其他
+4. **`ws2_32`**：Windows 全系（MSVC 用 `.lib`，MinGW/Cygwin 用 `-lws2_32`）。
+5. **clang-cl 只用于 MSVC 目标**：拿它链 MinGW 会去要 MSVC 的 CRT。
+6. **`-no-pie`**：Linux 直连 `ld.lld` 不需要（默认非 PIE），但 Linux 回退的 `cc` 和其他
    Unix 的 cc 驱动仍要；Cygwin 不要（驱动不认）。
-6. **`-static`**：macOS 不支持，其余平台可用。Linux 直连时换成 `-static` + `crtbeginT.o` +
+7. **`-static`**：macOS 不支持，其余平台可用。Linux 直连时换成 `-static` + `crtbeginT.o` +
    `--start-group -lgcc -lgcc_eh -lc --end-group`，回退时是 `cc -static -no-pie`；
-   MinGW 走 `ld.lld` 时翻译成 `-Bstatic`。
-7. **`-Wl,` 只在驱动下有效**：macOS 的 `ld`、Linux 直连的 `ld.lld`、MinGW 直连的 `ld.lld`
-   都不认这个前缀，`run.c` 会把逗号拆成多个裸参数（`push_link_options_direct_ld()`）；
-   驱动路径（Linux 回退的 `cc`、Cygwin 的 clang、MinGW 回退的 gcc、其他 Unix 的 cc）用
-   `push_link_options_driver()` 原样透传。Linux 同一份二进制里两种写法都在，取决于这次
-   是否探测到 `ld.lld`。
+   MinGW 走 `ld.lld` 时翻译成 `-Bstatic`；Cygwin 的直连暂不支持，走 cc 驱动。
+8. **`-Wl,` 只在驱动下有效**：macOS 的 `ld`、Linux 直连的 `ld.lld`、MinGW 直连的 `ld.lld`、
+   Cygwin 直连的 `ld.lld` 都不认这个前缀，`run.c` 会把逗号拆成多个裸参数
+   （`push_link_options_direct_ld()`）；驱动路径（Linux 回退的 `cc`、Cygwin 回退的 `cc`、
+   MinGW 回退的 gcc、其他 Unix 的 cc）用 `push_link_options_driver()` 原样透传。
+   Linux 同一份二进制里两种写法都在，取决于这次是否探测到 `ld.lld`。

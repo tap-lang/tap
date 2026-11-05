@@ -89,6 +89,9 @@ static void print_var_type(const VarTypeNode *type) {
         printf("[");
         print_var_type(type->element_type);
         printf("; %" PRIu64 "]", type->array_length);
+    } else if (type->is_reference) {
+        printf(type->reference_mutable ? "&mut " : "&");
+        print_var_type(type->element_type);
     } else if (type->is_pointer) {
         printf("*");
         print_var_type(type->element_type);
@@ -189,7 +192,8 @@ static void dump_expr(ASTNode *n, int depth) {
     }
     case NODE_REFERENCE:
         print_indent(depth);
-        printf("Reference: &\n");
+        printf("Reference: %s\n",
+               ((ReferenceNode *)n)->is_mutable ? "&mut" : "&");
         dump_expr(((ReferenceNode *)n)->target, depth + 2);
         break;
     case NODE_DEREFERENCE:
@@ -882,7 +886,7 @@ BinaryOpNode *create_binary_op(enum BinaryOpType op_type, ASTNode *left, ASTNode
 }
 
 // 创建取地址表达式节点，并接管 target 的所有权。
-ReferenceNode *create_reference(ASTNode *target) {
+ReferenceNode *create_reference(ASTNode *target, int is_mutable) {
     ReferenceNode *reference = (ReferenceNode *)calloc(1, sizeof(ReferenceNode));
     if (!reference) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -891,6 +895,7 @@ ReferenceNode *create_reference(ASTNode *target) {
     reference->base.type = NODE_REFERENCE;
     reference->base.next = NULL;
     reference->target = target;
+    reference->is_mutable = is_mutable ? 1 : 0;
     return reference;
 }
 
@@ -952,6 +957,8 @@ VarTypeNode *create_var_type(enum LiteralType type) {
     var_type->type_arguments = NULL;
     var_type->is_array = 0;
     var_type->is_pointer = 0;
+    var_type->is_reference = 0;
+    var_type->reference_mutable = 0;
     var_type->is_function_pointer = 0;
     var_type->parameter_types = NULL;
     var_type->return_type = NULL;
@@ -1024,6 +1031,17 @@ VarTypeNode *create_pointer_type(VarTypeNode *element_type) {
     }
     type->is_pointer = 1;
     type->element_type = element_type;
+    return type;
+}
+
+// 创建借用类型节点 `&T` / `&mut T`。
+//
+// 表示上和 create_pointer_type 完全一致（is_pointer = 1），额外置 is_reference 让
+// 类型比较和借用检查能把它和裸指针分开。这样 Codegen 一行都不用改。
+VarTypeNode *create_reference_type(VarTypeNode *element_type, int is_mutable) {
+    VarTypeNode *type = create_pointer_type(element_type);
+    type->is_reference = 1;
+    type->reference_mutable = is_mutable ? 1 : 0;
     return type;
 }
 

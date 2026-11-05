@@ -21,6 +21,7 @@ tap 当前采用手写前端和 LLVM 后端，主要编译流程如下：
 | [`types.c`](../src/types.c) / [`types.h`](../src/types.h) | 完整类型的深拷贝与等价判断、按名字查声明、限定名切分；单态化和 Codegen 共用 |
 | [`generics.c`](../src/generics.c) / [`generics.h`](../src/generics.h) | 泛型单态化：推断类型实参、克隆实例、校验 trait impl 签名 |
 | [`sema.c`](../src/sema.c) / [`sema.h`](../src/sema.h) | 语义分析：在生成 IR 之前推断表达式类型并写入 `resolved_type` |
+| [`borrow.c`](../src/borrow.c) / [`borrow.h`](../src/borrow.h) | 借用检查：`&T` / `&mut T` 的逃逸、寿命和别名规则；详见[借用文档](borrow.md) |
 | [`codegen.c`](../src/codegen.c) / [`codegen.h`](../src/codegen.h) | 遍历 AST、生成 LLVM IR，并将 IR 编译链接为可执行文件 |
 | [`run.c`](../src/run.c) / [`run.h`](../src/run.h) | 本地可执行文件与 `lli` 的运行、退出码和临时产物清理 |
 | [`runtime/src/runtime.c`](../runtime/src/runtime.c) | 终端、休眠和随机数等跨平台 C Runtime 实现 |
@@ -38,6 +39,7 @@ main
 ├── prelude -> parser + ast
 ├── generics -> ast + types
 ├── sema -> ast + types
+├── borrow -> ast + types
 ├── codegen -> ast + types + LLVM
 └── run -> codegen
 ```

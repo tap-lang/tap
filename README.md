@@ -50,6 +50,7 @@ make
 
 - [控制流](docs/control-flow.md) —— `if` / `while` / `for`、`break` / `continue`、块作用域
 - [数据类型](docs/data-types.md) —— 整数、浮点、字符串、结构体、枚举、泛型、trait
+- [借用与引用](docs/borrow.md) —— `&T` / `&mut T`、借用检查、与 `*T` 的分工
 - [字符串](docs/data-type-string.md)
 - [模块导入](docs/module.md) —— 路径查找、`pub`、别名、通配与单成员导入
 - [标准库](docs/std.md) —— Prelude 与各模块的函数清单

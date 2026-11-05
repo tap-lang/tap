@@ -31,6 +31,10 @@ VarTypeNode *tap_type_clone(const VarTypeNode *source) {
             clone_type_list(source->parameter_types),
             tap_type_clone(source->return_type));
     }
+    if (source->is_reference) {
+        return create_reference_type(
+            tap_type_clone(source->element_type), source->reference_mutable);
+    }
     if (source->is_pointer) {
         return create_pointer_type(tap_type_clone(source->element_type));
     }
@@ -69,6 +73,14 @@ int tap_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     }
     if (left->is_pointer != right->is_pointer ||
         left->is_array != right->is_array) {
+        return 0;
+    }
+    // 借用和裸指针不是同一个类型：`&T` 有借用检查，`*T` 没有，互相赋值必须显式
+    // 走 `as`。`&mut T` 和 `&T` 同样不能混（`&mut T` 可退化成 `&T`，反过来不行，
+    // 那条降级在 expression_assignable_to 里单独放行）。
+    if (left->is_reference != right->is_reference) return 0;
+    if (left->is_reference &&
+        left->reference_mutable != right->reference_mutable) {
         return 0;
     }
     if (left->is_pointer) {
