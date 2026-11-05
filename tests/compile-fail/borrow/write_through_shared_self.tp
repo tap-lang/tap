@@ -1,0 +1,25 @@
+// `&self` 只承诺「借来看」，方法体里改它指向的东西就破了这个承诺。
+// 要改就得把接收者声明成 `&mut self`。
+trait Poke {
+    fn poke(&self): i32;
+}
+
+struct Point { x: i32 }
+
+impl Poke for Point {
+    fn poke(&self): i32 {
+        self.x = 9;
+        return self.x;
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot write through a shared reference 'self'
+- .exit
+1
+-- */

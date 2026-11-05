@@ -1,0 +1,25 @@
+// `&self` 让「方法能返回借用」成立，但借的只能是 self 指向的东西。
+// 返回指向本帧局部变量的引用，和普通函数一样被拦下。
+trait Peek {
+    fn peek(&self): &i32;
+}
+
+struct Point { x: i32 }
+
+impl Peek for Point {
+    fn peek(&self): &i32 {
+        let local: i32 = 5;
+        return &local;
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot return a reference to a value that lives in this function
+- .exit
+1
+-- */

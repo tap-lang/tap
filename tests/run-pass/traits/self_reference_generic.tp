@@ -1,0 +1,50 @@
+// `&self` 在几条「不那么直接」的路径上也要成立：
+//   1. 泛型约束里调用 —— 实参是按值传进来的形参，调用点自动取它的地址
+//   2. 接收者本身就是引用 —— 直接用那个指针，不再取一次地址
+//   3. 方法里调另一个方法 —— 接收者是 self 本身（已经是引用）
+
+trait Counter {
+    fn current(&self): i32;
+    fn twice(&self): i32;
+    fn reset(&mut self);
+}
+
+struct Box {
+    value: i32,
+}
+
+impl Counter for Box {
+    fn current(&self): i32 {
+        return self.value;
+    }
+    fn twice(&self): i32 {
+        return self.current() * 2;
+    }
+    fn reset(&mut self) {
+        self.value = 0;
+    }
+}
+
+fn describe<T: Counter>(v: T): i32 {
+    return v.twice();
+}
+
+fn peek(p: &Box): i32 {
+    return p.twice();
+}
+
+fn main(): i32 {
+    let b: Box = Box { value: 21 };
+    print("%d %d %d\n", b.twice(), describe(b), peek(&b));
+    b.reset();
+    print("%d\n", b.current());
+    return 0;
+}
+
+/** -- test
+- .stdout
+42 42 42
+0
+- .exit
+0
+-- */

@@ -1,0 +1,24 @@
+// trait 声明 `&self`，impl 却按值接收：方法改的是一份副本，调用方看不到。
+// 接收者的借用方式必须和 trait 声明完全一致。
+trait Peek {
+    fn peek(&self): i32;
+}
+
+struct Point { x: i32 }
+
+impl Peek for Point {
+    fn peek(p: Point): i32 {
+        return p.x;
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'peek' takes 'Point' as its receiver, but trait 'Peek' declares '&self'
+- .exit
+1
+-- */

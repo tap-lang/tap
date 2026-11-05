@@ -1,0 +1,32 @@
+// `&mut self` 方法调用等于对接收者做一次临时独占借用。
+// 接收者已经被别处借走时，这次调用不成立。
+trait Peek {
+    fn peek(&self): &i32;
+    fn reset(&mut self);
+}
+
+struct Point { x: i32 }
+
+impl Peek for Point {
+    fn peek(&self): &i32 {
+        return &self.x;
+    }
+    fn reset(&mut self) {
+        self.x = 0;
+    }
+}
+
+fn main(): i32 {
+    let p: Point = Point { x: 1 };
+    let r: &i32 = p.peek();
+    p.reset();
+    print("%d\n", *r);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'p' is already borrowed, so it cannot be borrowed mutably
+- .exit
+1
+-- */

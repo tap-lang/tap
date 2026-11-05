@@ -1,0 +1,50 @@
+// 接收者写成 `&self` / `&mut self`：方法拿到的是一层借用，不是一份副本。
+//
+// impl 里的 `&self` 脱糖成「名字是 self、类型是 &T」的普通参数，所以方法体里的
+// `self.x` 走的就是引用变量的字段访问 —— 和手写 `fn f(v: &Point)` 完全一样，
+// Codegen 那边一行特例都没有。
+
+trait Shape {
+    fn area(&self): i32;
+    fn grow(&mut self, delta: i32);
+    fn width(&self): &i32;
+}
+
+struct Rect {
+    width: i32,
+    height: i32,
+}
+
+impl Shape for Rect {
+    fn area(&self): i32 {
+        return self.width * self.height;
+    }
+    // `&mut self` 改的是调用方的那个对象，不是副本。
+    fn grow(&mut self, delta: i32) {
+        self.width = self.width + delta;
+        self.height = self.height + delta;
+    }
+    // `&self` 返回借用：借的是 self 指向的存储，本帧里没有任何东西被借出。
+    fn width(&self): &i32 {
+        return &self.width;
+    }
+}
+
+fn main(): i32 {
+    let r: Rect = Rect { width: 3, height: 4 };
+    print("area=%d\n", r.area());
+    r.grow(1);
+    print("area=%d\n", r.area());
+    let w: &i32 = r.width();
+    print("width=%d\n", *w);
+    return 0;
+}
+
+/** -- test
+- .stdout
+area=12
+area=20
+width=4
+- .exit
+0
+-- */

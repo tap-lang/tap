@@ -1,0 +1,24 @@
+// `&mut self` 和 `&self` 是两种不同的承诺，不能互相顶替：
+// trait 要独占借用，impl 只给共享借用，方法体就改不了调用方的对象。
+trait Peek {
+    fn peek(&mut self): i32;
+}
+
+struct Point { x: i32 }
+
+impl Peek for Point {
+    fn peek(&self): i32 {
+        return self.x;
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'peek' takes '&Point' as its receiver, but trait 'Peek' declares '&mut self'
+- .exit
+1
+-- */
