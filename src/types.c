@@ -109,6 +109,17 @@ int tap_type_equal(const VarTypeNode *left, const VarTypeNode *right) {
     return left->type == right->type;
 }
 
+int tap_receiver_type_matches(const VarTypeNode *parameter,
+                              const VarTypeNode *receiver) {
+    if (!parameter || !receiver) return 0;
+    // 完全一致：`self: T` 收 `T`，`self: &T` 收 `&T`。
+    if (tap_type_equal(parameter, receiver)) return 1;
+    // 自动取地址：方法要 `&T`，接收者是 `T` 时调用点补一个取地址。
+    // 这里只放行引用，`*T` 不参与 —— 裸指针没有借用承诺，不能直接当借用传。
+    return parameter->is_reference && parameter->element_type &&
+           tap_type_equal(parameter->element_type, receiver);
+}
+
 StructNode *tap_find_struct(ProgramNode *program, const char *name) {
     if (!program || !name) return NULL;
     for (ASTNode *node = program->structs; node; node = node->next) {

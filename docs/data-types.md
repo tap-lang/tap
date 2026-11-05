@@ -655,6 +655,48 @@ fn describe<T: Show>(value: T): String {
 
 - trait 名和 impl 在整个程序里可见（trait 名不参与模块私有改名）。
 
+#### 借用接收者 `&self` / `&mut self`
+
+接收者有三种写法，语义完全不同：
+
+| 写法 | impl 里首参类型 | 调用时发生什么 |
+| --- | --- | --- |
+| `self` | `T` | 传一份副本，方法改不到调用方 |
+| `&self` | `&T` | 传地址，只读（方法体里写 `self.x` 会报错） |
+| `&mut self` | `&mut T` | 传地址，可写，且要求接收者当前没有别的借用 |
+
+```text
+trait Shape {
+    fn area(&self): i32;
+    fn grow(&mut self, delta: i32);
+    fn width(&self): &i32;
+}
+
+impl Shape for Rect {
+    fn area(&self): i32 { return self.width * self.height; }
+    fn grow(&mut self, delta: i32) { self.width = self.width + delta; }
+    fn width(&self): &i32 { return &self.width; }
+}
+
+let r: Rect = Rect { width: 3, height: 4 };
+r.grow(1);                    // 直接改 r 本身，没有写回
+let w: &i32 = r.width();      // 方法返回借用
+```
+
+几条要点：
+
+- **脱糖成一个普通参数**：`&self` 就是「名字叫 `self`、类型是 `&T` 的参数」。所以方法体里的
+  `self.x` 和任何引用变量的字段访问走同一条路径，不需要为它开特例。
+- **调用点自动取地址**：方法要 `&T`、接收者是 `T` 时，编译器补一个取地址；接收者本身已经是
+  `&T` 时直接沿用。裸指针 `*T` 不参与自动取地址 —— 没有借用承诺的指针不能直接当借用传。
+- **接收者模式必须和 trait 声明一致**，`&self` 与 `&mut self` 不能互相顶替：
+  `error: method 'peek' takes '&Point' as its receiver, but trait 'Peek' declares '&mut self'`
+- **方法可以返回借用**（`fn width(&self): &i32`），借的是 `self` 指向的存储。这要求函数签名
+  满足[借用规则](borrow.md#4-返回借用的函数必须只有一个引用参数)：返回引用的函数必须恰好有
+  一个引用参数 —— 对 `&self` 方法来说，接收者就是那一个。
+- **借用会跟着方法调用走**：`let w = r.width();` 之后 `r` 就被借走了，改 `r` 或调 `&mut self`
+  方法都会报错，直到 `w` 离开作用域。
+
 **v1 的边界**：没有关联类型、默认方法、`dyn` / 运行时多态和运算符重载；`impl` 的目标类型必须
 是具名的非泛型类型（`impl Show for Vec<i32>` 报错）；trait 方法自身不能是泛型。
 

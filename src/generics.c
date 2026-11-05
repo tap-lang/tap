@@ -1137,18 +1137,27 @@ static const char *strip_module_prefix(const char *name) {
     return dot ? dot + 1 : name;
 }
 
+// 诊断用的接收者写法（`self` / `&self` / `&mut self`）。
+static const char *receiver_text(const TraitMethodNode *signature) {
+    if (!signature->self_is_reference) return "self";
+    return signature->self_is_mutable ? "&mut self" : "&self";
+}
+
 // 诊断用的类型名：标量给名字，具名类型剥掉模块前缀，指针/数组/泛型实参递归展开。
 static char *describe_type(const VarTypeNode *type) {
     if (!type) return strdup("nothing");
     if (type->is_pointer) {
         char *element = describe_type(type->element_type);
-        size_t size = strlen(element) + 2;
+        // 借用和裸指针在 LLVM 里是同一个表示，但语义差得远，诊断必须写清是哪个。
+        const char *prefix = !type->is_reference ? "*"
+            : type->reference_mutable ? "&mut " : "&";
+        size_t size = strlen(element) + strlen(prefix) + 1;
         char *result = (char *)malloc(size);
         if (!result) {
             fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
             exit(1);
         }
-        snprintf(result, size, "*%s", element);
+        snprintf(result, size, "%s%s", prefix, element);
         free(element);
         return result;
     }
@@ -1273,10 +1282,14 @@ int validate_impl_signatures(ProgramNode *program) {
             ASTNode *trait_param = signature->param_types;
             unsigned index = 1;
 
-            // 接收者：trait 里写的是 `self`（不带类型），impl 里必须写成目标类型本身，
-            // 否则方法查找（首参类型 == 接收者类型）根本找不到它。
+            // 接收者：trait 里写的是 `self` / `&self` / `&mut self`（不带类型），impl 里
+            // 必须写成目标类型本身（或它的一层借用），否则方法查找（首参类型 == 接收者）
+            // 根本找不到它。
             if (signature->has_self && impl_param) {
-                const char *named = var_type_named(impl_param);
+                const VarTypeNode *receiver_base = impl_param->is_reference
+                    ? impl_param->element_type
+                    : impl_param;
+                const char *named = var_type_named(receiver_base);
                 if (!named || strcmp(named, impl_node->type_name) != 0) {
                     char *actual_type = describe_type(impl_param);
                     print_diagnostic(stderr, "error", method->filename, method->line,
@@ -1284,6 +1297,22 @@ int validate_impl_signatures(ProgramNode *program) {
                                      "method '%s' takes '%s' as its receiver, but impl is for '%s'",
                                      method_name, actual_type,
                                      strip_module_prefix(impl_node->type_name)); // 中文：接收者类型与 impl 的目标类型不一致
+                    free(actual_type);
+                    free(method_name);
+                    return 1;
+                }
+                // 引用与否必须和 trait 声明一致。trait 说 `&self` 而 impl 按值接收，
+                // 方法改的是一份副本，调用方看不到；反过来则是把借来的值当成自己的用。
+                int same_mode = impl_param->is_reference == signature->self_is_reference &&
+                    (!signature->self_is_reference ||
+                     impl_param->reference_mutable == signature->self_is_mutable);
+                if (!same_mode) {
+                    char *actual_type = describe_type(impl_param);
+                    print_diagnostic(stderr, "error", method->filename, method->line,
+                                     method->column,
+                                     "method '%s' takes '%s' as its receiver, but trait '%s' declares '%s'",
+                                     method_name, actual_type,
+                                     impl_node->trait_name, receiver_text(signature)); // 中文：接收者的借用方式与 trait 声明不一致
                     free(actual_type);
                     free(method_name);
                     return 1;

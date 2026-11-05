@@ -49,6 +49,15 @@ let b: &mut i32 = &mut value;
 可以取地址的目标和 `*T` 一致：变量、结构体字段（`&point.x`）、数组或指针元素
 （`&items[1]`）。`const` 常量不能取地址（没有只读存储）。
 
+方法接收者也可以写成借用，`impl` 里用 `&self` / `&mut self` 代替「参数名: 类型」：
+
+```text
+trait Shape {
+    fn area(&self): i32;          // 共享借用接收者
+    fn grow(&mut self, d: i32);   // 独占借用接收者
+}
+```
+
 ## 转换规则
 
 | 从 | 到 | 允许 | 说明 |
@@ -205,8 +214,46 @@ print("%d\n", count);      // 合法
 
 - 普通函数参数、需要「借来看一眼」或「借来改一下」——用 `&T` / `&mut T`。
 - 返回值需要指向参数内部（`fn first(v: &Vec<T>): &T`）——用 `&T`，见规则 4。
+- 方法要读写 `self` 本身、或者要返回借用——接收者写 `&self` / `&mut self`，见下节。
 - 结构体要长期保存指针、需要自己管寿命——用 `*T`。
 - 和 C 打交道——用 `*T` 或 `c_string`。
+
+## 方法接收者：`&self` / `&mut self`
+
+trait 方法的接收者有三种写法，`&self` 让「方法返回借用」变得可能：
+
+```text
+trait Shape {
+    fn area(&self): i32;
+    fn grow(&mut self, delta: i32);
+    fn width(&self): &i32;
+}
+
+impl Shape for Rect {
+    fn area(&self): i32 { return self.width * self.height; }
+    fn grow(&mut self, delta: i32) { self.width = self.width + delta; }
+    fn width(&self): &i32 { return &self.width; }   // 借自 self
+}
+```
+
+实现上 `&self` 被脱糖成「名字是 `self`、类型是 `&T`」的普通参数，所以：
+
+- 方法体里的 `self.x` 和引用变量的字段访问走同一条路径，没有特例；
+- `self` 是**引用型参数**，`pointee_rank` 是 -1（指向函数外），所以 `&self.width`
+  可以原样返回，而 `&local` 不行；
+- `&self` 方法里写 `self.x` 会报 `cannot write through a shared reference 'self'`；
+- 规则 4 对方法同样适用：`fn get(&self): &T` 里接收者就是那「唯一的一个引用参数」。
+
+方法调用同时也是对接收者的一次借用，所以下面两行都会报错：
+
+```text
+let w: &i32 = r.width();
+r.grow(1);              // error: 'r' is borrowed and cannot be assigned here
+
+let p: Point = Point { x: 1 };
+let r: &i32 = p.peek();
+p.reset();              // error: 'p' is already borrowed, so it cannot be borrowed mutably
+```
 
 ## 当前限制（L1 的边界）
 
@@ -214,13 +261,10 @@ print("%d\n", count);      // 合法
 
 - **引用参数最多一个**才能返回借用。需要「借自哪个参数」更细粒度时得等生命周期参数。
 - **结构体不能存借用。** `struct Parser { src: &String }` 需要生命周期参数，属于 L2。
-- **方法暂时不能返回借用。** trait 里的 `self` 表示「按值接收」，写不出 `&self`，
-  所以 `impl` 的接收者只能是 `T`，而按值接收的参数取地址一定是本帧的。等接收者支持
-  `&self` 之后，`src/borrow.c` 里的方法解析路径就能直接用。
+- **接收者只能是 `&self` / `&mut self` 这一层。** `&&self`、按值 + 借用的组合都不支持；
+  方法签名里也不能出现生命周期标注。
 - **同一条语句里的两次 `&mut` 不查。** `f(&mut x, &mut x)` 目前放行 —— 临时借用不
   登记别名。
-- **方法调用不会结束对源对象的借用。** `let r = &v; v.free();` 不会报错，因为
-  `v.free()` 不是对 `v` 的直接使用。
 - **借用活到作用域结束**，不做 NLL。见上一节。
 - **不做自动 drop。** 借用检查只保证「引用不会悬垂」，不负责释放。`Vec` 仍然手工
   `free()`，字符串仍然由 Runtime 统一在进程退出时释放。
@@ -234,7 +278,11 @@ print("%d\n", count);      // 合法
   之后可以重新借用。
 - [`borrow_return.tp`](../tests/run-pass/types/borrow_return.tp)：返回借用的函数
   （`fn first(v: &Vec<T>): &T`）、借用穿过函数调用、`&param.field`。
-- `tests/compile-fail/borrow/` 下每条规则一个用例。
+- [`self_reference.tp`](../tests/run-pass/traits/self_reference.tp)：`&self` / `&mut self`
+  接收者、方法返回借用。
+- [`self_reference_generic.tp`](../tests/run-pass/traits/self_reference_generic.tp)：
+  泛型约束下的 `&self` 调用、引用接收者、方法互相调用。
+- `tests/compile-fail/borrow/` 和 `tests/compile-fail/traits/` 下每条规则一个用例。
 
 只跑借用相关的用例：
 
@@ -242,6 +290,7 @@ print("%d\n", count);      // 合法
 TEST_FILTER=borrow/ sh tests/run-tests.sh build/tap
 TEST_FILTER=types/reference sh tests/run-tests.sh build/tap
 TEST_FILTER=types/borrow sh tests/run-tests.sh build/tap
+TEST_FILTER=traits/self sh tests/run-tests.sh build/tap
 ```
 
 `TAP_NO_BORROW=1` 可以跳过整个借用检查，用来确认某段代码到底是被借用检查还是别的

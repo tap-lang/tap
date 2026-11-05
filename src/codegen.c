@@ -1034,7 +1034,7 @@ static FunctionNode *find_method_function(
         // 泛型模板本身没有可调用的 LLVM 签名；单态化后生成的具体函数才参与匹配。
         if (function->type_params) continue;
         const VarTypeNode *first_param = function_param_var_type(function, 0);
-        if (first_param && tap_type_equal(first_param, receiver_type) &&
+        if (first_param && tap_receiver_type_matches(first_param, receiver_type) &&
             method_name_matches(function->name, method_name)) {
             if (!call) return function;
             unsigned argument_count = 0;
@@ -3170,7 +3170,7 @@ static LLVMValueRef generate_method_call(
 
     const VarTypeNode *receiver_type = receiver_symbol->declared_type;
     const VarTypeNode *first_param = function_param_var_type(function, 0);
-    if (!first_param || !tap_type_equal(first_param, receiver_type)) {
+    if (!first_param || !tap_receiver_type_matches(first_param, receiver_type)) {
         print_diagnostic(stderr, "error", call->filename, call->line, call->column,
                          "method '%s' receiver type mismatch",
                          function_base_name(function->name)); // 中文：方法接收者类型不匹配
@@ -3193,9 +3193,26 @@ static LLVMValueRef generate_method_call(
         exit(1);
     }
 
-    arguments[0] = LLVMBuildLoad2(
-        context->builder, get_llvm_var_type(context, receiver_type),
-        receiver_symbol->value, "method_receiver");
+    // 接收者实参。方法首参是 `&T` 而接收者是 `T` 时传**地址**（`receiver_symbol->value`
+    // 本身就是那个 alloca），这就是 `&self` 的自动取地址；其余情况照旧传值。
+    //
+    // 传地址意味着方法真的能改到接收者本身，所以常量接收者必须在这里拦下 ——
+    // 否则 `const` 的「不可写」承诺会被一个 `&mut self` 方法从后门破掉。
+    if (first_param->is_reference && !receiver_type->is_reference) {
+        if (first_param->reference_mutable && receiver_symbol->is_const) {
+            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+                             "cannot call mutating method '%s' on constant '%s'",
+                             function_base_name(function->name),
+                             receiver_symbol->name); // 中文：不能对常量调用可变方法
+            free(arguments);
+            exit(1);
+        }
+        arguments[0] = receiver_symbol->value;
+    } else {
+        arguments[0] = LLVMBuildLoad2(
+            context->builder, get_llvm_var_type(context, receiver_type),
+            receiver_symbol->value, "method_receiver");
+    }
 
     ASTNode *argument = call->arguments;
     for (unsigned i = 1; i < expected_count; i++, argument = argument->next) {
@@ -3215,8 +3232,13 @@ static LLVMValueRef generate_method_call(
     }
 
     LLVMTypeRef function_type = LLVMGlobalGetValueType(llvm_function);
+    // void 返回的调用不能带结果名（LLVM 会拒绝「有名字但值是 void」）。
+    // 方法可以没有返回类型（`fn grow(&mut self, d: i32)`），这条路径必须让开。
+    const char *result_name =
+        LLVMGetReturnType(function_type) == LLVMVoidTypeInContext(context->context)
+            ? "" : "method_call_result";
     LLVMValueRef value = LLVMBuildCall2(context->builder, function_type, llvm_function,
-                                        arguments, expected_count, "method_call_result");
+                                        arguments, expected_count, result_name);
     free(arguments);
 
     const VarTypeNode *return_type = function_return_var_type(function);

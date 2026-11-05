@@ -18,6 +18,17 @@ VarTypeNode *tap_type_clone(const VarTypeNode *source);
 // 这类静默错误。
 int tap_type_equal(const VarTypeNode *left, const VarTypeNode *right);
 
+// 方法调用时「首参能不能接住这个接收者」。
+//
+// 方法首参（`self`）有两种形态，调用点允许的写法也不同：
+//   首参 `T`            ← 接收者必须是 `T`（按值传，老写法）
+//   首参 `&T` / `&mut T` ← 接收者可以是 `T`（调用点自动取地址），也可以是 `&T`
+// 裸指针 `*T` 一律不参与：把没有任何承诺的指针当借用用，等于绕过整个借用检查。
+//
+// Codegen 的方法查找和 borrow.c 的借用传播必须给出同一个答案，所以只留这一份。
+int tap_receiver_type_matches(const VarTypeNode *parameter,
+                              const VarTypeNode *receiver);
+
 // 在程序里按名字查找声明。
 //
 // 单态化和 Codegen 都要查结构体 / 枚举 / 字段，两边原本各写了一份 —— 而且

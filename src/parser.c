@@ -778,8 +778,53 @@ static ASTNode *parse_match(Parser *parser, int as_value) {
     return (ASTNode *)statement;
 }
 
+// 解析第一个参数之后的其余参数（`name: type` 序列，末尾可以跟 `...`）。
+//
+// 单独拆出来是因为 `&self` 走的是另一条分支，但「剩下的参数」和普通函数的写法
+// 完全一样，没必要重复一遍。
+static void parse_remaining_params(Parser *parser, FunctionNode *function) {
+    while (parser->current_token->type == TOKEN_COMMA) {
+        consume(parser, TOKEN_COMMA);
+
+        // `...` 变参标记：必须位于参数列表末尾。extern 声明直接绑 C 的变参 ABI；
+        // 普通函数的变参只能原样转发给另一个变参函数，函数体形态由 Codegen 校验。
+        if (parser->current_token->type == TOKEN_ELLIPSIS) {
+            function->is_variadic = 1;
+            consume(parser, TOKEN_ELLIPSIS);
+            if (parser->current_token->type != TOKEN_RPAREN) {
+                parser_error(parser, "variadic marker `...` must be the last parameter"); // 中文：变参标记必须是最后一个参数
+            }
+            break;
+        }
+
+        if (parser->current_token->type != TOKEN_IDENTIFIER) {
+            parser_error(parser, "expected parameter name"); // 中文：期望参数名
+        }
+
+        char *param_name = strdup(parser->current_token->lexeme);
+        consume(parser, TOKEN_IDENTIFIER);
+        IdentifierNode *param = create_identifier(param_name);
+        free(param_name);
+        add_param(function, param);
+
+        // 解析参数类型；未标注时使用默认 i32，保持参数与类型链表对齐。
+        VarTypeNode *param_type = create_var_type(LITERAL_I32);
+        if (parser->current_token->type == TOKEN_COLON) {
+            consume(parser, TOKEN_COLON);
+            free(param_type);
+            param_type = parse_type(parser);
+        }
+        add_param_type(function, param_type);
+    }
+}
+
 // 解析普通函数定义或无函数体的外部函数声明。
-static FunctionNode *parse_function(Parser *parser, int is_extern) {
+//
+// self_type_name 非空表示「这是 impl 块里的方法」，此时允许第一个参数写成
+// `&self` / `&mut self`：它没有类型标注，类型要从 impl 的目标类型补出来。
+// 顶层函数和 extern 声明传 NULL。
+static FunctionNode *parse_function(Parser *parser, int is_extern,
+                                    const char *self_type_name) {
     // 解析 fn 关键字
     consume(parser, TOKEN_FN);
     
@@ -822,7 +867,31 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
     }
 
     // 解析参数
-    if (parser->current_token->type == TOKEN_IDENTIFIER) {
+    if (parser->current_token->type == TOKEN_REFERENCE) {
+        // `&self` / `&mut self`：impl 方法的接收者简写。
+        //
+        // 脱糖成一个**普通参数**：名字固定为 `self`，类型是 `&T`（T = impl 的目标类型）。
+        // 这样方法体里的 `self.x` 和任何引用变量的字段访问走完全同一条路径，
+        // 解析、语义、Codegen 都不需要为它开特例。
+        if (!self_type_name) {
+            parser_error(parser, "`&self` is only allowed as the first parameter of an impl method"); // 中文：&self 只能用作 impl 方法的第一个参数
+        }
+        consume(parser, TOKEN_REFERENCE);
+        int self_is_mutable = 0;
+        if (parser->current_token->type == TOKEN_MUT) {
+            consume(parser, TOKEN_MUT);
+            self_is_mutable = 1;
+        }
+        if (parser->current_token->type != TOKEN_IDENTIFIER ||
+            strcmp(parser->current_token->lexeme, "self") != 0) {
+            parser_error(parser, "expected `self` after `&` in the receiver position"); // 中文：`&` 之后必须是 self
+        }
+        consume(parser, TOKEN_IDENTIFIER);
+        add_param(function, create_identifier("self"));
+        add_param_type(function, create_reference_type(
+            create_struct_type(self_type_name), self_is_mutable));
+        parse_remaining_params(parser, function);
+    } else if (parser->current_token->type == TOKEN_IDENTIFIER) {
         // 解析第一个参数
         char *param_name = strdup(parser->current_token->lexeme);
         consume(parser, TOKEN_IDENTIFIER);
@@ -839,40 +908,7 @@ static FunctionNode *parse_function(Parser *parser, int is_extern) {
         }
         add_param_type(function, param_type);
         
-        // 解析更多参数
-        while (parser->current_token->type == TOKEN_COMMA) {
-            consume(parser, TOKEN_COMMA);
-
-            // `...` 变参标记：必须位于参数列表末尾。extern 声明直接绑 C 的变参 ABI；
-            // 普通函数的变参只能原样转发给另一个变参函数，函数体形态由 Codegen 校验。
-            if (parser->current_token->type == TOKEN_ELLIPSIS) {
-                function->is_variadic = 1;
-                consume(parser, TOKEN_ELLIPSIS);
-                if (parser->current_token->type != TOKEN_RPAREN) {
-                    parser_error(parser, "variadic marker `...` must be the last parameter"); // 中文：变参标记必须是最后一个参数
-                }
-                break;
-            }
-
-            if (parser->current_token->type != TOKEN_IDENTIFIER) {
-                parser_error(parser, "expected parameter name"); // 中文：期望参数名
-            }
-            
-            param_name = strdup(parser->current_token->lexeme);
-            consume(parser, TOKEN_IDENTIFIER);
-            param = create_identifier(param_name);
-            free(param_name);
-            add_param(function, param);
-            
-            // 解析参数类型
-            param_type = create_var_type(LITERAL_I32);
-            if (parser->current_token->type == TOKEN_COLON) {
-                consume(parser, TOKEN_COLON);
-                free(param_type);
-                param_type = parse_type(parser);
-            }
-            add_param_type(function, param_type);
-        }
+        parse_remaining_params(parser, function);
     }
     
     consume(parser, TOKEN_RPAREN);
@@ -1618,12 +1654,27 @@ static TraitMethodNode *parse_trait_method(Parser *parser) {
 
     consume(parser, TOKEN_LPAREN);
     // 方法必须有接收者：trait 约束的是「类型上能调用的方法」。
-    if (parser->current_token->type != TOKEN_IDENTIFIER ||
-        strcmp(parser->current_token->lexeme, "self") != 0) {
-        parser_error(parser, "trait method must take `self` as its first parameter"); // 中文：trait 方法第一个参数必须是 self
-    }
+    // 三种写法：`self`（按值）、`&self`（共享借用）、`&mut self`（独占借用）。
     method->has_self = 1;
-    consume(parser, TOKEN_IDENTIFIER);
+    if (parser->current_token->type == TOKEN_REFERENCE) {
+        consume(parser, TOKEN_REFERENCE);
+        method->self_is_reference = 1;
+        if (parser->current_token->type == TOKEN_MUT) {
+            consume(parser, TOKEN_MUT);
+            method->self_is_mutable = 1;
+        }
+        if (parser->current_token->type != TOKEN_IDENTIFIER ||
+            strcmp(parser->current_token->lexeme, "self") != 0) {
+            parser_error(parser, "expected `self` after `&` in the receiver position"); // 中文：`&` 之后必须是 self
+        }
+        consume(parser, TOKEN_IDENTIFIER);
+    } else {
+        if (parser->current_token->type != TOKEN_IDENTIFIER ||
+            strcmp(parser->current_token->lexeme, "self") != 0) {
+            parser_error(parser, "trait method must take `self` as its first parameter"); // 中文：trait 方法第一个参数必须是 self
+        }
+        consume(parser, TOKEN_IDENTIFIER);
+    }
 
     while (parser->current_token->type == TOKEN_COMMA) {
         consume(parser, TOKEN_COMMA);
@@ -1723,7 +1774,7 @@ static ImplNode *parse_impl(Parser *parser, ProgramNode *program) {
         if (parser->current_token->type != TOKEN_FN) {
             parser_error(parser, "expected method definition in impl"); // 中文：期望 impl 里的方法定义
         }
-        FunctionNode *method = parse_function(parser, 0);
+        FunctionNode *method = parse_function(parser, 0, impl_node->type_name);
         // 记下源语言里的方法名：函数名随后会被改成 `show$Point`，诊断要用原名。
         method->original_name = strdup(method->name);
         add_impl_method(impl_node, method);
@@ -1779,12 +1830,12 @@ ProgramNode *parse_program(Parser *parser) {
             if (parser->current_token->type != TOKEN_FN) {
                 parser_error(parser, "extern must be followed by a function declaration"); // 中文：extern 后必须是函数声明
             }
-            FunctionNode *function = parse_function(parser, 1);
+            FunctionNode *function = parse_function(parser, 1, NULL);
             function->is_pub = is_pub;
             add_function(program, function);
             stamp_location((ASTNode *)function, start);
         } else if (parser->current_token->type == TOKEN_FN) {
-            FunctionNode *function = parse_function(parser, 0);
+            FunctionNode *function = parse_function(parser, 0, NULL);
             function->is_pub = is_pub;
             add_function(program, function);
             stamp_location((ASTNode *)function, start);

@@ -277,7 +277,7 @@ static FunctionNode *find_method_function_for(BorrowContext *context,
         FunctionNode *function = (FunctionNode *)node;
         if (function->type_params) continue; // 泛型模板本身不可调用
         const VarTypeNode *first = function_parameter_type(function, 0);
-        if (!first || !tap_type_equal(first, receiver_type)) continue;
+        if (!first || !tap_receiver_type_matches(first, receiver_type)) continue;
 
         const char *base = function_base_name(function->name);
         const char *dollar = strchr(base, '$');
@@ -402,7 +402,12 @@ static int reference_rank_of(BorrowContext *context, ASTNode *expression,
         if (receiver) {
             // 方法：参数 0 是接收者，其余实参从 1 开始对位。
             if (source == 0) {
-                *pointee_rank = receiver->pointee_rank;
+                // 借的是接收者。接收者本身是引用时，借的是它指向的存储；否则
+                // 调用点会为 `&self` 自动取地址，借的就是接收者自己所在的槽 ——
+                // 所以这里要区分，直接用 pointee_rank 会把局部接收者当成函数外。
+                *pointee_rank = receiver->is_reference
+                    ? receiver->pointee_rank
+                    : receiver->storage_rank;
                 return 1;
             }
             *pointee_rank = argument_source_rank(
@@ -427,22 +432,14 @@ static int reference_is_mutable(ASTNode *expression) {
 // 借用规则
 // ---------------------------------------------------------------------------
 
-// 检查一次借用是否与已有借用冲突。mark 只在 `let` 绑定时为真 —— 临时借用
-// （`f(&mut x)` 这种）在语句结束时就不存在了，不需要留下标记。
-static void check_borrow_conflict(BorrowContext *context, ASTNode *target,
-                                  int is_mutable, int mark,
-                                  const ASTNode *diagnostic_node) {
-    LValueInfo info;
-    resolve_lvalue(context, target, &info);
-
-    // `&mut v.field` 里 v 是共享引用时，等于透过共享引用拿独占权限。
-    if (is_mutable && info.crossed_shared) {
-        report_error(diagnostic_node,
-                     "cannot take a mutable borrow through a shared reference");
-        // 中文：不能透过共享引用取独占借用
-    }
-
-    BorrowSymbol *source = info.base;
+// 借用冲突检查的核心：source 这个符号要被借出 is_mutable。
+//
+// mark 只在借用**会持续**的地方为真（`let r = ...`）：临时借用（`f(&mut x)` 这种）
+// 在语句结束时就不存在了，不需要留下标记。
+static void check_symbol_borrow_conflict(BorrowContext *context,
+                                         BorrowSymbol *source, int is_mutable,
+                                         int mark,
+                                         const ASTNode *diagnostic_node) {
     if (!source) return;
 
     if (is_mutable) {
@@ -468,6 +465,73 @@ static void check_borrow_conflict(BorrowContext *context, ASTNode *target,
                  context->rank < source->shared_borrow_rank)) {
         source->shared_borrow_rank = context->rank;
     }
+}
+
+// 检查一次借用是否与已有借用冲突。
+static void check_borrow_conflict(BorrowContext *context, ASTNode *target,
+                                  int is_mutable, int mark,
+                                  const ASTNode *diagnostic_node) {
+    LValueInfo info;
+    resolve_lvalue(context, target, &info);
+
+    // `&mut v.field` 里 v 是共享引用时，等于透过共享引用拿独占权限。
+    if (is_mutable && info.crossed_shared) {
+        report_error(diagnostic_node,
+                     "cannot take a mutable borrow through a shared reference");
+        // 中文：不能透过共享引用取独占借用
+    }
+
+    check_symbol_borrow_conflict(context, info.base, is_mutable, mark,
+                                 diagnostic_node);
+}
+
+// 方法返回借用时，把这次借用登记到接收者身上。
+//
+// `let r = point.first();` 之后 r 就别名了 point，这时再改 point 必须报错 ——
+// 但方法调用不像 `&point` 那样有个显式的取地址节点，不登记就会漏过去。
+//
+// 只处理**返回值是引用**的方法：返回普通值的调用不产生持续借用，登记反而会误报
+// （`let n = vec.len();` 之后 `vec.data[i] = x` 会全部被拦下）。
+// 接收者本身是引用时也不登记：借的是它指向的存储，不是这个槽。
+static void mark_method_receiver_borrow(BorrowContext *context,
+                                        ASTNode *expression,
+                                        const ASTNode *diagnostic_node) {
+    if (!expression || expression->type != NODE_FUNCTION_CALL) return;
+
+    BorrowSymbol *receiver = NULL;
+    FunctionNode *function = resolve_called_function(
+        context, (FunctionCallNode *)expression, &receiver);
+    if (!function || !receiver || receiver->is_reference) return;
+    if (!function->return_type || !function->return_type->is_reference) return;
+    if (borrow_source_parameter(function, NULL) != 0) return;
+
+    const VarTypeNode *self_type = function_parameter_type(function, 0);
+    if (!self_type || !self_type->is_reference) return;
+
+    check_symbol_borrow_conflict(context, receiver,
+                                 self_type->reference_mutable, 1,
+                                 diagnostic_node);
+}
+
+// `&mut self` 方法调用等于对接收者做一次**临时**独占借用：只要接收者当前还被
+// 别处借走，这次调用就不成立（`let r = p.peek(); p.reset();`）。
+//
+// 不登记标记（mark = 0）：方法调用结束借用就结束，不像 `let r = &p` 那样持续到
+// 作用域末尾。接收者本身是引用时也跳过 —— 借的是它指向的存储，不是这个槽。
+static void check_method_receiver_borrow(BorrowContext *context,
+                                         ASTNode *expression) {
+    if (!expression || expression->type != NODE_FUNCTION_CALL) return;
+
+    BorrowSymbol *receiver = NULL;
+    FunctionNode *function = resolve_called_function(
+        context, (FunctionCallNode *)expression, &receiver);
+    if (!function || !receiver || receiver->is_reference) return;
+
+    const VarTypeNode *self_type = function_parameter_type(function, 0);
+    if (!self_type || !self_type->is_reference || !self_type->reference_mutable) {
+        return;
+    }
+    check_symbol_borrow_conflict(context, receiver, 1, 0, expression);
 }
 
 // 普通使用（读取）一个已经被 `&mut` 借出的变量。
@@ -556,6 +620,7 @@ static void walk_expression(BorrowContext *context, ASTNode *expression) {
                  argument = argument->next) {
                 walk_expression(context, argument);
             }
+            check_method_receiver_borrow(context, expression);
             break;
         }
 
@@ -656,6 +721,8 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
                 check_borrow_conflict(context, reference->target,
                                       reference->is_mutable, 1, statement);
             }
+            mark_method_receiver_borrow(context, declaration->expression,
+                                        statement);
 
             int is_mutable = declaration->type && declaration->type->is_reference
                 ? declaration->type->reference_mutable
@@ -687,6 +754,8 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
                 target->pointee_rank = pointee_rank;
                 target->reference_mutable =
                     reference_is_mutable(assignment->expression);
+                mark_method_receiver_borrow(context, assignment->expression,
+                                            statement);
             }
             break;
         }

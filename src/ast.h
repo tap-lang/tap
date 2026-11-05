@@ -427,11 +427,18 @@ typedef struct {
 } TryNode;
 
 // trait 方法签名节点。trait 里只声明签名，不写函数体。
-// `self` 是接收者标记（不带类型标注）；param_types 里是除接收者外的参数类型。
+//
+// 接收者有三种写法，语义完全不同，所以除了「有没有」还要记住「是哪种」：
+//   `self`       按值接收，impl 里首参类型写成 `T`（老写法，保留兼容）
+//   `&self`      共享借用，impl 里首参类型写成 `&T`
+//   `&mut self`  独占借用，impl 里首参类型写成 `&mut T`
+// param_types 里是除接收者外的参数类型。
 typedef struct {
     ASTNode base;
     char *name;             // 方法名
-    int has_self;           // 是否带 `self` 接收者（v1 要求必须带）
+    int has_self;           // 是否带接收者（v1 要求必须带）
+    int self_is_reference;  // 接收者写成 `&self` 或 `&mut self`
+    int self_is_mutable;    // 接收者写成 `&mut self`（隐含 self_is_reference）
     ASTNode *param_types;   // 除接收者外的参数类型列表（VarTypeNode）
     VarTypeNode *return_type;
     char *filename;

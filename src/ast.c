@@ -455,7 +455,10 @@ void print_ast(const ProgramNode *program) {
             printf("  Trait: %s\n", trait_node->name);
             for (ASTNode *method = trait_node->methods; method; method = method->next) {
                 TraitMethodNode *signature = (TraitMethodNode *)method;
-                printf("    Fn: %s(self%s)\n", signature->name,
+                printf("    Fn: %s(%s%s)\n", signature->name,
+                       signature->self_is_reference
+                           ? (signature->self_is_mutable ? "&mut self" : "&self")
+                           : "self",
                        signature->param_types ? ", ..." : "");
             }
         }
@@ -1496,6 +1499,8 @@ TraitMethodNode *create_trait_method(
     method->base.next = NULL;
     method->name = strdup(name);
     method->has_self = 0;
+    method->self_is_reference = 0;
+    method->self_is_mutable = 0;
     method->param_types = NULL;
     method->return_type = NULL;
     method->filename = strdup(filename);
