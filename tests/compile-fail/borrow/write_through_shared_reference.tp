@@ -1,0 +1,16 @@
+fn peek(value: &i32) {
+    value[0] = 5;
+}
+
+fn main(): i32 {
+    let count: i32 = 1;
+    peek(&count);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot write through a shared reference 'value'
+- .exit
+1
+-- */

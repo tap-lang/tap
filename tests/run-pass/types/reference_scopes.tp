@@ -1,0 +1,29 @@
+// 借用的寿命跟着作用域走：内层块的借用结束后，外层可以重新独占借用。
+fn main(): i32 {
+    let value: i32 = 1;
+
+    if (value == 1) {
+        let held: &i32 = &value;
+        print("%d\n", held[0]);
+    }
+
+    if (value == 1) {
+        let exclusive: &mut i32 = &mut value;
+        exclusive[0] = 2;
+        print("%d\n", exclusive[0]);
+    }
+
+    // 两层借用都已经结束，这里可以直接读写 value。
+    value = value + 1;
+    print("%d\n", value);
+    return 0;
+}
+
+/** -- test
+- .stdout
+1
+2
+3
+- .exit
+0
+-- */

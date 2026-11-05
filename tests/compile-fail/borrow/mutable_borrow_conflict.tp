@@ -1,0 +1,13 @@
+fn main(): i32 {
+    let value: i32 = 1;
+    let first: &mut i32 = &mut value;
+    let second: &mut i32 = &mut value;
+    return first[0] + second[0];
+}
+
+/** -- test
+- .stderr
+error: 'value' is already mutably borrowed
+- .exit
+1
+-- */

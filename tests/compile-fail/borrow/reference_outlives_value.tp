@@ -1,0 +1,16 @@
+fn main(): i32 {
+    let first: i32 = 1;
+    let held: &i32 = &first;
+    if (first == 1) {
+        let second: i32 = 2;
+        held = &second;
+    }
+    return held[0];
+}
+
+/** -- test
+- .stderr
+error: borrowed value does not live long enough: 'held' would outlive it
+- .exit
+1
+-- */

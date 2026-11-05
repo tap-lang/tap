@@ -1,0 +1,13 @@
+fn main(): i32 {
+    let value: i32 = 1;
+    let shared: &i32 = &value;
+    let exclusive: &mut i32 = &mut value;
+    return shared[0] + exclusive[0];
+}
+
+/** -- test
+- .stderr
+error: 'value' is already borrowed, so it cannot be borrowed mutably
+- .exit
+1
+-- */

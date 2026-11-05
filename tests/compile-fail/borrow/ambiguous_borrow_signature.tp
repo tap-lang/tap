@@ -1,0 +1,14 @@
+fn pick(left: &i32, right: &i32): &i32 {
+    return left;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: function 'pick' returns a reference but has 2 reference parameters; exactly one is required to tell which value is borrowed
+- .exit
+1
+-- */

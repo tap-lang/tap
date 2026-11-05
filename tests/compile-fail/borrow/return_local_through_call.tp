@@ -1,0 +1,23 @@
+import std.vec as vec;
+
+fn first(values: &Vec<i32>): &i32 {
+    return &values.data[0];
+}
+
+// 签名合法（恰好一个引用参数），但返回的借用其实来自局部变量。
+fn bad(values: &Vec<i32>): &i32 {
+    let numbers: Vec<i32> = vec.new();
+    numbers.push(10);
+    return first(&numbers);
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot return a reference to a value that lives in this function
+- .exit
+1
+-- */

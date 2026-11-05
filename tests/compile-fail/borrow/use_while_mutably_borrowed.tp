@@ -1,0 +1,13 @@
+fn main(): i32 {
+    let value: i32 = 1;
+    let exclusive: &mut i32 = &mut value;
+    print("%d\n", value);
+    return exclusive[0];
+}
+
+/** -- test
+- .stderr
+error: 'value' is mutably borrowed and cannot be used here
+- .exit
+1
+-- */

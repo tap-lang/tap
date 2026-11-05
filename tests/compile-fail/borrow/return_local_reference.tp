@@ -1,0 +1,15 @@
+fn make(): &i32 {
+    let local: i32 = 7;
+    return &local;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot return a reference to a value that lives in this function
+- .exit
+1
+-- */

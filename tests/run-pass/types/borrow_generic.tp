@@ -1,0 +1,23 @@
+// 泛型函数也能返回借用：单态化之后签名里的 `&T` 变成具体类型，规则不变。
+fn identity<T>(value: &T): &T {
+    return value;
+}
+
+struct Point { x: i32, y: i32 }
+
+fn main(): i32 {
+    let count: i32 = 5;
+    print("%d\n", identity(&count)[0]);
+
+    let point: Point = Point { x: 3, y: 4 };
+    print("%d %d\n", identity(&point)[0].x, identity(&point)[0].y);
+    return 0;
+}
+
+/** -- test
+- .stdout
+5
+3 4
+- .exit
+0
+-- */

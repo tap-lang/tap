@@ -1,0 +1,42 @@
+fn increment(value: &mut i32) {
+    value[0] = value[0] + 1;
+}
+
+fn sum(left: &i32, right: &i32): i32 {
+    return left[0] + right[0];
+}
+
+struct Point { x: i32, y: i32 }
+
+fn shift(point: &mut Point) {
+    point.x = point.x + 1;
+}
+
+fn main(): i32 {
+    let count: i32 = 41;
+    increment(&mut count);
+    print("%d\n", count);
+
+    let other: i32 = 1;
+    print("%d\n", sum(&count, &other));
+
+    let point: Point = Point { x: 1, y: 2 };
+    shift(&mut point);
+    print("%d %d\n", point.x, point.y);
+
+    // 借用可以退化成裸指针（遗忘借用），反方向不行。
+    let reference: &i32 = &count;
+    let raw: *i32 = reference;
+    print("%d\n", raw[0]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+42
+43
+2 2
+42
+- .exit
+0
+-- */

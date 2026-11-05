@@ -1,0 +1,18 @@
+struct Pair { left: i32, right: i32 }
+
+// `pair` 是共享借用，透过它拿独占借用等于凭空放宽权限。
+fn bad(pair: &Pair) {
+    let left: &mut i32 = &mut pair.left;
+    left[0] = 1;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot take a mutable borrow through a shared reference
+- .exit
+1
+-- */

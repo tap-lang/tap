@@ -1,0 +1,14 @@
+// 裸指针没有寿命承诺，不能凭空升级成受检查的借用。
+fn main(): i32 {
+    let value: i32 = 1;
+    let raw: *i32 = &value;
+    let reference: &i32 = raw;
+    return reference[0];
+}
+
+/** -- test
+- .stderr
+error: pointer expression type mismatch
+- .exit
+1
+-- */
