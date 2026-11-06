@@ -1,0 +1,18 @@
+// 错误太多时要停下来，而不是把一个系统性错误刷成几百条。
+// 这里 12 条赋值错误，第 10 条之后打一行「错误太多」就退出。
+fn main(): i32 {
+    let x: i32 = 1;
+    let a = &mut x;
+    x = 1; x = 2; x = 3; x = 4; x = 5;
+    x = 6; x = 7; x = 8; x = 9; x = 10; x = 11;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'x' is mutably borrowed and cannot be assigned here
+error: too many errors (10), stopping now
+- .exit
+1
+-- */
+

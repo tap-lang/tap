@@ -1,0 +1,19 @@
+// 借用检查是「报完继续查」的：三处独立的借用错误要一次全报，而不是只报第一处。
+// 每条诊断的位置都落在真正出错的那一行上（`&mut x` 报在表达式上，赋值报在语句上）。
+fn main(): i32 {
+    let x: i32 = 1;
+    let a = &mut x;
+    let b = &mut x;
+    let c = &x;
+    x = 2;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'x' is already mutably borrowed
+error: 'x' is mutably borrowed, so it cannot be borrowed again
+error: 'x' is mutably borrowed and cannot be assigned here
+- .exit
+1
+-- */
