@@ -110,6 +110,31 @@ fn identity(value: &i32): &i32 {
 }
 ```
 
+借用藏进结构体字段之后，类型里就没有任何「谁借了谁」的信息（`Holder` 和 `i32`
+毫不相干），所以这条规则在**返回结构体 / 数组字面量时逐字段递归检查**：
+
+```text
+struct Holder { src: &i32 }
+
+fn make(): Holder {
+    let local: i32 = 7;
+    return Holder { src: &local };   // error: field 'src' of the returned struct
+}                                    //        borrows a value that lives in this function
+```
+
+借自引用参数的字段不受限制 —— 那层存储不在本帧，跟着返回没问题：
+
+```text
+fn view(pair: &Pair): Holder {
+    return Holder { src: &pair.left };   // 合法
+}
+```
+
+检查只走「值确实由这些字段拼出来」的位置：结构体字段、数组元素。**不进函数调用实参**
+（`return wrap(Holder { src: &local })` 里借用能不能逃出去取决于 `wrap` 拿它做什么），
+也没有跨语句的追踪 —— 先把结构体存进变量、再返回变量，目前不报（见
+[`todo/borrow.md`](todo/borrow.md)）。
+
 ### 2. 借用不能比被借的值活得久
 
 ```text
@@ -351,20 +376,23 @@ now`），免得一个系统性错误刷屏。
 这些是**明确没做**的，不是 bug：
 
 - **引用参数最多一个**才能返回借用。需要「借自哪个参数」更细粒度时得等生命周期参数。
-- **结构体存借用能编译，但不检查寿命。** 这条要说清楚：`struct Holder { src: &i32 }`
-  是合法的（引用在机器码里就是指针），但编译器不知道 `Holder` 和它借的那个值谁活得久：
+- **结构体存借用：只能检查「从函数里带出去」这一种情况，寿命本身仍然不跟踪。**
+  `struct Holder { src: &i32 }` 是合法的（引用在机器码里就是指针），返回时逐字段检查
+  挡住最常见、也最危险的那种悬垂：
 
   ```text
   struct Holder { src: &i32 }
 
   fn make(): Holder {
       let local: i32 = 7;
-      return Holder { src: &local };   // 现在能编译通过，返回的是悬垂指针
-  }
+      return Holder { src: &local };   // error: field 'src' of the returned struct
+  }                                    //        borrows a value that lives in this function
   ```
 
+  但类型里没有寿命参数，所以「结构体活得比源长」的其他路径仍然漏：借用先装进变量
+  再返回（`let h = Holder { src: &local }; return h;`）、存进 `Vec`、跨函数传递。
   要做对需要生命周期参数（L2），代价是单态化的 key 从「类型」变成「类型 + 区域」。
-  在那之前，**别让结构体持有借用**，用 `*T` 并自己管寿命。
+  在那之前，**别让结构体长期持有借用**，需要带出函数时用 `*T` 并自己管寿命。
 - **接收者只能是 `&self` / `&mut self` 这一层。** `&&self`、按值 + 借用的组合都不支持；
   方法签名里也不能出现生命周期标注。
 - **借用活到作用域结束**，不做 NLL。见上一节。
@@ -382,6 +410,8 @@ now`），免得一个系统性错误刷屏。
   （`fn first(v: &Vec<T>): &T`）、借用穿过函数调用、`&param.field`。
 - [`reference_narrowing.tp`](../tests/run-pass/types/reference_narrowing.tp)：
   `&mut T` 当 `&T` 用的三条路径（赋值、传参、调 `&self` 方法）。
+- [`struct_borrow.tp`](../tests/run-pass/types/struct_borrow.tp)：结构体保存借用
+  （借自引用参数可以返回、函数内临时使用、降级成裸指针带出去）。
 - [`self_reference.tp`](../tests/run-pass/traits/self_reference.tp)：`&self` / `&mut self`
   接收者、方法返回借用。
 - [`self_by_value.tp`](../tests/run-pass/traits/self_by_value.tp)：impl 里裸 `self`
@@ -391,7 +421,8 @@ now`），免得一个系统性错误刷屏。
 - `tests/compile-fail/borrow/` 和 `tests/compile-fail/traits/` 下每条规则一个用例；
   [`multiple_errors.tp`](../tests/compile-fail/borrow/multiple_errors.tp) 断言三处错误
   一次全报，[`error_limit.tp`](../tests/compile-fail/borrow/error_limit.tp) 断言第 10 条
-  之后停下。
+  之后停下，[`return_nested_struct_holding_local_borrow.tp`](../tests/compile-fail/borrow/return_nested_struct_holding_local_borrow.tp)
+  断言结构体字面量的字段检查会按层递归、也能穿过返回引用的调用。
 
 只跑借用相关的用例：
 

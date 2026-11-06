@@ -654,6 +654,61 @@ static void check_write_target(BorrowSymbol *symbol, int through_reference,
     }
 }
 
+// 结构体 / 数组字面量把引用藏进字段之后，类型里就没有任何「谁借了谁」的信息了：
+// `Holder` 和 `i32` 在类型系统里是两个毫不相干的类型，调用方无从判断。所以这里补
+// 一条最粗的规则（L2 的折中方案）：**返回的字面量里，任何一层借用都不许指向本函数
+// 的栈帧**。只有 `NODE_RETURN` 会调用它 —— 「返回值」是借用唯一能离开本帧的出口。
+//
+// 判据直接复用 `reference_rank_of` —— 它已经能算出 `&x`、引用变量、返回借用的调用
+// 这三种来源的 pointee_rank，非负即「被借的存储跟着本次调用一起消失」。
+//
+// 递归只走「值确实由这些字段拼出来」的位置：结构体字段、数组元素。**不进函数调用
+// 实参** —— `return wrap(Holder { src: &local })` 里借用能不能逃出去取决于 wrap 拿
+// 它做什么，静态判断只会误报，那一层留给生命周期参数。
+//
+// 剩下的洞：借用装进结构体后先存进变量、再返回变量（`let h = Holder{...}; return h;`）
+// 仍然不报 —— 要堵它得给变量记「持有本帧借用」的状态并跟着赋值传播，那是另一半工作。
+static void check_escaping_borrow(BorrowContext *context, ASTNode *expression,
+                                  const char *field_name,
+                                  const ASTNode *diagnostic_node) {
+    if (!expression) return;
+
+    if (expression->type == NODE_STRUCT_LITERAL) {
+        StructLiteralNode *literal = (StructLiteralNode *)expression;
+        for (ASTNode *node = literal->fields; node; node = node->next) {
+            StructInitFieldNode *field = (StructInitFieldNode *)node;
+            check_escaping_borrow(context, field->expression, field->name,
+                                  diagnostic_node);
+        }
+        return;
+    }
+
+    if (expression->type == NODE_ARRAY_LITERAL) {
+        ArrayLiteralNode *array = (ArrayLiteralNode *)expression;
+        for (ASTNode *element = array->elements; element;
+             element = element->next) {
+            check_escaping_borrow(context, element, field_name, diagnostic_node);
+        }
+        return;
+    }
+
+    int pointee_rank = -1;
+    if (!reference_rank_of(context, expression, &pointee_rank)) return;
+    if (pointee_rank < 0) return; // 借的是函数外的存储，跟着返回没问题
+
+    if (field_name) {
+        report_error_soft(diagnostic_node,
+                          "field '%s' of the returned struct borrows a value that "
+                          "lives in this function", field_name);
+        // 中文：返回的结构体里这个字段借了本函数的局部值
+    } else {
+        report_error_soft(diagnostic_node,
+                          "the returned value borrows something that lives in this "
+                          "function");
+        // 中文：返回值得以存在的借用指向本函数的局部存储
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 遍历
 // ---------------------------------------------------------------------------
@@ -895,12 +950,21 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             ASTNode *expression = ((ReturnNode *)statement)->expression;
             walk_expression(context, expression);
             int pointee_rank = -1;
-            if (reference_rank_of(context, expression, &pointee_rank) &&
-                pointee_rank >= 0) {
-                report_error_soft(
-                    statement,
-                    "cannot return a reference to a value that lives in this function");
-                // 中文：不能返回指向本函数内局部值的引用
+            if (reference_rank_of(context, expression, &pointee_rank)) {
+                if (pointee_rank >= 0) {
+                    report_error_soft(
+                        statement,
+                        "cannot return a reference to a value that lives in this function");
+                    // 中文：不能返回指向本函数内局部值的引用
+                }
+                break;
+            }
+
+            // 引用藏进结构体 / 数组字面量之后 reference_rank_of 认不出来（字面量
+            // 本身的类型不是引用），只能按字段递归查一遍。见 check_escaping_borrow。
+            if (expression && (expression->type == NODE_STRUCT_LITERAL ||
+                               expression->type == NODE_ARRAY_LITERAL)) {
+                check_escaping_borrow(context, expression, NULL, statement);
             }
             break;
         }
