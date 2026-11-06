@@ -392,59 +392,101 @@ static int ensure_directory(const char *path) {
     return errno == EEXIST ? 0 : -1;
 }
 
-int resolve_package_target(
-    const char *start_directory, const char *build_directory,
-    char **source_out, char **output_out) {
-    char *package_root = package_root_from(start_directory);
-    if (!package_root) {
+// 包清单解析出来的四项信息。全部是 malloc 的，由调用方释放。
+typedef struct {
+    char *root;    // 包根目录
+    char *entry;   // [package] entry 的原始值（相对包根）
+    char *name;    // [package] name
+    char *source;  // 入口文件的绝对路径
+} PackageInfo;
+
+static void free_package_info(PackageInfo *info) {
+    free(info->root);
+    free(info->entry);
+    free(info->name);
+    free(info->source);
+    info->root = info->entry = info->name = info->source = NULL;
+}
+
+// 从 start_directory 向上找 package.toml 并读出 entry / name。
+// 只读，不创建任何目录 —— `tap check` 用这个，检查不该有副作用。
+static int read_package_info(const char *start_directory, PackageInfo *info) {
+    memset(info, 0, sizeof(*info));
+
+    info->root = package_root_from(start_directory);
+    if (!info->root) {
         fprintf(stderr,
             "error: no package.toml found in this directory or any parent\n"); // 中文：找不到 package.toml
         return 1;
     }
 
-    char *entry = read_package_field(package_root, "entry");
-    if (!entry) {
+    info->entry = read_package_field(info->root, "entry");
+    if (!info->entry) {
         fprintf(stderr,
             "error: package.toml has no [package] entry\n"); // 中文：清单缺少 entry
-        free(package_root);
+        free_package_info(info);
         return 1;
     }
 
-    char *name = read_package_field(package_root, "name");
-    if (!name) {
+    info->name = read_package_field(info->root, "name");
+    if (!info->name) {
         fprintf(stderr,
             "error: package.toml has no [package] name\n"); // 中文：清单缺少 name
-        free(entry);
-        free(package_root);
+        free_package_info(info);
         return 1;
     }
 
-    char *source = join_path(package_root, entry);
-    char *build_root = join_path(package_root, build_directory);
-    if (build_root && ensure_directory(build_root) != 0) {
+    info->source = join_path(info->root, info->entry);
+    if (!info->source) {
+        free_package_info(info);
+        return 1;
+    }
+    return 0;
+}
+
+// 包模式（只读版）：只解析入口文件，不碰 build/ 目录。
+// name_out 可以为 NULL。
+int resolve_package_entry(const char *start_directory, char **source_out, char **name_out) {
+    PackageInfo info;
+    if (read_package_info(start_directory, &info) != 0) return 1;
+
+    *source_out = info.source;
+    info.source = NULL;
+    if (name_out) {
+        *name_out = info.name;
+        info.name = NULL;
+    }
+    free_package_info(&info);
+    return 0;
+}
+
+int resolve_package_target(
+    const char *start_directory, const char *build_directory,
+    char **source_out, char **output_out) {
+    PackageInfo info;
+    if (read_package_info(start_directory, &info) != 0) return 1;
+
+    char *build_root = join_path(info.root, build_directory);
+    if (!build_root || ensure_directory(build_root) != 0) {
         fprintf(stderr,
-            "error: cannot create build directory '%s'\n", build_root); // 中文：无法创建构建目录
+            "error: cannot create build directory '%s'\n",
+            build_root ? build_root : build_directory); // 中文：无法创建构建目录
         free(build_root);
-        free(name);
-        free(entry);
-        free(package_root);
-        free(source);
+        free_package_info(&info);
         return 1;
     }
-    char *output = build_root ? join_path(build_root, name) : NULL;
+    char *output = join_path(build_root, info.name);
     free(build_root);
-    free(name);
-    free(entry);
-    free(package_root);
 
-    if (!source || !output) {
-        free(source);
-        free(output);
+    if (!output) {
+        free_package_info(&info);
         return 1;
     }
 
-    *source_out = source;
+    *source_out = info.source;
     *output_out = output;
+    info.source = NULL;
+    free_package_info(&info);
     return 0;
 }
 

@@ -13,6 +13,7 @@
 #include <llvm-c/TargetMachine.h> 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
+#include <llvm-c/DebugInfo.h>
 #include <llvm-c/IRReader.h>      
 #include <llvm-c/Transforms/PassBuilder.h>
 
@@ -45,6 +46,10 @@ typedef struct VariadicForward {
     struct VariadicForward *next;
 } VariadicForward;
 
+// DIFile 缓存条目。同一个源文件只建一份 DIFile —— 函数可能来自主文件、被 import 的模块
+// 或 Prelude，不缓存就会为每个函数重复建一份。
+typedef struct DebugFileEntry DebugFileEntry;
+
 // 代码生成器上下文
 typedef struct {
     LLVMModuleRef module;           // LLVM模块，用于存储生成的代码
@@ -61,12 +66,23 @@ typedef struct {
     const VarTypeNode *current_return_var_type;
     LoopContext *current_loop;
     VariadicForward *variadic_forwards; // 变参转发映射表
+    // ---- 调试信息（-g）----
+    // 未开启时 di_builder 为 NULL，所有 debug_* 入口都是空操作。
+    int debug_info;                 // 是否生成 DWARF
+    char *source_file;              // 主源文件路径（malloc），DIFile 与 DICompileUnit 用它
+    LLVMDIBuilderRef di_builder;
+    LLVMMetadataRef di_compile_unit;
+    LLVMMetadataRef di_subroutine_type; // 所有函数共用：不描述形参，只提供行号
+    LLVMMetadataRef di_current_scope;   // 当前函数的 DISubprogram
+    DebugFileEntry *di_files;           // 按路径缓存的 DIFile
     // LLVMValueRef puts_func;         // puts函数引用
     // LLVMTypeRef puts_type;          // puts函数类型
 } CodeGenContext;
 
 // 函数声明
 CodeGenContext *create_codegen_context(const char *module_name);
+// 打开/关闭 DWARF 生成。必须在 generate_code 之前调用（它只在生成开始时读这个开关）。
+void set_codegen_debug_info(CodeGenContext *context, int enabled);
 void generate_code(CodeGenContext *context, ProgramNode *program);
 void free_codegen_context(CodeGenContext *context);
 

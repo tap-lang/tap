@@ -33,8 +33,8 @@
   match 嵌套模式与分支守卫、for-each、表达式结果上调用方法、切片类型。
 - [字符串能力](todo/string.md) —— UTF-8 边界、二进制数据、常用字符串 API、转义、
   格式化。
-- [工具链](todo/tooling.md) —— 一次只报一个错误、没有调试信息、没有 `tap check`、
-  `tap new` 依赖仓库外的 `tapm`、没有增量编译。
+- [工具链](todo/tooling.md) —— 一次只报一个错误、没有增量编译
+  （`tap check`、`tap -g` 已完成）。**分阶段计划见 [`todo/tooling-plan.md`](todo/tooling-plan.md)**。
 
 ## trait v1 的后续
 

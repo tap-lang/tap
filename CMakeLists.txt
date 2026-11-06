@@ -245,6 +245,14 @@ if(BUILD_TESTS)
     set_tests_properties(language-tests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     )
+    # 命令行本身的行为（check 不产出文件、包模式不建目录、互斥选项）测不到上面那套里。
+    add_test(
+        NAME cli-smoke-tests
+        COMMAND sh ${CMAKE_SOURCE_DIR}/scripts/smoke-cli.sh $<TARGET_FILE:tap>
+    )
+    set_tests_properties(cli-smoke-tests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
 endif()
 
 # 安装目标

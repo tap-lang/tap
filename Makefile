@@ -151,6 +151,11 @@ testc: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
 testc-native: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED) $(TEST_RUNNER)
 	TEST_JOBS=$(TEST_JOBS) TEST_RUN_MODE=native $(TEST_RUNNER) $(TARGET)
 
+# 命令行冒烟测试：check 不产出文件、包模式不建目录、互斥选项。
+# run-tests.sh 只比对「编译一个 .tp 文件」的输出，覆盖不到 CLI 本身。
+test-cli: $(TARGET) $(RUNTIME_STATIC) $(RUNTIME_SHARED)
+	sh scripts/smoke-cli.sh $(TARGET)
+
 test_hello: $(TARGET)
 	$(TARGET) tests/run-pass/basics/hello.tp -o ./build/hello
 	./build/hello
@@ -214,4 +219,4 @@ uninstall:
 	rm -f $(STDDIR)/*.tp
 	rmdir $(INCLUDEDIR) $(STDDIR) 2>/dev/null || true
 
-.PHONY: all clean test test-native test-by-c test-native-by-c test_hello install uninstall
+.PHONY: all clean test test-native test-by-c test-native-by-c test-cli test_hello install uninstall

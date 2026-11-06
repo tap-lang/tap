@@ -85,6 +85,27 @@ TEST_FILTER=module make test
 `TEST_RUN_MODE` 环境变量可以直接选择运行方式（`fast` 走 `lli`，`native` 生成原生可执行文件），
 不传时默认为 `fast`。
 
+### 命令行冒烟测试
+
+`tests/run-tests.sh` 只验证「编译一个 `.tp` 文件、比对 stdout/stderr/退出码」，**覆盖不到
+CLI 本身** —— `tap check` 会不会留下文件、包模式会不会建 `build/`、互斥选项有没有报错，
+这些都测不到。这部分由 `scripts/smoke-cli.sh` 负责：
+
+```sh
+make test-cli
+sh scripts/smoke-cli.sh ./build/tap        # 也可以直接给可执行文件路径
+```
+
+它跑 22 项检查：`check` 通过时静默返回 0、不产出文件、有错时返回 1 且诊断带行列号、
+`check` 与七种输出/执行选项互斥、`check` 与 `-o` 互斥、只允许一个命令、包模式检查不创建
+`build/`、子目录里能向上找到 `package.toml`、缺清单时报错、`run` 的回归，以及 `-g` 的
+四项（IR 里带 `!dbg`、不带 `-g` 时没有、生成了 `DICompileUnit`、与 `-emit-wasm` 互斥）。
+
+注意脚本会把传入的可执行文件路径转成绝对路径 —— 每条用例都在临时目录里执行，相对路径
+（`./build/tap`）换个工作目录就找不到，而「找不到」恰好是非 0 退出，互斥类用例会假通过。
+
+CMake 构建下它注册成 ctest 用例 `cli-smoke-tests`，和 `language-tests` 并列。
+
 ### Windows 上的一键脚本
 
 `scripts\` 下有两个 bat，各自封装一条工具链，省得手拼 PATH 和 `LIBS`：

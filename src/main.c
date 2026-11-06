@@ -23,10 +23,12 @@
 static void print_usage() {
     printf("用法: tap [选项] <源文件>\n");
     printf("      tap run [选项] [源文件] [-- 程序参数...]\n");
+    printf("      tap check [选项] [源文件]\n");
     printf("      tap build\n");
     printf("      tap new <名字>\n");
     printf("命令:\n");
     printf("  run               编译为本地可执行文件并运行；不给文件时编译并运行当前包\n");
+    printf("  check             只做编译期检查（词法/语法/类型/借用），不产出、不链接\n");
     printf("  build             编译当前包，产物放到 <包根>/build/<name>\n");
     printf("  new <名字>        新建项目（转发给 tapm new）\n");
     printf("选项:\n");
@@ -41,6 +43,7 @@ static void print_usage() {
     printf("  -Wl,<参数>        把参数透传给链接器，逗号分隔多个\n");
     printf("  -lex              只输出词法分析结果\n");
     printf("  -parse            只输出语法分析结果\n");
+    printf("  -g                生成调试信息（DWARF 行号表），可用 gdb / lldb 调试\n");
     printf("  -run-lli          生成LLVM IR并使用lli运行程序\n");
     printf("  -v, --verbose     把实际执行的链接/运行命令回显到 stderr\n");
     printf("  -V, --version     显示版本号\n");
@@ -65,8 +68,10 @@ int main(int argc, char *argv[]) {
     int static_link = 0;
     int lex_only = 0;
     int parse_only = 0;
+    int debug_info = 0;
     int verbose = 0;
     int build_package = 0;
+    int check_only = 0;
     int program_argc = 0;
     char **program_argv = NULL;
 
@@ -115,6 +120,8 @@ int main(int argc, char *argv[]) {
             lex_only = 1;
         } else if (strcmp(argv[i], "-parse") == 0) {
             parse_only = 1;
+        } else if (strcmp(argv[i], "-g") == 0) {
+            debug_info = 1;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
         } else if (strcmp(argv[i], "-l") == 0) {
@@ -147,10 +154,24 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "error: unknown option %s\n", argv[i]); // 中文：未知选项
             print_usage();
             return 1;
-        } else if (strcmp(argv[i], "run") == 0 && !input_file && !run_native) {
+        } else if (strcmp(argv[i], "run") == 0 && !input_file && !run_native &&
+                   !build_package && !check_only) {
             run_native = 1;
-        } else if (strcmp(argv[i], "build") == 0 && !input_file && !build_package) {
+        } else if (strcmp(argv[i], "check") == 0 && !input_file && !run_native &&
+                   !build_package && !check_only) {
+            check_only = 1;
+        } else if (strcmp(argv[i], "build") == 0 && !input_file && !build_package &&
+                   !check_only) {
             build_package = 1;
+        } else if (!input_file &&
+                   (strcmp(argv[i], "run") == 0 || strcmp(argv[i], "check") == 0 ||
+                    strcmp(argv[i], "build") == 0)) {
+            // 走到这里说明上面三个分支都没接住 —— 也就是已经给过命令了。
+            // 不拦的话 `tap check run` 会把 "run" 当成文件名去打开。
+            fprintf(stderr,
+                "error: only one command can be given ('run', 'check', 'build')\n"); // 中文：只能给一个命令
+            print_usage();
+            return 1;
         } else if (!input_file) {
             input_file = argv[i];
         } else {
@@ -167,25 +188,34 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 包模式：`tap build`，或 `tap run` 不带文件时，从当前目录向上找 package.toml，
-    // 按里面的 entry 编译，产物放到 <包根>/build/<name>。
+    // 包模式：`tap build`，或 `tap run` / `tap check` 不带文件时，从当前目录向上找
+    // package.toml，按里面的 entry 编译，产物放到 <包根>/build/<name>。
     // 只在没给文件参数时才走这条路，`tap run main.tp` 的行为完全不变。
-    if (build_package || (run_native && !input_file)) {
+    if (build_package || (run_native && !input_file) || (check_only && !input_file)) {
         if (output_file) {
             fprintf(stderr,
                 "error: -o cannot be combined with package mode\n"); // 中文：包模式不能和 -o 组合
             return 1;
         }
 
-        char *package_source = NULL;
-        char *package_output = NULL;
-        if (resolve_package_target(".", "build", &package_source, &package_output) != 0) {
-            return 1;
+        if (check_only) {
+            // 检查不该有副作用：用只读版解析，不创建 build/ 目录。
+            char *package_source = NULL;
+            if (resolve_package_entry(".", &package_source, NULL) != 0) {
+                return 1;
+            }
+            input_file = package_source;
+        } else {
+            char *package_source = NULL;
+            char *package_output = NULL;
+            if (resolve_package_target(".", "build", &package_source, &package_output) != 0) {
+                return 1;
+            }
+            input_file = package_source;
+            output_file = package_output;
+            // `build` 只编译不运行；`run` 保持 run_native，编译完接着跑。
+            if (build_package) run_native = 0;
         }
-        input_file = package_source;
-        output_file = package_output;
-        // `build` 只编译不运行；`run` 保持 run_native，编译完接着跑。
-        if (build_package) run_native = 0;
     }
 
     // 检查输入文件
@@ -205,6 +235,21 @@ int main(int argc, char *argv[]) {
     }
     if (static_link && (emit_ir || emit_obj || emit_wasm || run_lli || lex_only || parse_only)) {
         fprintf(stderr, "error: -static can only be used when generating or running a native executable\n"); // 中文：-static 只能用于生成或运行本地可执行文件
+        return 1;
+    }
+    // DWARF 是本地目标的格式，wasm 的调试信息是另一套（source map / DWARF-in-wasm），
+    // 现在没实现，直接拒掉而不是生成一份没人认的元数据。
+    if (debug_info && emit_wasm) {
+        fprintf(stderr, "error: -g cannot be combined with -emit-wasm\n"); // 中文：-g 不能与 -emit-wasm 组合
+        return 1;
+    }
+    // check 只检查不产出，所以任何「要写出东西」或「要执行」的选项都不能和它同用。
+    // `-v` 不算：它只影响回显，检查过程照样能打外部命令。
+    if (check_only &&
+        (emit_ir || emit_obj || emit_wasm || run_lli || lex_only || parse_only ||
+         static_link || output_file)) {
+        fprintf(stderr,
+            "error: check cannot be combined with output or execution modes\n"); // 中文：check 不能与其他输出或执行模式组合
         return 1;
     }
 
@@ -277,7 +322,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    set_codegen_debug_info(codegen_context, debug_info);
     generate_code(codegen_context, program);
+
+    // `check` 到此为止：诊断已经全部产出（类型检查在 Codegen 里，IR 校验也在
+    // generate_code 内部跑过），剩下的写文件、链接、运行一律跳过。
+    // 这就是 `-ir -o /dev/null` 想干的事，只是不写文件、不打「已写入」的提示。
+    if (check_only) {
+        link_options_free(&link_options);
+        free_codegen_context(codegen_context);
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return 0;
+    }
 
     int result = 0;
 

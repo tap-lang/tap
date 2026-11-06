@@ -3901,6 +3901,14 @@ static LLVMValueRef generate_auto_format_print(
 
 static void generate_statement_list(CodeGenContext *context, ASTNode *statement);
 
+// 调试信息辅助函数定义在文件后部（create_codegen_context 之后），这里先声明。
+static void debug_info_begin_function(CodeGenContext *context, LLVMValueRef llvm_function,
+                                      const char *name, const char *file_path,
+                                      unsigned line, int is_local_to_unit);
+static void debug_set_location(CodeGenContext *context, const ASTNode *node);
+static void debug_set_location_at(CodeGenContext *context, unsigned line, unsigned column);
+static void debug_info_finalize(CodeGenContext *context);
+
 // 生成变量或结构体字段赋值语句。
 static void generate_assignment(CodeGenContext *context, AssignmentNode *assignment) {
     if (expression_is_void_call(context, assignment->expression)) {
@@ -4857,6 +4865,10 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
         LLVMBasicBlockRef block = LLVMGetInsertBlock(context->builder);
         if (block && LLVMGetBasicBlockTerminator(block)) break;
 
+        // 每条语句单独定位，gdb 才能在语句粒度上停住。没有位置信息的合成语句
+        // 会清空位置，避免继承上一条的行号造成误导。
+        debug_set_location(context, statement);
+
         switch (statement->type) {
             case NODE_VAR_DECL: {
                 VarDeclNode *declaration = (VarDeclNode *)statement;
@@ -5164,12 +5176,176 @@ CodeGenContext *create_codegen_context(const char *module_name) {
     context->module = LLVMModuleCreateWithNameInContext(module_name, context->context);
     context->builder = LLVMCreateBuilderInContext(context->context);
     context->current_return_type = default_integer_type();
+    context->source_file = strdup(module_name);
 
     char *target_triple = LLVMGetDefaultTargetTriple();
     LLVMSetTarget(context->module, target_triple);
     LLVMDisposeMessage(target_triple);
 
     return context;
+}
+
+// ============================ 调试信息（-g） ============================
+//
+// 只做「行号表」级别：每个函数一个 DISubprogram，每条语句一个 DILocation。
+// 不描述局部变量、不描述形参类型 —— 那要把 tap 的类型系统整个映射到 DWARF，
+// 成本远大于收益。有了行号，gdb 的 `break file:line`、`bt`、`step` 就都能用了，
+// 这已经解决「崩溃了只能靠 print 二分」的问题。
+//
+// 数据来源就是 ASTNode.loc（file / line / column），Codegen 每条语句都拿得到，
+// 不需要额外的遍历。
+
+struct DebugFileEntry {
+    char *path;
+    LLVMMetadataRef file;
+    DebugFileEntry *next;
+};
+
+void set_codegen_debug_info(CodeGenContext *context, int enabled) {
+    if (context) context->debug_info = enabled;
+}
+
+// 把 "dir/name.tp" 拆成目录和文件名 —— DIBuilderCreateFile 要分开传。
+// 没有分隔符时目录记作 "."（DWARF 里表示「当前目录」）。
+static void split_source_path(const char *path, char *directory, size_t directory_size,
+                              const char **filename) {
+    const char *last_separator = NULL;
+    for (const char *cursor = path; *cursor; cursor++) {
+        if (*cursor == '/' || *cursor == '\\') last_separator = cursor;
+    }
+    if (!last_separator) {
+        snprintf(directory, directory_size, ".");
+        *filename = path;
+        return;
+    }
+    size_t length = (size_t)(last_separator - path);
+    if (length >= directory_size) length = directory_size - 1;
+    memcpy(directory, path, length);
+    directory[length] = '\0';
+    // 路径是 "/a.tp" 这种：目录就是根。
+    if (length == 0) snprintf(directory, directory_size, "/");
+    *filename = last_separator + 1;
+}
+
+// 按路径缓存 DIFile。函数可能来自主文件、被 import 的模块或 Prelude，
+// 不缓存就会为每个函数重复建一份。
+static LLVMMetadataRef debug_file_for(CodeGenContext *context, const char *path) {
+    if (!path || !path[0]) path = "<unknown>";
+
+    for (DebugFileEntry *entry = context->di_files; entry; entry = entry->next) {
+        if (strcmp(entry->path, path) == 0) return entry->file;
+    }
+
+    char directory[512];
+    const char *filename = path;
+    split_source_path(path, directory, sizeof(directory), &filename);
+
+    DebugFileEntry *entry = calloc(1, sizeof(DebugFileEntry));
+    if (!entry) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    entry->file = LLVMDIBuilderCreateFile(
+        context->di_builder, filename, strlen(filename), directory, strlen(directory));
+    entry->path = strdup(path);
+    entry->next = context->di_files;
+    context->di_files = entry;
+    return entry->file;
+}
+
+static void debug_info_initialize(CodeGenContext *context) {
+    context->di_builder = LLVMCreateDIBuilder(context->module);
+
+    LLVMMetadataRef file = debug_file_for(context, context->source_file);
+    context->di_compile_unit = LLVMDIBuilderCreateCompileUnit(
+        context->di_builder, LLVMDWARFSourceLanguageC, file,
+        "tap", 3,          // producer
+        0,                 // isOptimized：tap 目前不跑优化 pass，行号是准的
+        "", 0,             // flags
+        0,                 // runtime version
+        "", 0,             // split debug filename
+        LLVMDWARFEmissionFull, 0, 0, 0,
+        "", 0,             // sysroot
+        "", 0);            // SDK
+
+    // 所有函数共用一份「不描述形参」的签名 —— 我们不生成变量级调试信息。
+    context->di_subroutine_type = LLVMDIBuilderCreateSubroutineType(
+        context->di_builder, file, NULL, 0, LLVMDIFlagZero);
+
+    // LLVM 要求模块里带 Debug Info Version flag，否则后端会忽略调试信息
+    // （或者在链接阶段直接报 "incompatible debug info version"）。
+    LLVMAddModuleFlag(
+        context->module, LLVMModuleFlagBehaviorWarning,
+        "Debug Info Version", 18,
+        LLVMValueAsMetadata(LLVMConstInt(
+            LLVMInt32TypeInContext(context->context),
+            (uint64_t)LLVMDebugMetadataVersion(), 0)));
+}
+
+// 给一个 LLVM 函数挂上 DISubprogram，并把它设为后续指令的作用域。
+static void debug_info_begin_function(CodeGenContext *context, LLVMValueRef llvm_function,
+                                      const char *name, const char *file_path,
+                                      unsigned line, int is_local_to_unit) {
+    if (!context->di_builder) return;
+
+    LLVMMetadataRef file = debug_file_for(
+        context, (file_path && file_path[0]) ? file_path : context->source_file);
+    // scope 传 DIFile（不是 CU）—— 文件级函数的作用域就是它所在的文件，clang 也这么传。
+    // 传 NULL 会生成 `scope: null`，LLVM 容忍，但调试器会把函数挂到「无源文件」下。
+    LLVMMetadataRef subprogram = LLVMDIBuilderCreateFunction(
+        context->di_builder, file,
+        name, strlen(name),          // 源码里的名字
+        name, strlen(name),          // linkage name：tap 没有名字改编，两者相同
+        file, line,
+        context->di_subroutine_type,
+        is_local_to_unit ? 1 : 0, 1, // IsDefinition
+        line,                        // ScopeLine
+        LLVMDIFlagZero, 0);
+
+    LLVMSetSubprogram(llvm_function, subprogram);
+    context->di_current_scope = subprogram;
+}
+
+// 把后续指令的调试位置设为某一行。
+static void debug_set_location_at(CodeGenContext *context, unsigned line, unsigned column) {
+    if (!context->di_builder) return;
+    if (!line || !context->di_current_scope) {
+        LLVMSetCurrentDebugLocation2(context->builder, NULL);
+        return;
+    }
+    LLVMMetadataRef location = LLVMDIBuilderCreateDebugLocation(
+        context->context, line, column ? column : 1, context->di_current_scope, NULL);
+    LLVMSetCurrentDebugLocation2(context->builder, location);
+}
+
+// 按节点自带的位置设置调试位置；节点没有位置时清空（避免继承上一条语句的行号）。
+static void debug_set_location(CodeGenContext *context, const ASTNode *node) {
+    if (!context->di_builder) return;
+    if (!node) {
+        LLVMSetCurrentDebugLocation2(context->builder, NULL);
+        return;
+    }
+    debug_set_location_at(context, node->loc.line, node->loc.column);
+}
+
+static void debug_info_finalize(CodeGenContext *context) {
+    if (!context->di_builder) return;
+    LLVMDIBuilderFinalize(context->di_builder);
+}
+
+static void debug_info_dispose(CodeGenContext *context) {
+    if (context->di_builder) {
+        LLVMDisposeDIBuilder(context->di_builder);
+        context->di_builder = NULL;
+    }
+    DebugFileEntry *entry = context->di_files;
+    while (entry) {
+        DebugFileEntry *next = entry->next;
+        free(entry->path);
+        free(entry);
+        entry = next;
+    }
+    context->di_files = NULL;
 }
 
 // 在程序中查找用户声明的 main 函数。
@@ -5462,9 +5638,19 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
     LLVMTypeRef main_params[2] = {int32_type, argv_type};
     LLVMTypeRef main_type = LLVMFunctionType(int32_type, main_params, 2, 0);
     LLVMValueRef main_function = LLVMAddFunction(context->module, "main", main_type);
+    // 包装用的 `main` 没有 tap 源码位置，但调试时最自然的动作是 `break main`，
+    // 所以给它挂一个指向用户 `main` 那一行的 DISubprogram —— 断下来停在这里，
+    // 再 step 就进 `__tap_user_main`。
+    if (context->debug_info) {
+        debug_info_begin_function(context, main_function, "main",
+                                  user_main->filename, (unsigned)user_main->line, 0);
+    }
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(
         context->context, main_function, "entry");
     LLVMPositionBuilderAtEnd(context->builder, entry);
+    if (context->debug_info) {
+        debug_set_location_at(context, (unsigned)user_main->line, (unsigned)user_main->column);
+    }
 
     LLVMValueRef init_args_values[2] = {
         LLVMGetParam(main_function, 0),
@@ -5513,6 +5699,8 @@ static void generate_entry_point(CodeGenContext *context, FunctionNode *user_mai
 // 生成整个程序的 LLVM IR。
 void generate_code(CodeGenContext *context, ProgramNode *program) {
     context->program = program;
+    // 调试信息要在生成任何指令之前建好：DICompileUnit 是后续所有 DISubprogram 的父节点。
+    if (context->debug_info) debug_info_initialize(context);
     FunctionNode *user_main = find_user_main(program);
     validate_user_types(context, program);
     declare_struct_types(context, program);
@@ -5573,8 +5761,16 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         context->current_return_type = function_return_type(function);
         context->current_return_var_type = function_return_var_type(function);
 
+        debug_info_begin_function(context, llvm_function, function->name,
+                                  function->filename, (unsigned)function->line,
+                                  1 /* 内部链接，都是 IsLocalToUnit */);
+
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(context->context, llvm_function, "entry");
         LLVMPositionBuilderAtEnd(context->builder, entry);
+        if (context->debug_info) {
+            debug_set_location_at(context, (unsigned)function->line,
+                                  (unsigned)function->column);
+        }
 
         ASTNode *param = function->params;
         unsigned param_index = 0;
@@ -5616,11 +5812,15 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         }
     }
 
+    // 所有函数体生成完之后再收尾：DIBuilder 要在这里把前向引用（子程序、文件表）
+    // 解析成最终形态，之后的 pass 才能正确搬运调试信息。
+    debug_info_finalize(context);
+
     char *error = NULL;
     if (LLVMVerifyModule(context->module, LLVMReturnStatusAction, &error) != 0) {
-        fprintf(stderr, "LLVM IR verification failed: %s\n", error); // 中文：LLVM IR 验证失败
-        LLVMDisposeMessage(error);
-        exit(1);
+        // 走统一诊断出口：以前这里是裸 fprintf，报错不带文件/行号，格式也和别处不一致。
+        // 拿不到具体节点（失败原因在 LLVM 侧），所以位置参数传 NULL。
+        report_error(NULL, "LLVM IR verification failed: %s", error); // 中文：LLVM IR 验证失败
     }
 
     // 完整生成和校验之后再运行 DCE，确保不可达代码中的错误仍能报告。
@@ -5650,6 +5850,8 @@ static int initialize_execution_engine(CodeGenContext *context) {
 void free_codegen_context(CodeGenContext *context) {
     if (!context) return;
     free_symbols(context->symbols);
+    // DIBuilder 引用着 module，要在释放 module 之前销毁。
+    debug_info_dispose(context);
     if (context->builder) LLVMDisposeBuilder(context->builder);
     if (context->engine) {
         LLVMDisposeExecutionEngine(context->engine);
@@ -5657,6 +5859,7 @@ void free_codegen_context(CodeGenContext *context) {
         LLVMDisposeModule(context->module);
     }
     if (context->context) LLVMContextDispose(context->context);
+    free(context->source_file);
     free(context);
 }
 

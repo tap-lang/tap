@@ -276,11 +276,12 @@ env TAP_MODULE_PATH=/path/to/project:/another/root ./build/tap run app/main.tp
 有了这条规则，`<包根>/packages/foo/` 这样的布局里 `import foo.lib` 就能直接解析到
 `packages/foo/src/lib.tp`。
 
-### 包模式：`tap build` / `tap run` 不带文件时
+### 包模式：`tap build` / `tap run` / `tap check` 不带文件时
 
 ```text
 tap build               # 只编译不运行，产物写到 <包根>/build/<name>
 tap run                 # 编译完接着运行
+tap check               # 只检查，不产出任何文件，也不会创建 build/
 tap run main.tp         # 文件模式：现有行为，完全不变
 ```
 
@@ -288,7 +289,8 @@ tap run main.tp         # 文件模式：现有行为，完全不变
 
 - 从当前目录向上找到含 `package.toml` 的那一层，那一层就是包根
 - 按 `[package]` 的 `entry` 定位入口文件，按 `name` 命名构建产物
-- `<包根>/build` 目录由编译器自己创建
+- `<包根>/build` 目录由编译器自己创建 —— **`tap check` 例外**，它用只读的解析路径
+  （`resolve_package_entry`），检查不该有副作用
 
 **产物是永久的**：`tap run` 编译到 `<包根>/build/<name>`，跑完不会删掉它；
 `tap run -o <路径>` 同理——`-o` 指定的文件会保留。只有**没给 `-o` 的文件模式**

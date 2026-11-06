@@ -34,6 +34,7 @@ make
 - **C 互操作**：`extern fn` 直接绑 libc，`std.net` / `std.fs` 全靠它实现
 - **零导入 Prelude**：`print`、`panic`、`Result<T, E>` 开箱可用
 - **多平台**：macOS、Linux、Windows（MSVC 与 MinGW-w64）
+- **可调试**：`tap -g` 生成 DWARF 行号表，`gdb` / `lldb` 能按 `源码:行号` 断点
 
 各特性的细节见[数据类型](docs/data-types.md#带载荷枚举)、[模块导入](docs/module.md)、
 [标准库](docs/std.md)和 [C 互操作](docs/extern.md)。
