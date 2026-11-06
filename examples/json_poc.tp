@@ -240,11 +240,11 @@ fn parse_value(src: String, pos: uint): Json {
     return parse_number(src, p);
 }
 
-// struct 是值类型，传参是拷贝，所以必须把 StringBuilder 一路返回回去。
-fn write_json(out: StringBuilder, value: Json): StringBuilder {
+// StringBuilder 是引用接口：写操作直接改调用方的构建器，不用一路返回。
+fn write_json(out: &mut StringBuilder, value: Json) {
     if (value.kind == 0) {
         out.append("null");
-        return out;
+        return;
     }
     if (value.kind == 1) {
         if (value.boolean) {
@@ -252,14 +252,15 @@ fn write_json(out: StringBuilder, value: Json): StringBuilder {
         } else {
             out.append("false");
         }
-        return out;
+        return;
     }
     if (value.kind == 2) {
         out.append(value.number);
-        return out;
+        return;
     }
     if (value.kind == 3) {
-        return json.append_quoted(out, value.text);
+        json.append_quoted(out, value.text);
+        return;
     }
 
     let items: Vec<Json> = value.items;
@@ -272,31 +273,30 @@ fn write_json(out: StringBuilder, value: Json): StringBuilder {
         let n: uint = items.len();
         while (i < n) {
             let element: Json = items.get(i);
-            out = write_json(out, element);
+            write_json(out, element);
             i++;
             if (i < n) {
                 out.append(",");
             }
         }
         out.append("]");
-        return out;
+        return;
     }
 
     out.append("{");
     let k: uint = 0;
     let kn: uint = keys.len();
     while (k < kn) {
-        out = json.append_quoted(out, keys.get(k));
+        json.append_quoted(out, keys.get(k));
         out.append(":");
         let v: Json = values.get(k);
-        out = write_json(out, v);
+        write_json(out, v);
         k++;
         if (k < kn) {
             out.append(",");
         }
     }
     out.append("}");
-    return out;
 }
 
 fn main(): i32 {
@@ -306,7 +306,7 @@ fn main(): i32 {
     print("parsed kind=%d pos=%llu len=%llu\n", root.kind, root.pos, source.len());
 
     let out: StringBuilder = sb.new();
-    out = write_json(out, root);
+    write_json(&mut out, root);
     print("reserialized: %s\n", out.to_string());
 
     // 新运算符让「找某个键」变得直接
@@ -344,7 +344,7 @@ fn main(): i32 {
     document.values = built_values;
 
     let built: StringBuilder = sb.new();
-    built = write_json(built, document);
+    write_json(&mut built, document);
     print("built: %s\n", built.to_string());
 
     return 0;

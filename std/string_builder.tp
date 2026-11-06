@@ -1,6 +1,10 @@
 import std.byte_vec as bytes;
 
 // 基于 ByteVec 的增量字符串构建器。
+//
+// 和 `Vec` / `ByteVec` 一样是引用接口：读操作收 `&StringBuilder`，写操作收
+// `&mut StringBuilder`，写完不用再赋回变量。`free` 仍然按值收 —— 它把内部缓冲区
+// 交还给分配器，之后这个构建器不该再被使用。
 pub struct StringBuilder {
     buffer: ByteVec,
 }
@@ -18,32 +22,29 @@ pub fn new(): StringBuilder {
 }
 
 // 返回当前已追加的 UTF-8 字节数。
-pub fn len(builder: StringBuilder): uint {
+pub fn len(builder: &StringBuilder): uint {
     return bytes.len(&builder.buffer);
 }
 
 // 追加一个原始字节。
-pub fn append_byte(builder: StringBuilder, value: u8): StringBuilder {
+pub fn append_byte(builder: &mut StringBuilder, value: u8) {
     bytes.push(&mut builder.buffer, value);
-    return builder;
 }
 
 // 追加 String 或任意可显式转换为 String 的标量值。
 // 具体类型由调用点推断，因此整数、浮点数和 bool 共用这一套接口。
-pub fn append<T>(builder: StringBuilder, value: T): StringBuilder {
+pub fn append<T>(builder: &mut StringBuilder, value: T) {
     let text: String = value as String;
     bytes.extend(&mut builder.buffer, text);
-    return builder;
 }
 
 // 清空内容但保留内部容量。
-pub fn clear(builder: StringBuilder): StringBuilder {
+pub fn clear(builder: &mut StringBuilder) {
     bytes.clear(&mut builder.buffer);
-    return builder;
 }
 
 // 返回独立字符串快照；后续修改构建器不会改变该字符串。
-pub fn to_string(builder: StringBuilder): String {
+pub fn to_string(builder: &StringBuilder): String {
     return bytes.to_string(&builder.buffer);
 }
 

@@ -9,16 +9,16 @@ fn main(): i32 {
 
     // 控制字符一律转义；0x7F 不是控制字符，按规范原样透传。
     let ctrl: StringBuilder = sb.new();
-    ctrl = sb.append_byte(ctrl, 1);
-    ctrl = sb.append_byte(ctrl, 8);
-    ctrl = sb.append_byte(ctrl, 12);
-    ctrl = sb.append_byte(ctrl, 31);
-    let raw: String = sb.to_string(ctrl);
+    ctrl.append_byte(1);
+    ctrl.append_byte(8);
+    ctrl.append_byte(12);
+    ctrl.append_byte(31);
+    let raw: String = ctrl.to_string();
     print("ctrl: %s\n", json.escape_quoted(raw));
 
     let del: StringBuilder = sb.new();
-    del = sb.append_byte(del, 127);
-    let del_raw: String = sb.to_string(del);
+    del.append_byte(127);
+    let del_raw: String = del.to_string();
     let del_escaped: String = json.escape_quoted(del_raw);
     print("del passthrough: len=%llu\n", del_escaped.len());
 

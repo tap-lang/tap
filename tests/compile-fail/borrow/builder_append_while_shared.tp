@@ -1,0 +1,18 @@
+import std.string_builder as sb;
+
+// 迁移到 `&mut` 接口之后，`append` 就是一次真实的独占借用：手上还攥着
+// `&StringBuilder` 时再追加会被拦住（按值接口那会儿只会改到新副本上）。
+fn main(): i32 {
+    let builder: StringBuilder = sb.new();
+    let held: &StringBuilder = &builder;
+    builder.append("x");
+    print("%s\n", held.to_string());
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'builder' is already borrowed, so it cannot be borrowed mutably
+- .exit
+1
+-- */

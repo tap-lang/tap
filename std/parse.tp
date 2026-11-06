@@ -173,12 +173,12 @@ pub fn format_i64(value: i64): String {
     let remaining: i64 = value;
 
     if (remaining < 0) {
-        builder = sb.append_byte(builder, 45);
+        builder.append_byte(45);
         remaining = -remaining;
     }
 
     if (remaining == 0) {
-        builder = sb.append_byte(builder, 48);
+        builder.append_byte(48);
     } else {
         // 逐位取余得到逆序数字，再倒序写入；i64 最多 19 位，20 足够。
         let digits: [i64; 20] = [0; 20];
@@ -190,12 +190,12 @@ pub fn format_i64(value: i64): String {
         }
         while (count > 0) {
             count--;
-            builder = sb.append_byte(builder, digits[count] + 48);
+            builder.append_byte(digits[count] + 48);
         }
     }
 
     // to_string 返回独立快照，之后可以安全释放构建器的内部缓冲区。
-    let text: String = sb.to_string(builder);
+    let text: String = builder.to_string();
     sb.free(builder);
     return text;
 }

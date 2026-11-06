@@ -194,10 +194,10 @@ pub fn read_all(file: File): String {
         if (chunk.len() == 0) {
             running = false;
         } else {
-            builder = sb.append(builder, chunk);
+            builder.append(chunk);
         }
     }
-    let text: String = sb.to_string(builder);
+    let text: String = builder.to_string();
     sb.free(builder);
     return text;
 }

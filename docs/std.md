@@ -190,16 +190,16 @@ fn main(): i32 {
 | `String` | `len()` | 返回 UTF-8 原始字节长度 |
 | `String` | `char_count()` | 返回 UTF-8 字符（Unicode 码点）数量 |
 | `std.string_builder` | `StringBuilder` | 基于 `ByteVec` 的可增量字符串构建器 |
-| `std.string_builder` | `append<T>/append_byte/clear` | 追加字符串或可转换为字符串的值并复用容量 |
-| `std.string_builder` | `to_string(): String` | 获取与后续 Builder 修改无关的字符串快照 |
+| `std.string_builder` | `append<T>/append_byte/clear(builder: &mut StringBuilder, ...)` | 追加字符串或可转换为字符串的值并复用容量 |
+| `std.string_builder` | `to_string(builder: &StringBuilder): String` / `len(builder: &StringBuilder): uint` | 获取与后续 Builder 修改无关的字符串快照、已写字节数 |
 | `std.parse` | `parse_i64(text: String): Result<i64, String>` | 解析十进制整数，失败返回 `Err` |
 | `std.parse` | `parse_f64(text: String): Result<f64, String>` | 解析十进制浮点，失败返回 `Err` |
 | `std.parse` | `format_i64(value: i64): String` | 把整数格式化为十进制字符串 |
 | `std.parse` | `format_f64(value: f64): String` | 把浮点数格式化为最短可往返的十进制字符串 |
 | `std.json` | `escape(text: String): String` | 转义为 JSON 字符串内容，不含两侧引号 |
 | `std.json` | `escape_quoted(text: String): String` | 转义并补上两侧引号，结果可直接放进 JSON |
-| `std.json` | `append_escaped(builder, text): StringBuilder` | 把转义结果追加进构建器，不含两侧引号 |
-| `std.json` | `append_quoted(builder, text): StringBuilder` | 追加转义结果并补上两侧引号 |
+| `std.json` | `append_escaped(builder: &mut StringBuilder, text)` | 把转义结果追加进构建器，不含两侧引号 |
+| `std.json` | `append_quoted(builder: &mut StringBuilder, text)` | 追加转义结果并补上两侧引号 |
 | `std.json` | `unescape(text: String): Result<String, String>` | 反转义 JSON 字符串内容，非法转义返回 `Err` |
 | `std.fs` | `File` | 已打开文件的句柄（`handle` 是不透明指针） |
 | `std.fs` | `open(path, mode): File` | 打开文件；`mode` 与 C 的 `fopen` 一致，务必带 `b`（`rb` / `wb` / `ab`） |
@@ -402,9 +402,11 @@ fn main(): i32 {
 }
 ```
 
-`StringBuilder` 内部使用 `ByteVec`。`append()` 追加字符串的 UTF-8 字节，
-`append_byte()` 追加单个字节；泛型 `append<T>()` 会把整数、浮点数和 bool 转成文本后追加。
-`to_string()` 返回独立快照。
+`StringBuilder` 内部使用 `ByteVec`，接口和 `Vec` / `ByteVec` 一样分读写：
+`append()` / `append_byte()` / `clear()` 收 `&mut StringBuilder`，**写完不用再赋回变量**；
+`len()` / `to_string()` 收 `&StringBuilder`。泛型 `append<T>()` 会把整数、浮点数和 bool
+转成文本后追加，`to_string()` 返回独立快照。`free()` 仍然按值收 —— 它把内部缓冲区交还给
+分配器，之后这个构建器不该再被使用。
 
 `std.parse` 示例：
 
@@ -460,10 +462,10 @@ fn main(): i32 {
 
     // 增量拼接时用 append_quoted，省掉每段字符串的临时对象
     let out: StringBuilder = sb.new();
-    out = json.append_quoted(out, "key");
+    json.append_quoted(&mut out, "key");
     out.append(":");
-    out = json.append_quoted(out, "va\\lue");
-    print("%s\n", sb.to_string(out));
+    json.append_quoted(&mut out, "va\\lue");
+    print("%s\n", out.to_string());
 
     // 输入：反转义，非法转义序列通过 ok 报告
     let decoded: Result<String, String> = json.unescape("a\\u0041\\uD83D\\uDE00b");

@@ -19,7 +19,7 @@
 | 4 | `Vec<&T>` 推不出类型实参 | `cannot infer compatible generic arguments for 'push'` | 低 | 中 |
 | 5 | 不支持 `&&T` | `expected type` | 低 | 小 |
 | 6 | 多引用参数不能返回借用 | 报「两个引用参数，无法确定借自哪个」 | 中 | 大（等于 1） |
-| 7 | `StringBuilder` 仍是按值接口 | 32 处 `sb.append(b, ...)` 写回式 | 中 | 小 |
+| 7 | ~~`StringBuilder` 仍是按值接口~~ | ✅ 已迁移到 `&` / `&mut`（2026-11-07） | 中 | 小 |
 
 ## 1. L2：结构体存借用的寿命
 
@@ -247,7 +247,16 @@ fn pick(left: &i32, right: &i32): &i32 {
 
 所以这条**不建议单独做**，跟着 1 一起。
 
-## 7. `StringBuilder` 仍是按值接口
+## 7. `StringBuilder` 迁移到引用接口（✅ 已完成，2026-11-07）
+
+> 已按下面的「改法」整体迁移：`append` / `append_byte` / `clear` 收 `&mut StringBuilder`
+> 且返回 `void`，`len` / `to_string` 收 `&StringBuilder`，`free` 保持按值。`std.json`、
+> `std.fs`、`std.parse`、`examples/json_poc.tp`、测试和 `docs/std.md` 同步改完；
+> 现在的用法是一句 `builder.append(x);`，不再有 `builder = sb.append(builder, x);`。
+> 顺带验证了「`&mut StringBuilder` 参数里再取 `&mut builder.buffer`」这条路径
+> （`std.string_builder` 的实现就得这么写）。全量测试 0 failed；迁移之后
+> `builder.append(...)` 是一次真实的独占借用，`tests/compile-fail/borrow/builder_append_while_shared.tp`
+> 守着「手上还攥着 `&StringBuilder` 时不能追加」这条。
 
 P2 把 `Vec` / `ByteVec` 改成了 `&` / `&mut`，但 `StringBuilder` 没动：
 
@@ -293,15 +302,15 @@ pub fn free(builder: StringBuilder): i32 { ... }   // 保持按值，同 Vec
 | 顺序 | 项目 | 理由 |
 |---|---|---|
 | ~~1~~ | ~~**1c 结构体借用禁止出函数**~~ | ✅ 已完成（2026-11-07） |
-| 1 | **7 `StringBuilder` 迁移** | 纯收益，把 P2 收尾；顺便验证一遍 `&mut self` 在真实代码里的手感 |
-| 2 | **3 借用粒度到字段** | 日常写代码最容易撞上的误报；改动局限在 `borrow.c` |
-| 3 | **2 NLL** | 减少「必须把 `&mut` 塞进小作用域」的别扭写法；需要加一趟活跃性分析 |
-| 4 | **1b 生命周期参数** | 真正的 L2；会动单态化，单独一期做 |
-| 5 | 4 / 5 / 6 | 都依赖 1b 或 3，跟着做 |
+| ~~2~~ | ~~**7 `StringBuilder` 迁移**~~ | ✅ 已完成（2026-11-07） |
+| 1 | **3 借用粒度到字段** | 日常写代码最容易撞上的误报；改动局限在 `borrow.c` |
+| 2 | **2 NLL** | 减少「必须把 `&mut` 塞进小作用域」的别扭写法；需要加一趟活跃性分析 |
+| 3 | **1b 生命周期参数** | 真正的 L2；会动单态化，单独一期做 |
+| 4 | 4 / 5 / 6 | 都依赖 1b 或 3，跟着做 |
 
-如果只做一件：**7**。它是纯粹的收尾工作，不需要碰检查器语义；再往后**3** 的收益/风险
-比最好。1c 挡不住的那部分悬垂（经变量中转）只能靠 1b，别用加状态传播的方式硬撑 ——
-误报会立刻出现在正常代码里。
+如果只做一件：**3**。它是写代码时最常撞上的误报（`&p.left` 拦住 `p.right`），改动只在
+`borrow.c` 的借用记录结构里，不牵动类型系统。1c 挡不住的那部分悬垂（经变量中转）只能靠
+1b，别用加状态传播的方式硬撑 —— 误报会立刻出现在正常代码里。
 
 ## 怎么验证
 

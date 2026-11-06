@@ -69,89 +69,103 @@ fn read_hex4(text: String, start: uint, length: uint): Hex4 {
 
 // 取出构建器的快照并释放它。
 fn finish(builder: StringBuilder): String {
-    let text: String = sb.to_string(builder);
+    let text: String = builder.to_string();
     sb.free(builder);
     return text;
 }
 
 // 把一个字节按 JSON 规则转义后追加。
-fn append_escaped_byte(builder: StringBuilder, value: u8): StringBuilder {
+fn append_escaped_byte(builder: &mut StringBuilder, value: u8) {
     if (value == 34) {
-        return sb.append(builder, "\\\"");
+        builder.append("\\\"");
+        return;
     }
     if (value == 92) {
-        return sb.append(builder, "\\\\");
+        builder.append("\\\\");
+        return;
     }
     if (value == 8) {
-        return sb.append(builder, "\\b");
+        builder.append("\\b");
+        return;
     }
     if (value == 12) {
-        return sb.append(builder, "\\f");
+        builder.append("\\f");
+        return;
     }
     if (value == 10) {
-        return sb.append(builder, "\\n");
+        builder.append("\\n");
+        return;
     }
     if (value == 13) {
-        return sb.append(builder, "\\r");
+        builder.append("\\r");
+        return;
     }
     if (value == 9) {
-        return sb.append(builder, "\\t");
+        builder.append("\\t");
+        return;
     }
     if (value < 32) {
         // 其余控制字符一律写成 \u00XX：裸的控制字节不是合法 JSON。
-        builder = sb.append(builder, "\\u00");
-        builder = sb.append_byte(builder, hex_digit(value / 16));
-        return sb.append_byte(builder, hex_digit(value % 16));
+        builder.append("\\u00");
+        builder.append_byte(hex_digit(value / 16));
+        builder.append_byte(hex_digit(value % 16));
+        return;
     }
-    return sb.append_byte(builder, value);
+    builder.append_byte(value);
 }
 
 // 把原始字符串转义后追加到构建器，不含两侧引号。
-pub fn append_escaped(builder: StringBuilder, text: String): StringBuilder {
+pub fn append_escaped(builder: &mut StringBuilder, text: String) {
     let length: uint = text.len();
     let index: uint = 0;
     while (index < length) {
-        builder = append_escaped_byte(builder, text.byte_at(index));
+        append_escaped_byte(builder, text.byte_at(index));
         index++;
     }
-    return builder;
 }
 
 // 把原始字符串转义后追加，并补上两侧引号。
-pub fn append_quoted(builder: StringBuilder, text: String): StringBuilder {
-    builder = sb.append_byte(builder, 34);
-    builder = append_escaped(builder, text);
-    return sb.append_byte(builder, 34);
+pub fn append_quoted(builder: &mut StringBuilder, text: String) {
+    builder.append_byte(34);
+    append_escaped(builder, text);
+    builder.append_byte(34);
 }
 
 // 返回转义后的字符串，不含两侧引号。
 pub fn escape(text: String): String {
-    return finish(append_escaped(sb.new(), text));
+    let builder: StringBuilder = sb.new();
+    append_escaped(&mut builder, text);
+    return finish(builder);
 }
 
 // 返回可直接放进 JSON 的字符串字面量（含两侧引号）。
 pub fn escape_quoted(text: String): String {
-    return finish(append_quoted(sb.new(), text));
+    let builder: StringBuilder = sb.new();
+    append_quoted(&mut builder, text);
+    return finish(builder);
 }
 
 // 把码点按 UTF-8 编码追加。用乘除代替移位，因为 tap 目前没有移位运算符。
-fn append_code_point(builder: StringBuilder, code_point: i32): StringBuilder {
+fn append_code_point(builder: &mut StringBuilder, code_point: i32) {
     if (code_point < 128) {
-        return sb.append_byte(builder, code_point);
+        builder.append_byte(code_point);
+        return;
     }
     if (code_point < 2048) {
-        builder = sb.append_byte(builder, code_point / 64 + 192);
-        return sb.append_byte(builder, code_point % 64 + 128);
+        builder.append_byte(code_point / 64 + 192);
+        builder.append_byte(code_point % 64 + 128);
+        return;
     }
     if (code_point < 65536) {
-        builder = sb.append_byte(builder, code_point / 4096 + 224);
-        builder = sb.append_byte(builder, code_point % 4096 / 64 + 128);
-        return sb.append_byte(builder, code_point % 64 + 128);
+        builder.append_byte(code_point / 4096 + 224);
+        builder.append_byte(code_point % 4096 / 64 + 128);
+        builder.append_byte(code_point % 64 + 128);
+        return;
     }
-    builder = sb.append_byte(builder, code_point / 262144 + 240);
-    builder = sb.append_byte(builder, code_point % 262144 / 4096 + 128);
-    builder = sb.append_byte(builder, code_point % 4096 / 64 + 128);
-    return sb.append_byte(builder, code_point % 64 + 128);
+    builder.append_byte(code_point / 262144 + 240);
+    builder.append_byte(code_point % 262144 / 4096 + 128);
+    builder.append_byte(code_point % 4096 / 64 + 128);
+    builder.append_byte(code_point % 64 + 128);
 }
 
 // 反转义 JSON 字符串内容（不含两侧引号）。
@@ -164,7 +178,7 @@ pub fn unescape(text: String): Result<String, String> {
     while (index < length) {
         let byte: u8 = text.byte_at(index);
         if (byte != 92) {
-            builder = sb.append_byte(builder, byte);
+            builder.append_byte(byte);
             index++;
             continue;
         }
@@ -175,28 +189,28 @@ pub fn unescape(text: String): Result<String, String> {
         }
         let marker: u8 = text.byte_at(index + 1);
         if (marker == 34) {
-            builder = sb.append_byte(builder, 34);
+            builder.append_byte(34);
             index = index + 2;
         } elseif (marker == 92) {
-            builder = sb.append_byte(builder, 92);
+            builder.append_byte(92);
             index = index + 2;
         } elseif (marker == 47) {
-            builder = sb.append_byte(builder, 47);
+            builder.append_byte(47);
             index = index + 2;
         } elseif (marker == 98) {
-            builder = sb.append_byte(builder, 8);
+            builder.append_byte(8);
             index = index + 2;
         } elseif (marker == 102) {
-            builder = sb.append_byte(builder, 12);
+            builder.append_byte(12);
             index = index + 2;
         } elseif (marker == 110) {
-            builder = sb.append_byte(builder, 10);
+            builder.append_byte(10);
             index = index + 2;
         } elseif (marker == 114) {
-            builder = sb.append_byte(builder, 13);
+            builder.append_byte(13);
             index = index + 2;
         } elseif (marker == 116) {
-            builder = sb.append_byte(builder, 9);
+            builder.append_byte(9);
             index = index + 2;
         } elseif (marker == 117) {
             let first: Hex4 = read_hex4(text, index + 2, length);
@@ -223,7 +237,7 @@ pub fn unescape(text: String): Result<String, String> {
                 return Result<String, String>.Err("lone low surrogate");
             }
 
-            builder = append_code_point(builder, code_point);
+            append_code_point(&mut builder, code_point);
             index = index + consumed;
         } else {
             return Result<String, String>.Err("unknown escape sequence");
