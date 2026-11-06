@@ -1,0 +1,19 @@
+struct Holder { src: &i32 }
+
+// 结构体字段里的借用只在**字段位置**，类型 `Holder` 本身看不出任何寿命关系，
+// 所以这条靠返回时逐字段检查：被借的存储在本帧，就不能把它带出函数。
+fn make(): Holder {
+    let local: i32 = 7;
+    return Holder { src: &local };
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: field 'src' of the returned struct borrows a value that lives in this function
+- .exit
+1
+-- */

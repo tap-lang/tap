@@ -1,0 +1,43 @@
+struct Pair { left: i32, right: i32 }
+struct View { src: &i32 }
+struct RawView { src: *i32 }
+
+// 结构体可以保存借用，只要借的是函数外的存储 —— 引用参数指向的对象不随本次
+// 调用消失，所以这样的结构体可以原样返回（L2 折中规则允许的一半）。
+fn left_view(pair: &Pair): View {
+    return View { src: &pair.left };
+}
+
+// 函数内临时组装持有借用的结构体，源就在本帧，但不跨出函数。
+fn sum(pair: &Pair): i32 {
+    let view: View = View { src: &pair.right };
+    return view.src[0] + view.src[0];
+}
+
+// 想真的把借用带出函数又不想改签名：显式降级成裸指针（遗忘借用）。
+fn forget(pair: &Pair): RawView {
+    let raw: *i32 = &pair.left;
+    return RawView { src: raw };
+}
+
+fn main(): i32 {
+    let pair: Pair = Pair { left: 7, right: 8 };
+
+    let view: View = left_view(&pair);
+    print("%d\n", view.src[0]);
+    print("%d\n", sum(&pair));
+
+    let raw_view: RawView = forget(&pair);
+    print("%d\n", raw_view.src[0]);
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+7
+16
+7
+- .exit
+0
+-- */

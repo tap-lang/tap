@@ -1,0 +1,31 @@
+struct Holder { src: &i32 }
+struct Outer { inner: Holder }
+
+fn first(value: &i32): &i32 {
+    return value;
+}
+
+// 借用藏在第二层字段里：检查要按字面量递归下去，不能只看第一层。
+fn nested(): Outer {
+    let local: i32 = 7;
+    return Outer { inner: Holder { src: &local } };
+}
+
+// 借用穿过一次返回引用的调用再装进字段：判据来自调用点的实参秩。
+fn through_call(): Holder {
+    let local: i32 = 7;
+    return Holder { src: first(&local) };
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: field 'src' of the returned struct borrows a value that lives in this function
+--> tests/compile-fail/borrow/return_nested_struct_holding_local_borrow.tp:11:5
+--> tests/compile-fail/borrow/return_nested_struct_holding_local_borrow.tp:17:5
+- .exit
+1
+-- */
