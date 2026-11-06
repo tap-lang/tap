@@ -24,7 +24,9 @@
 // 下合法（p 已经不再使用），这里仍然报错。词法版本换来实现简单和可预测 —— 报错位置
 // 永远等于 `&mut` 所在的作用域，不会因为后面有没有用到 p 而变。
 //
-// 诊断走 report_error，遇到第一处就终止编译。
-void check_borrows(ProgramNode *program);
+// 诊断走 `report_error_soft`：**报完继续检查**，一个文件里的多处借用错误会一次全报
+// （达到 TAP_MAX_ERRORS 条才停）。返回 0 表示通过，1 表示报了错 —— 调用方据此决定
+// 是否继续往下生成代码，报过错之后的状态不再可信，不能进 Codegen。
+int check_borrows(ProgramNode *program);
 
 #endif

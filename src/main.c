@@ -308,9 +308,15 @@ int main(int argc, char *argv[]) {
     // 借用检查紧跟在 Sema 之后：它只看 AST 和类型标注，不依赖 Codegen 的推断结果，
     // 所以放在生成任何 IR 之前就能给出诊断。TAP_NO_BORROW=1 可以跳过，
     // 用来确认「某段代码编不过」到底是借用检查还是别的阶段拦下的。
+    //
+    // 借用检查会**报完继续查**（一个文件里的多处借用错误一次全报），所以它返回
+    // 状态而不是直接退出；报过错之后 AST 的状态不再可信，不能继续进 Codegen。
     const char *skip_borrow = getenv("TAP_NO_BORROW");
-    if (!(skip_borrow && skip_borrow[0])) {
-        check_borrows(program);
+    if (!(skip_borrow && skip_borrow[0]) && check_borrows(program)) {
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return 1;
     }
 
     // 3. 代码生成

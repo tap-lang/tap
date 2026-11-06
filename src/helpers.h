@@ -45,6 +45,29 @@ TAP_NORETURN void report_error(const ASTNode *node, const char *format, ...);
 // 无位置版本：只跟名字或常量有关、拿不到节点时用。
 TAP_NORETURN void report_error_at(const char *filename, int line, int column,
                                   const char *format, ...);
+
+// ---------------------------------------------------------------------------
+// 累积诊断：打印之后**继续往下走**，不终止编译
+// ---------------------------------------------------------------------------
+//
+// 只给能安全继续的检查阶段用（目前是 borrow.c 的纯 AST 走查）。`report_error` 的
+// `TAP_NORETURN` 不能去掉 —— 一百多处调用点靠它做控制流分析，去掉会引出一片
+// 「可能没有返回值」的警告，还会掩盖真正的漏 return。所以另开两个不终止的版本，
+// 想改哪一处就改哪一处。
+//
+// 报够 TAP_MAX_ERRORS 条后由 report_error_limit() 终止：否则一个系统性错误
+// （比如类型整体没定义）会刷出成百上千条，反而看不清第一条。
+#define TAP_MAX_ERRORS 10
+
+void report_error_soft(const ASTNode *node, const char *format, ...);
+void report_error_at_soft(const char *filename, int line, int column,
+                          const char *format, ...);
+// 已经报了多少条（跨阶段累计，直到 tap_error_reset）。
+int tap_error_count(void);
+void tap_error_reset(void);
+// 打印「错误太多」并退出。由 report_error_soft 在达到上限时调用。
+TAP_NORETURN void report_error_limit(void);
+
 void print_code_line(FILE *output, const char *source_code, int line, int context_lines);
 
 #endif

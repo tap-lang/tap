@@ -72,7 +72,21 @@ Prelude 和模块函数写入最终 IR。
 没有位置信息时**不打印** `--> <unknown>:0:0`，只输出一句话：诊断要么给出真实位置，
 要么只给一句话，假装有位置没有信息量。
 
-新增诊断一律用这两个函数，不要再写 `fprintf(stderr, "error: ..."); exit(1);`。
+### 累积诊断（soft 版本）
+
+`report_error_soft` / `report_error_at_soft` 是同一套格式的**不终止**版本：打印完继续
+往下检查，最后用 `tap_error_count()` 判断有没有报过错。只有「报完还能安全继续」的阶段
+才能用 —— 目前是 `borrow.c`（纯 AST 走查，不生成 IR，多报几条最坏结果就是多几条诊断）。
+
+- 达到 `TAP_MAX_ERRORS`（10）条时 `report_error_limit()` 打一行
+  `error: too many errors (10), stopping now` 并退出，防止一个系统性错误刷成几百条。
+- 两条路并存：`TAP_NORETURN` 那一版保留，因为一百多处调用点靠它做控制流分析。
+- 用 soft 版本要顺手做两件事：**同一条语句里只报一条**（报完 `return`，别让
+  `x = 2` 同时命中「被独占借用」和「被共享借用」），**别为同一个错误报两遍**
+  （比如签名检查里 `report_error_at` 后面跟一条 `report_error` 的兜底，原来靠 `exit`
+  保证不重复，现在得改成 `else`）。
+
+新增诊断一律用这几个函数，不要再写 `fprintf(stderr, "error: ..."); exit(1);`。
 
 ## 模块加载
 

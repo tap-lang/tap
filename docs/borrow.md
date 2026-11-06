@@ -312,6 +312,39 @@ let r: &i32 = p.peek();
 p.reset();              // error: 'p' is already borrowed, so it cannot be borrowed mutably
 ```
 
+## 诊断：一次报完
+
+借用检查是**报完继续查**的，一个文件里的多处借用错误会一次全报：
+
+```tap
+fn main(): i32 {
+    let x: i32 = 1;
+    let a = &mut x;
+    let b = &mut x;   // error: 'x' is already mutably borrowed
+    let c = &x;       // error: 'x' is mutably borrowed, so it cannot be borrowed again
+    x = 2;            // error: 'x' is mutably borrowed and cannot be assigned here
+    return 0;
+}
+```
+
+三条诊断、各带位置，退出码 1。报够 10 条就停（`error: too many errors (10), stopping
+now`），免得一个系统性错误刷屏。
+
+能做到这一点是因为借用检查是**纯 AST 走查**：不生成 IR、不碰 LLVM，报错之后继续走最坏
+只是多几条诊断。Codegen 那边做不到（它一边检查一边生成 IR，报完继续会拿着不一致的类型
+去调 `LLVMBuild*`），所以仍是一次一条。
+
+两条实现上的注意点（改这里容易踩）：
+
+- **一条语句只报一条。** `check_write_target` 里「被独占借用」「被共享借用」两个分支
+  报完要 `return`，否则 `&x` 和 `&mut x` 同时挂着时同一行会出两条。
+- **`let r = &mut x;` 的冲突检查只做一次。** 遍历表达式时已经检查过（位置是 `&mut x`
+  本身，比整条语句精确），绑定之后再检查一遍就会为同一个错误报两条 —— 现在后者只调
+  `mark_persistent_borrow` 登记状态、不报诊断。
+
+报过错之后 `check_borrows` 返回 1，`main.c` 直接返回，**不进 Codegen** —— 有错时的 AST
+状态不再可信。
+
 ## 当前限制（L1 的边界）
 
 这些是**明确没做**的，不是 bug：
@@ -354,7 +387,10 @@ p.reset();              // error: 'p' is already borrowed, so it cannot be borro
   （按值接收者，改的是副本）。
 - [`self_reference_generic.tp`](../tests/run-pass/traits/self_reference_generic.tp)：
   泛型约束下的 `&self` 调用、引用接收者、方法互相调用。
-- `tests/compile-fail/borrow/` 和 `tests/compile-fail/traits/` 下每条规则一个用例。
+- `tests/compile-fail/borrow/` 和 `tests/compile-fail/traits/` 下每条规则一个用例；
+  [`multiple_errors.tp`](../tests/compile-fail/borrow/multiple_errors.tp) 断言三处错误
+  一次全报，[`error_limit.tp`](../tests/compile-fail/borrow/error_limit.tp) 断言第 10 条
+  之后停下。
 
 只跑借用相关的用例：
 

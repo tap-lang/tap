@@ -76,7 +76,7 @@ codegen 一边检查一边生成 IR，改起来最危险，放最后。
 |---|---|---|---|---|
 | **P1** | `tap check` ✅ | 半天 | 无 | 编译时间 −68%，CI/编辑器入口 |
 | **P2** | 调试信息 `-g` ✅ | 2~3 天 | 中 | 能调试 |
-| **P3** | 借用检查多条错误 | 1 天 | 低 | 写代码体验 |
+| **P3** | 借用检查多条错误 ✅ | 1 天 | 低 | 写代码体验 |
 | **P4** | 语法分析错误恢复 | 1~2 天 | 中 | 语法错一次看全 |
 | **P5** | codegen 多条错误 | 2~3 天 | 高 | 类型错一次看全 |
 | — | 增量编译 | — | — | 暂不做（见 §4） |
@@ -350,6 +350,64 @@ main () at crash.tp:3
   （harness 是**包含匹配**，多报几条不影响现有用例）
 - 超过 10 条时在第 10 条后停止，退出码 1
 
+### 完成记录（2026-11-06）
+
+**实际改动**：
+
+| 文件 | 改了什么 |
+|---|---|
+| `helpers.h` / `helpers.c` | 新增 `report_error_soft` / `report_error_at_soft`（打印 + 计数，不终止）、`tap_error_count` / `tap_error_reset` / `report_error_limit`、`TAP_MAX_ERRORS 10`；抽出 `node_position()` 给四个出口共用 |
+| `borrow.c` | 15 处诊断换成 soft 版本；`check_borrows` 返回 `int`（用 `tap_error_count()` 的前后差值） |
+| `main.c` | `check_borrows(program)` 非 0 就释放资源返回 1，**不进 Codegen** |
+
+**三处「多报」是坑，不是设计**，逐个修掉了：
+
+1. **`let b = &mut x;` 报两条。** 遍历表达式时 `walk_expression` 已经在 `&mut x` 上查过
+   冲突（位置是表达式，列 13），随后 `VAR_DECL` 分支又用 `mark=1` 查了一遍（位置是语句，
+   列 5）。改成后者只调新增的 `mark_persistent_borrow` 登记状态、不报诊断 —— 诊断留在
+   位置更精确的那次。
+2. **`x = 2;` 报两条**（「被独占借用」+「被共享借用」）。`check_write_target` 的三个分支
+   改成报完就 `return`，一条语句只出一条。
+3. **签名错误报两条。** `check_borrow_signature` 原来是 `if (有文件名) report_error_at(...)`
+   后面再跟一条 `report_error(NULL, ...)` 兜底，靠前者的 `exit` 保证不重复。换成 soft 之后
+   两条都会执行 —— 改成 `if / else`。
+
+`check_symbol_borrow_conflict` 里同样的「报完 return」也加了：冲突之后不再登记这次借用，
+后续语句就少一串级联。
+
+**验证**：
+
+```text
+$ tap check multi.tp
+error: 'x' is already mutably borrowed
+--> multi.tp:4:13
+error: 'x' is mutably borrowed, so it cannot be borrowed again
+--> multi.tp:5:13
+error: 'x' is mutably borrowed and cannot be assigned here
+--> multi.tp:6:5
+$ echo $?
+1
+```
+
+- 上限：12 条赋值错误 → 前 10 条各一条，第 10 条之后
+  `error: too many errors (10), stopping now`，退出码 1。
+- 跨函数：`f()` 和 `g()` 各有错 → 两条都报（`twofn.tp`，位置 4:5 和 11:5）。
+- **第一条诊断没变**：把 `tests/compile-fail/borrow/` 下 22 个用例逐条跑一遍，比对
+  「期望 stderr 的第一行」和「实际输出的第一条 `error:`」，22/22 相同（文本与位置都没动）。
+  唯一的例外是 `return_local_reference.tp` 现在多报一条签名错误 —— 那是第二个真实的
+  问题（函数声明成返回引用却没有引用参数），不是重复。
+- 全量：276 条（新增 2 条）/ 275 passed / 1 skipped / 0 failed；`make test-cli` 22 项全过；
+  7 个示例 `check` 全过；MSVC 产物同样报 3 条。
+- `TAP_NO_BORROW=1` 仍然整体跳过借用检查（退出码 0）。
+
+**新增用例**：
+
+- `tests/compile-fail/borrow/multiple_errors.tp` —— 断言三条诊断都在。
+- `tests/compile-fail/borrow/error_limit.tp` —— 断言第 10 条之后停下。
+
+**没做的**：parser 和 codegen 仍然一次一条（P4 / P5）。`sema.c` 依旧不报诊断，
+所以「多报」的收益全部集中在借用检查和（将来的）语法/类型检查上。
+
 ## P4：语法分析错误恢复
 
 ### 目标
@@ -472,9 +530,10 @@ exit(1);
 ### 验收
 
 - 上面那段报 3 条
-- 全量测试 274 条全过（`compile-fail/` 是包含匹配，多报不影响）
+- 全量测试全过（当前 276 条；`compile-fail/` 是包含匹配，多报不影响）
 - **关键**：随便挑 20 个 `compile-fail/` 用例，确认它们的输出里第一条诊断没变 ——
-  防止「为了多报，把原来的第一条诊断搞丢了」
+  防止「为了多报，把原来的第一条诊断搞丢了」。P3 的做法可以照抄：逐条比对
+  「期望 stderr 的第一行」和「实际输出的第一条 `error:`」。
 
 ## 验证矩阵
 
@@ -499,7 +558,7 @@ for f in examples/*.tp; do ./build/tap -o /tmp/e.exe $f || echo "FAIL $f"; done
 |---|---|---|
 | 1 | **P1 `tap check`** ✅ | 零风险、半天、马上能用；也是后面 P3/P5 的验证工具（改完直接 `tap check` 看报几条） |
 | 2 | **P2 `-g`** ✅ | 自包含（一个 flag + 一个文件），不碰诊断路径。现在没有任何运行时问题的排查手段，这是最痛的 |
-| 3 | **P3 借用多条错误** | 安全、独立，顺便把 `report_error_soft` 这套基础设施搭好 |
+| 3 | **P3 借用多条错误** ✅ | 安全、独立，顺便把 `report_error_soft` 这套基础设施搭好 |
 | 4 | **P4 语法恢复** | 需要新节点类型，改 AST |
 | 5 | **P5 Step 0 统一诊断出口** | 机械替换，验收方式干净（stderr 逐字节不变）；P5 正文的前置 |
 | 6 | **P5 codegen 多条错误** | 唯一有崩溃风险的，放最后；前面几条积累的 soft 基础设施正好复用 |

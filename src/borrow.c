@@ -464,17 +464,22 @@ static void check_symbol_borrow_conflict(BorrowContext *context,
     if (!source) return;
     int check_temp = !mark;
 
+    // 每条冲突只报一条然后返回：报完之后继续改状态会让后面的语句再报一遍，
+    // 一个错误刷出三四条诊断，反而看不清。返回也意味着不再登记这次借用 ——
+    // 反正已经有错，编译不会走到生成代码那一步。
     if (is_mutable) {
         if (source->mutable_borrow_rank >= 0 ||
             (check_temp && source->temp_mutable_borrow)) {
-            report_error(diagnostic_node, "'%s' is already mutably borrowed",
-                         source->name); // 中文：已经被独占借用
+            report_error_soft(diagnostic_node, "'%s' is already mutably borrowed",
+                              source->name); // 中文：已经被独占借用
+            return;
         }
         if (source->shared_borrow_rank >= 0 ||
             (check_temp && source->temp_shared_borrow)) {
-            report_error(diagnostic_node,
-                         "'%s' is already borrowed, so it cannot be borrowed mutably",
-                         source->name); // 中文：已被共享借用，不能再独占借用
+            report_error_soft(diagnostic_node,
+                              "'%s' is already borrowed, so it cannot be borrowed mutably",
+                              source->name); // 中文：已被共享借用，不能再独占借用
+            return;
         }
         if (mark) source->mutable_borrow_rank = context->rank;
         else source->temp_mutable_borrow = 1;
@@ -483,9 +488,10 @@ static void check_symbol_borrow_conflict(BorrowContext *context,
 
     if (source->mutable_borrow_rank >= 0 ||
         (check_temp && source->temp_mutable_borrow)) {
-        report_error(diagnostic_node,
-                     "'%s' is mutably borrowed, so it cannot be borrowed again",
-                     source->name); // 中文：已被独占借用，不能再借用
+        report_error_soft(diagnostic_node,
+                          "'%s' is mutably borrowed, so it cannot be borrowed again",
+                          source->name); // 中文：已被独占借用，不能再借用
+        return;
     }
     if (mark) {
         if (source->shared_borrow_rank < 0 ||
@@ -494,6 +500,23 @@ static void check_symbol_borrow_conflict(BorrowContext *context,
         }
     } else {
         source->temp_shared_borrow = 1;
+    }
+}
+
+// 只登记「这次借用持续到作用域末尾」，不报诊断。
+//
+// 用在 `let r = &mut x;` 上：冲突检查在遍历表达式时就做过了（那里拿得到 `&mut x`
+// 自己的位置，比整条语句精确），这里再检查一遍会为同一个错误报两条。
+static void mark_persistent_borrow(BorrowContext *context, BorrowSymbol *source,
+                                   int is_mutable) {
+    if (!source) return;
+    if (is_mutable) {
+        source->mutable_borrow_rank = context->rank;
+        return;
+    }
+    if (source->shared_borrow_rank < 0 ||
+        context->rank < source->shared_borrow_rank) {
+        source->shared_borrow_rank = context->rank;
     }
 }
 
@@ -506,8 +529,8 @@ static void check_borrow_conflict(BorrowContext *context, ASTNode *target,
 
     // `&mut v.field` 里 v 是共享引用时，等于透过共享引用拿独占权限。
     if (is_mutable && info.crossed_shared) {
-        report_error(diagnostic_node,
-                     "cannot take a mutable borrow through a shared reference");
+        report_error_soft(diagnostic_node,
+                          "cannot take a mutable borrow through a shared reference");
         // 中文：不能透过共享引用取独占借用
     }
 
@@ -571,9 +594,9 @@ static void check_method_receiver_borrow(BorrowContext *context,
         if (receiver->mutable_borrow_rank >= 0 ||
             receiver->shared_borrow_rank >= 0) {
             const char *dot = strrchr(call->name, '.');
-            report_error(expression,
-                         "cannot call method '%s' on '%s' while it is borrowed",
-                         dot ? dot + 1 : call->name, receiver->name);
+            report_error_soft(expression,
+                              "cannot call method '%s' on '%s' while it is borrowed",
+                              dot ? dot + 1 : call->name, receiver->name);
             // 中文：接收者还被借用着，不能调用按值接收的方法
         }
         return;
@@ -592,9 +615,9 @@ static void check_plain_use(BorrowContext *context, ASTNode *expression) {
     if (!symbol) return;
     // 临时借用也算：`f(&mut x, x)` 里第二个实参读的就是被独占借走的 x。
     if (symbol->mutable_borrow_rank < 0 && !symbol->temp_mutable_borrow) return;
-    report_error(expression,
-                 "'%s' is mutably borrowed and cannot be used here",
-                 symbol->name); // 中文：变量已被独占借用
+    report_error_soft(expression,
+                      "'%s' is mutably borrowed and cannot be used here",
+                      symbol->name); // 中文：变量已被独占借用
 }
 
 // 写入一个变量（`x = v`、`x.f = v`、`x[i] = v`）时的检查。
@@ -609,21 +632,25 @@ static void check_write_target(BorrowSymbol *symbol, int through_reference,
                                const ASTNode *diagnostic_node) {
     if (!symbol) return;
 
+    // 一条语句只报一条：`&x` 和 `&mut x` 同时挂着的时候，两条都报会让人以为
+    // 有两处不同的错误。
     if (through_reference && symbol->is_reference &&
         !symbol->reference_mutable) {
-        report_error(diagnostic_node,
-                     "cannot write through a shared reference '%s'",
-                     symbol->name); // 中文：不能通过共享引用写入
+        report_error_soft(diagnostic_node,
+                          "cannot write through a shared reference '%s'",
+                          symbol->name); // 中文：不能通过共享引用写入
+        return;
     }
     if (symbol->mutable_borrow_rank >= 0) {
-        report_error(diagnostic_node,
-                     "'%s' is mutably borrowed and cannot be assigned here",
-                     symbol->name); // 中文：变量已被独占借用
+        report_error_soft(diagnostic_node,
+                          "'%s' is mutably borrowed and cannot be assigned here",
+                          symbol->name); // 中文：变量已被独占借用
+        return;
     }
     if (symbol->shared_borrow_rank >= 0) {
-        report_error(diagnostic_node,
-                     "'%s' is borrowed and cannot be assigned here",
-                     symbol->name); // 中文：变量已被借用，不能赋值
+        report_error_soft(diagnostic_node,
+                          "'%s' is borrowed and cannot be assigned here",
+                          symbol->name); // 中文：变量已被借用，不能赋值
     }
 }
 
@@ -761,19 +788,21 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
 
             // 借用的寿命必须覆盖接收它的变量。
             if (pointee_rank > context->rank) {
-                report_error(
+                report_error_soft(
                     statement,
                     "borrowed value does not live long enough: '%s' would outlive it",
                     declaration->name); // 中文：被借用的值活不过这个引用
             }
 
-            // 绑定成变量之后借用才算「持续」，这时才登记别名。
+            // 绑定成变量之后借用才算「持续」，这时才登记别名。诊断不在这里出 ——
+            // 上面的 walk_expression 已经检查过（位置是 `&mut x` 本身，比整条语句准）。
             if (declaration->expression &&
                 declaration->expression->type == NODE_REFERENCE) {
                 ReferenceNode *reference =
                     (ReferenceNode *)declaration->expression;
-                check_borrow_conflict(context, reference->target,
-                                      reference->is_mutable, 1, statement);
+                LValueInfo info;
+                resolve_lvalue(context, reference->target, &info);
+                mark_persistent_borrow(context, info.base, reference->is_mutable);
             }
             mark_method_receiver_borrow(context, declaration->expression,
                                         statement);
@@ -800,7 +829,7 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
                 reference_rank_of(context, assignment->expression,
                                   &pointee_rank)) {
                 if (pointee_rank > target->storage_rank) {
-                    report_error(
+                    report_error_soft(
                         statement,
                         "borrowed value does not live long enough: '%s' would outlive it",
                         target->name);
@@ -819,8 +848,8 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             LValueInfo info;
             resolve_lvalue(context, assignment->target->array, &info);
             if (info.crossed_shared) {
-                report_error(statement,
-                             "cannot write through a shared reference");
+                report_error_soft(statement,
+                                  "cannot write through a shared reference");
             }
             check_write_target(info.base, 1, statement);
             walk_expression(context, (ASTNode *)assignment->target);
@@ -868,7 +897,7 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             int pointee_rank = -1;
             if (reference_rank_of(context, expression, &pointee_rank) &&
                 pointee_rank >= 0) {
-                report_error(
+                report_error_soft(
                     statement,
                     "cannot return a reference to a value that lives in this function");
                 // 中文：不能返回指向本函数内局部值的引用
@@ -907,17 +936,21 @@ static void check_borrow_signature(const FunctionNode *function) {
 
     const char *name = function->original_name ? function->original_name
                                                : function->name;
+    // 有位置就打位置，没有就只打一句话 —— 两个分支互斥。以前 `report_error_at`
+    // 是 noreturn，靠 exit 保证第二条不会执行；换成 soft 之后必须显式 else，
+    // 否则一条签名错误会被报两遍。
     if (function->filename) {
-        report_error_at(
+        report_error_at_soft(
             function->filename, function->line, function->column,
             "function '%s' returns a reference but has %d reference parameters; "
             "exactly one is required to tell which value is borrowed",
             name, count); // 中文：返回引用的函数必须恰好有一个引用参数
+    } else {
+        report_error_soft(NULL,
+                          "function '%s' returns a reference but has %d reference parameters; "
+                          "exactly one is required to tell which value is borrowed",
+                          name, count);
     }
-    report_error(NULL,
-                 "function '%s' returns a reference but has %d reference parameters; "
-                 "exactly one is required to tell which value is borrowed",
-                 name, count);
 }
 
 static void check_function(BorrowContext *context, FunctionNode *function) {
@@ -948,16 +981,22 @@ static void check_function(BorrowContext *context, FunctionNode *function) {
     check_borrow_signature(function);
 }
 
-void check_borrows(ProgramNode *program) {
-    if (!program) return;
+int check_borrows(ProgramNode *program) {
+    if (!program) return 0;
 
     BorrowContext context;
     context.program = program;
     context.symbols = NULL;
     context.rank = 0;
 
+    // 只统计本次借用检查报了几条：调用方可能已经跑过别的阶段（现在不会，但
+    // 计数是全局的，用差值才不会把别人的错误算到自己头上）。
+    int before = tap_error_count();
+
     for (ASTNode *node = program->functions; node; node = node->next) {
         if (node->type != NODE_FUNCTION) continue;
         check_function(&context, (FunctionNode *)node);
     }
+
+    return tap_error_count() > before;
 }

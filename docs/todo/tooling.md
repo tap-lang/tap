@@ -9,7 +9,7 @@
 
 | # | 缺口 | 现在什么表现 | 收益 | 代价 |
 |---|---|---|---|---|
-| 1 | 一次只报一个错误 | 报第一条就 `exit(1)` | 高 | 中 |
+| 1 | 一次只报一个错误 | **借用检查已改**（报完继续查，上限 10 条）；**parser / codegen 仍只报第一条** | 高 | 中 |
 | 2 | ~~没有调试信息~~ | **已完成**：`tap -g` 生成 DWARF 行号表，`gdb` 可按 `源码:行号` 断点 | — | — |
 | 3 | ~~没有 `tap check`~~ | **已完成**：`tap check`，46ms vs 完整编译 138ms | — | — |
 | 4 | ~~`tap new` 依赖 `tapm`~~ | **已完成**：`run.c:587` 有明确提示 | — | — |
@@ -17,7 +17,25 @@
 
 ## 1. 一次只报一个错误
 
-### 现在什么表现
+**借用检查已经改完了（2026-11-06）**：`borrow.c` 的 15 处诊断改用新增的
+`report_error_soft`（打印 + 计数，不终止），`check_borrows` 返回状态，`main.c` 据此
+在报过错之后不进 Codegen。一个文件里的多处借用错误现在一次全报，上限 10 条
+（`error: too many errors (10), stopping now`）。实测三处错误 → 三条诊断，各带位置。
+
+```tap
+let a = &mut x;
+let b = &mut x;   // error: 'x' is already mutably borrowed
+let c = &x;       // error: 'x' is mutably borrowed, so it cannot be borrowed again
+x = 2;            // error: 'x' is mutably borrowed and cannot be assigned here
+```
+
+细节见 [`tooling-plan.md`](tooling-plan.md) 的 P3 完成记录，规则层面的说明见
+[`../borrow.md`](../borrow.md#诊断一次报完)。
+
+**下面剩下的部分（parser / codegen）还没做**，原因是它们不像借用检查那样能随便继续 ——
+详见下面「改法」里的顺序。
+
+### 现在什么表现（parser / codegen）
 
 ```text
 fn main(): i32 {
@@ -33,7 +51,7 @@ error: initializer type mismatch for 'a'
 --> p30_multi_errors.tp:2:5
 ```
 
-只报第一条，退出码 1。
+只报第一条，退出码 1（这三条都是类型错误，全在 `codegen.c` 里）。
 
 ### 原因
 
@@ -52,7 +70,8 @@ void report_error(const ASTNode *node, const char *format, ...) {
 
 分三级，**顺序是 borrow → parser → codegen**（不是 Sema，Sema 根本不报错 —— 见下节）：
 
-- **`borrow.c`（15 处）先做**：纯 AST 走查，不生成 IR，报错后继续最多是多报几条，不会崩。
+- **`borrow.c`（15 处）先做** ✅ 已完成：纯 AST 走查，不生成 IR，报错后继续最多是多报几条，
+  不会崩。
 - **`parser.c` 次之**：语法错了之后 token 流没有可靠同步点，只在**语句边界**恢复
   （跳过到 `;` / `}`），坏语句整条丢弃。
 - **`codegen.c`（88 处）最后**：它一边检查一边生成 IR，报完错继续走会拿着不一致的类型去
@@ -62,11 +81,16 @@ void report_error(const ASTNode *node, const char *format, ...) {
 
 `report_error` 是 `TAP_NORETURN`，**103 处调用点靠它做控制流分析**（`helpers.h:10` 的注释
 说明了原因）。不能直接去掉这个标注 —— 会引发一大片「可能没有返回值」的警告，还会掩盖
-真正的漏 return。做法是**新增**一个非 noreturn 的 `report_error_soft`，逐个调用点迁移。
+真正的漏 return。做法是**新增**一个非 noreturn 的 `report_error_soft`，逐个调用点迁移
+（已落地，见 `helpers.h` 的「累积诊断」一节）。
 
 代价：中。风险是**级联错误** —— 一个类型错误会让后续所有使用该变量的地方都报一遍，
 反而更难读。所以要么先实现「错误类型」（`ErrorType` 吞掉后续冲突），要么只在一个
 函数的语句级别攒。
+
+借用检查这一层的实际经验：级联是真的会出现（`let b = &mut x` 报一次、绑定登记时又报
+一次），解法是**同一条语句只报一条、同一个错误只查一次** —— 报完之后该 `return` 就
+`return`，该只登记状态就别再检查。这两条在 `borrow.c` 里都踩过。
 
 ## 2. 没有调试信息（已完成，2026-11-06）
 
@@ -214,9 +238,9 @@ LLVM Module」的哈希与失效逻辑，不划算。
 |---|---|---|
 | — | ~~3 `tap check`~~ | 已完成（2026-11-06） |
 | — | ~~2 调试信息（`-g`）~~ | 已完成（2026-11-06） |
-| 1 | **1 多条错误（borrow 起步）** | 安全、独立，顺便把 `report_error_soft` 基础设施搭好 |
-| 2 | 1 多条错误（parser 恢复） | 需要新节点类型，改 AST |
-| 3 | 1 多条错误（codegen） | 唯一有崩溃风险的，放最后 |
+| — | ~~1 多条错误（borrow 起步）~~ | 已完成（2026-11-06），顺带把 `report_error_soft` 搭好了 |
+| 1 | **1 多条错误（parser 恢复）** | 需要新节点类型，改 AST |
+| 2 | 1 多条错误（codegen） | 唯一有崩溃风险的，放最后 |
 | — | ~~4 `tapm` 提示~~ | 已完成 |
 | — | 5 增量编译 | 收益上限只有 10~15ms，搁置 |
 

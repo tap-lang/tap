@@ -162,10 +162,19 @@ void print_node_diagnostic(FILE *output, const char *level,
     va_end(arguments);
 }
 
+// 把节点上的位置摊平成三个值，省得每个诊断出口各写一遍 `node ? ... : ...`。
+static void node_position(const ASTNode *node, const char **file, int *line,
+                          int *column) {
+    *file = node ? node->loc.file : NULL;
+    *line = node ? (int)node->loc.line : 0;
+    *column = node ? (int)node->loc.column : 0;
+}
+
 void report_error(const ASTNode *node, const char *format, ...) {
-    const char *file = node ? node->loc.file : NULL;
-    int line = node ? (int)node->loc.line : 0;
-    int column = node ? (int)node->loc.column : 0;
+    const char *file = NULL;
+    int line = 0;
+    int column = 0;
+    node_position(node, &file, &line, &column);
 
     va_list arguments;
     va_start(arguments, format);
@@ -183,6 +192,50 @@ void report_error_at(const char *filename, int line, int column,
     va_end(arguments);
 
     exit(1);
+}
+
+// 累积诊断的计数器。全局的：一条错误不管来自哪个阶段都算一条。
+static int reported_errors = 0;
+
+int tap_error_count(void) { return reported_errors; }
+
+void tap_error_reset(void) { reported_errors = 0; }
+
+void report_error_limit(void) {
+    fprintf(stderr, "error: too many errors (%d), stopping now\n",
+            TAP_MAX_ERRORS); // 中文：错误太多，停止编译
+    exit(1);
+}
+
+// 报一条，然后计数；到上限就终止。返回之后调用方继续检查下一条 ——
+// 所以只在「报完还能安全继续」的地方用。
+static void count_reported_error(void) {
+    reported_errors++;
+    if (reported_errors >= TAP_MAX_ERRORS) report_error_limit();
+}
+
+void report_error_soft(const ASTNode *node, const char *format, ...) {
+    const char *file = NULL;
+    int line = 0;
+    int column = 0;
+    node_position(node, &file, &line, &column);
+
+    va_list arguments;
+    va_start(arguments, format);
+    vprint_diagnostic(stderr, "error", file, line, column, format, arguments);
+    va_end(arguments);
+
+    count_reported_error();
+}
+
+void report_error_at_soft(const char *filename, int line, int column,
+                          const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    vprint_diagnostic(stderr, "error", filename, line, column, format, arguments);
+    va_end(arguments);
+
+    count_reported_error();
 }
 
 // 打印代码当前行以及上下各context_lines行
