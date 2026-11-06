@@ -1,0 +1,25 @@
+// 「缺返回值」是纯语句形状检查（validate_return_shapes），不依赖类型信息，
+// 所以在生成任何 IR 之前就把整个程序扫一遍：两个函数各缺一处，两条都要报。
+fn a(x: i32): i32 {
+    if (x > 0) {
+        return 1;
+    }
+}
+
+fn b(x: i32): i32 {
+    if (x > 0) {
+        return 2;
+    }
+}
+
+fn main(): i32 {
+    return a(1) + b(2);
+}
+
+/** -- test
+- .stderr
+error: function 'a' may exit without returning a value
+error: function 'b' may exit without returning a value
+- .exit
+1
+-- */

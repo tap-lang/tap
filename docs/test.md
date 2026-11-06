@@ -33,7 +33,9 @@ windows
 - `.args` 可省略；提供时仅用于 `run-pass` 和 `run-fail`，每行作为一个独立程序参数，并通过 `--` 传给 `tap run` 生成的程序。
 - `.flags` 可省略；每行作为一个独立的编译器参数，插在源文件**之前**（例如 `-lz`、`-L/usr/local/lib`、`-Wl,-rpath,/x`）。提供时会强制该用例走 native 模式 —— `-run-lli` 不链接，带 `-l` 的用例在 fast 模式下没有意义。
 - `.skip-on` 可省略；每行一个平台名，命中就整条跳过并打印 `SKIP`，不计入通过也不计入失败。平台名是粗粒度的 `darwin` / `linux` / `windows`（MSVC、MinGW、Cygwin 都算 `windows`），用于「这个库某些平台本来就没装」的用例。
-- `compile-fail` 必须提供 `.stderr`，其中每个非空行都必须出现在诊断中。
+- `compile-fail` 必须提供 `.stderr`，其中每个非空行都必须出现在诊断中。是**包含匹配**
+  而不是全文比较，所以一个用例可以列多行来断言「一次报出多条诊断」——
+  `borrow/multiple_errors.tp` 和 `parser/multiple_errors.tp` 就是这么写的。
 - 文本比较忽略 CRLF 差异和每行尾部空白，保留行首缩进。内嵌期望和外部期望文件都会使用相同规则归一化。
 
 带源码位置的编译诊断统一使用消息在前、位置在后的两行格式：

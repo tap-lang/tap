@@ -77,8 +77,8 @@ codegen 一边检查一边生成 IR，改起来最危险，放最后。
 | **P1** | `tap check` ✅ | 半天 | 无 | 编译时间 −68%，CI/编辑器入口 |
 | **P2** | 调试信息 `-g` ✅ | 2~3 天 | 中 | 能调试 |
 | **P3** | 借用检查多条错误 ✅ | 1 天 | 低 | 写代码体验 |
-| **P4** | 语法分析错误恢复 | 1~2 天 | 中 | 语法错一次看全 |
-| **P5** | codegen 多条错误 | 2~3 天 | 高 | 类型错一次看全 |
+| **P4** | 语法分析错误恢复 ✅ | 1~2 天 | 中 | 语法错一次看全 |
+| **P5** | codegen 多条错误 ✅ | 2~3 天 | 高 | 类型错一次看全 |
 | — | 增量编译 | — | — | 暂不做（见 §4） |
 
 顺序理由见「顺序与理由」。
@@ -405,8 +405,8 @@ $ echo $?
 - `tests/compile-fail/borrow/multiple_errors.tp` —— 断言三条诊断都在。
 - `tests/compile-fail/borrow/error_limit.tp` —— 断言第 10 条之后停下。
 
-**没做的**：parser 和 codegen 仍然一次一条（P4 / P5）。`sema.c` 依旧不报诊断，
-所以「多报」的收益全部集中在借用检查和（将来的）语法/类型检查上。
+**没做的**：当时 parser 和 codegen 还是一次一条（后来的 P4 / P5 都做完了）。`sema.c`
+依旧不报诊断，所以「多报」的收益全部集中在借用检查、语法分析和类型检查上。
 
 ## P4：语法分析错误恢复
 
@@ -451,6 +451,59 @@ fn main(): i32 {
 ### 风险
 
 级联错误。缓解：恢复后如果**连续两条错误落在同一行**，只报第一条。
+
+### 完成记录（2026-11-06）
+
+**实际改动**：
+
+| 文件 | 改了什么 |
+|---|---|
+| `parser.h` | `ParserErrorFrame`（`jmp_buf` + 链指针）；`Parser` 加 `error_frame` / `error_count` / `last_error_line`；`parser_had_error()` |
+| `parser.c` | `parser_error` 有恢复点时 `longjmp`、没有时照旧 `exit(1)`；`recover_to_statement_end` / `recover_to_declaration`；`parse_block` 与 `parse_program` 的循环各压一个恢复点 |
+| `main.c` | `parse_program` 之后查 `parser_had_error`，报过错就返回 1（`-parse` 例外：照常打印残缺 AST，但退出码 1） |
+
+**和计划的差异**：
+
+1. **用 `setjmp` / `longjmp`，没让 `parse_*` 返回 NULL。** 计划里写「`parser_error` 保持
+   noreturn；新增 `parser_error_recover`」，但真正的问题不是「打印完要不要退出」，而是
+   「怎么从深层递归回到语句边界」—— 报错点埋在 `parse_type` / `parse_expression` 里，
+   调用方全都假设返回值非空，改成可空是几十个函数的连锁改动。`longjmp` 只改
+   `parser_error` 一个地方，恢复点压栈保证嵌套块跳最内层。
+2. **没有新增 `NODE_ERROR` 节点。** 计划里给了两个选项，选了「坏语句直接不进链表」：
+   后续阶段完全看不到坏语句，`sema` / `codegen` 一行都不用改。
+3. **多了一个 `main.c` 的短路。** 因为现在 `parse_program` 会**正常返回**一棵残缺的 AST，
+   不短路的话后面会在缺语句的程序上报一串假错误。
+
+**验证**：
+
+```text
+$ tap check two.tp
+error: expected factor (integer, string, array, identifier, or parenthesized expression)
+--> two.tp:2:18
+error: expected factor (integer, string, array, identifier, or parenthesized expression)
+--> two.tp:3:16
+$ echo $?   → 1
+```
+
+- **AST 逐字节不变**：136 个合法文件（`tests/run-pass` + `examples`）分别用「HEAD 编译出来的
+  基线二进制」和「新二进制」跑 `-parse`，输出**逐字节相同**。
+- **首条诊断没变**：132 个 `compile-fail/` 用例逐条比对「第一条 `error:`」，132/132 相同；
+  而且**每个用例的错误条数都没变**（说明没有引入新的级联）。
+- **上限**：12 处语法错误 → 前 10 条 + `error: too many errors (10), stopping now`。
+- **畸形输入不会死循环**：`{`、裸 `fn`、缺 `}`、多 `}`、缺函数体、顶层 `let`、
+  缺分号等 8 个样本全部在 10 秒内以退出码 1 结束。
+- 全量 279 条（新增 3 条）/ 278 passed / 1 skipped / 0 failed；`make test-cli` 22 项全过；
+  MSVC 产物同样报 2 条（`setjmp` / `longjmp` 两个工具链都支持）。
+
+**新增用例**：
+
+- `tests/compile-fail/parser/multiple_errors.tp` —— 同函数两处错误各一条。
+- `tests/compile-fail/parser/recovery_across_functions.tp` —— 两个函数各一处错误，证明
+  恢复点不止一层。
+- `tests/compile-fail/parser/error_limit.tp` —— 第 10 条之后停下。
+
+**没做的**：`impl` 方法列表没有自己的恢复点（方法签名出错会跳到顶层恢复点，效果等价于
+「丢掉整个 impl」）；表达式内部仍然不恢复（这是刻意的，见上）。
 
 ## P5：codegen 多条错误
 
@@ -535,6 +588,65 @@ exit(1);
   防止「为了多报，把原来的第一条诊断搞丢了」。P3 的做法可以照抄：逐条比对
   「期望 stderr 的第一行」和「实际输出的第一条 `error:`」。
 
+### 完成记录（2026-11-07）
+
+**实际改动**：
+
+| 文件 | 改了什么 |
+|---|---|
+| `helpers.h` / `helpers.c` | `vreport_error_soft` / `vreport_error_at_soft`（可变参数版，给 `codegen_error` 这类包装器转发用）；`report_error_soft` 改成它们的薄封装 |
+| `codegen.h` | `CodeGenContext` 加 `poisoned`（语句级）与 `errors_reported`（整份程序累计）；`codegen_had_error()` |
+| `codegen.c` | `codegen_error` / `codegen_error_at`；`generate_statement_list` 逐条清 `poisoned`；`validate_user_types` 整段转 soft 并在报错后短路；新增 `validate_return_shapes` |
+| `main.c` | `generate_code` 之后查 `codegen_had_error`，报过错就返回 1（不写文件 / 不链接 / 不运行，`check` 也返回 1） |
+
+**和计划的差异**：
+
+1. **毒化是语句级，不是函数级。** 计划写的是「报完一条就丢掉这个函数剩下的语句」，
+   实际做下来太弱：一个函数里写错三处仍然只报一条。改成「报错的那条语句自己收尾成
+   合法 IR（补零值 / 整条跳过），`generate_statement_list` 每条语句开头清 `poisoned`」，
+   同一个函数里的多处错误就能一次报全。代价是每个转 soft 的位置都必须单独想清楚
+   「报完这一句，IR 还合法吗」—— 想不清楚就别转。
+2. **多了一个纯 AST 前置校验的分层。** `validate_user_types`（重复声明、未定义类型）
+   报过之后 AST 已经不可信，直接 `return`，IR 一行都不生成；而「缺返回值」这类
+   只看语句形状的检查拆到 `validate_return_shapes`，放在短路之后，所以
+   「函数缺返回值」和「`let` 初始化类型不匹配」能在同一轮里一起报出来。
+3. **删掉了一处重复诊断。** 函数体里「无返回值函数不能带返回值」原来报一次，现在
+   `validate_implicit_return` 已经报过，body 那处只负责补 `ret void`。
+4. **`generics.c` 只做了 Step 0，没转 soft。** 泛型单态化阶段的诊断都是「模板写错了」，
+   一次一条足够；多报的收益集中在类型不匹配上。
+
+**验证**：
+
+```text
+$ tap check three.tp
+error: initializer type mismatch for 'x'
+--> three.tp:6:5
+error: function 'add' argument 2 type mismatch
+--> three.tp:7:18
+$ echo $?   → 1
+```
+
+- **零回归**：135 个 `compile-fail/` 用例的 stdout / stderr / 退出码与改动前
+  **逐字节相同**（`diff -r` 无输出）。这是 P5 唯一的硬指标 —— 多报是「变多」，
+  但已有的那条不能变。
+- **上限**：12 处 `let` 类型错误 → 前 10 条 + `error: too many errors (10), stopping now`。
+- 全量 282 条（新增 3 条）/ 281 passed / 1 skipped / 0 failed；`make test-cli` 22 项全过；
+  7 个示例 `check` 全过。
+
+**新增用例**：
+
+- `tests/compile-fail/types/multiple_errors.tp` —— 三处错误分别来自 `return`、`let`
+  初始化、实参三个不同的诊断点。
+- `tests/compile-fail/types/missing_return_multiple.tp` —— 两个函数各缺一处返回值，
+  证明纯 AST 前置校验也在累积。
+- `tests/compile-fail/types/error_limit.tp` —— 第 10 条之后停下。
+
+**没做的**：Step 0 合并之后 codegen 有 112 处硬诊断，只转了 17 处（第 1 批 + 前置校验）。
+剩下的分两类：
+一类是「报错点已经生成了半个 IR」（结构体字面量、方法调用），要继续得先想清楚
+怎么把半个 IR 收尾；另一类是 `break`/`continue` 在循环外、`main` 签名不对这种
+全局唯一的问题，多报没有意义。
+
 ## 验证矩阵
 
 每个阶段都要跑：
@@ -559,9 +671,9 @@ for f in examples/*.tp; do ./build/tap -o /tmp/e.exe $f || echo "FAIL $f"; done
 | 1 | **P1 `tap check`** ✅ | 零风险、半天、马上能用；也是后面 P3/P5 的验证工具（改完直接 `tap check` 看报几条） |
 | 2 | **P2 `-g`** ✅ | 自包含（一个 flag + 一个文件），不碰诊断路径。现在没有任何运行时问题的排查手段，这是最痛的 |
 | 3 | **P3 借用多条错误** ✅ | 安全、独立，顺便把 `report_error_soft` 这套基础设施搭好 |
-| 4 | **P4 语法恢复** | 需要新节点类型，改 AST |
-| 5 | **P5 Step 0 统一诊断出口** | 机械替换，验收方式干净（stderr 逐字节不变）；P5 正文的前置 |
-| 6 | **P5 codegen 多条错误** | 唯一有崩溃风险的，放最后；前面几条积累的 soft 基础设施正好复用 |
+| 4 | **P4 语法恢复** ✅ | 需要新节点类型，改 AST |
+| 5 | **P5 Step 0 统一诊断出口** ✅ | 机械替换，验收方式干净（stderr 逐字节不变）；P5 正文的前置 |
+| 6 | **P5 codegen 多条错误** ✅ | 唯一有崩溃风险的，放最后；前面几条积累的 soft 基础设施正好复用 |
 
 **为什么 P2 排在 P3 前面**（和 `tooling.md` 的建议不同）：`tooling.md` 把多条错误排第二，
 但它要动 100 多个调用点、有级联噪声风险；`-g` 只碰 codegen 的入口和收尾，改坏了也只是

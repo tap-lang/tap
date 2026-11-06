@@ -1,0 +1,25 @@
+// 恢复点不止一层：函数体里出错只丢掉那条语句，函数本身照常结束，后面的函数继续解析。
+// 所以两处错误各报一条，位置分别在两个函数里。
+fn broken(): i32 {
+    let x: i32 = ;
+    return 0;
+}
+
+fn also_broken(): i32 {
+    let y: i32 = ;
+    return 1;
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: expected factor (integer, string, array, identifier, or parenthesized expression)
+--> tests/compile-fail/parser/recovery_across_functions.tp:4:18
+error: expected factor (integer, string, array, identifier, or parenthesized expression)
+--> tests/compile-fail/parser/recovery_across_functions.tp:9:18
+- .exit
+1
+-- */

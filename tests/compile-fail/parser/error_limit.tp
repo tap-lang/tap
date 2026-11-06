@@ -1,0 +1,24 @@
+// 语法错误太多时停下来，别把一个系统性错误刷成几百条。
+fn main(): i32 {
+    let a0: i32 = ;
+    let a1: i32 = ;
+    let a2: i32 = ;
+    let a3: i32 = ;
+    let a4: i32 = ;
+    let a5: i32 = ;
+    let a6: i32 = ;
+    let a7: i32 = ;
+    let a8: i32 = ;
+    let a9: i32 = ;
+    let a10: i32 = ;
+    let a11: i32 = ;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: expected factor (integer, string, array, identifier, or parenthesized expression)
+error: too many errors (10), stopping now
+- .exit
+1
+-- */

@@ -1,0 +1,26 @@
+// 类型检查长在 Codegen 里，以前是一报就 exit(1)。现在报错的语句自己收尾成合法 IR
+// （补零值或整条跳过），后面的语句照常查，所以三处独立的类型错误要一次全报。
+//
+// 三条分别来自三个不同的诊断点：let 初始化、实参、return。
+fn add(a: i32, b: i32): i32 {
+    return a + b;
+}
+
+fn bad(): i32 {
+    return "text";
+}
+
+fn main(): i32 {
+    let x: i32 = "hello";
+    let y: i32 = add(1, "two");
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: return type mismatch
+error: initializer type mismatch for 'x'
+error: function 'add' argument 2 type mismatch
+- .exit
+1
+-- */

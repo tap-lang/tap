@@ -9,7 +9,7 @@
 
 | # | 缺口 | 现在什么表现 | 收益 | 代价 |
 |---|---|---|---|---|
-| 1 | 一次只报一个错误 | **借用检查已改**（报完继续查，上限 10 条）；**parser / codegen 仍只报第一条** | 高 | 中 |
+| 1 | ~~一次只报一个错误~~ | **已完成**：借用 / 语法 / 类型错误都改成「报完继续查」，上限 10 条 | — | — |
 | 2 | ~~没有调试信息~~ | **已完成**：`tap -g` 生成 DWARF 行号表，`gdb` 可按 `源码:行号` 断点 | — | — |
 | 3 | ~~没有 `tap check`~~ | **已完成**：`tap check`，46ms vs 完整编译 138ms | — | — |
 | 4 | ~~`tap new` 依赖 `tapm`~~ | **已完成**：`run.c:587` 有明确提示 | — | — |
@@ -32,26 +32,41 @@ x = 2;            // error: 'x' is mutably borrowed and cannot be assigned here
 细节见 [`tooling-plan.md`](tooling-plan.md) 的 P3 完成记录，规则层面的说明见
 [`../borrow.md`](../borrow.md#诊断一次报完)。
 
-**下面剩下的部分（parser / codegen）还没做**，原因是它们不像借用检查那样能随便继续 ——
-详见下面「改法」里的顺序。
+**语法错误也改完了（2026-11-06）**：`parser.c` 用 `setjmp` / `longjmp` 在**语句边界**
+恢复，报完一条跳过坏语句继续解析，同样上限 10 条。一条语句里的错误不恢复（在表达式
+内部硬恢复只会产生一串假错误），但不同语句、不同函数的错误一次全报：
 
-### 现在什么表现（parser / codegen）
-
-```text
+```tap
 fn main(): i32 {
-    let a: i32 = "hello";       // 第 1 个错误
-    let b: String = 42;         // 第 2 个
-    undefined_function(1);      // 第 3 个
+    let a: i32 = ;     // error: expected factor ...
+    let b: i32 = ;     // error: expected factor ...（也报出来）
     return 0;
 }
 ```
 
-```text
-error: initializer type mismatch for 'a'
---> p30_multi_errors.tp:2:5
+细节见 [`tooling-plan.md`](tooling-plan.md) 的 P4 完成记录，实现说明见
+[`../src.md`](../src.md#语法错误恢复)。
+
+**类型错误也改完了（2026-11-07）**：`codegen.c` 里「报完还能安全继续」的十几个点改用了
+`report_error_soft`，报错的语句自己收尾成合法 IR（补零值或整条跳过），后面的语句照常查。
+另外把纯 AST 的前置校验（重复声明、未定义类型、缺返回值）整段改成累积：
+
+```tap
+fn bad(): i32 { return "text"; }        // error: return type mismatch
+
+fn main(): i32 {
+    let x: i32 = "hello";               // error: initializer type mismatch for 'x'
+    let y: i32 = add(1, "two");         // error: function 'add' argument 2 type mismatch
+    return 0;
+}
 ```
 
-只报第一条，退出码 1（这三条都是类型错误，全在 `codegen.c` 里）。
+三条一起报，退出码 1。细节见 [`tooling-plan.md`](tooling-plan.md) 的 P5 完成记录，
+实现说明见 [`../src.md`](../src.md#累积诊断soft-版本)。
+
+**还剩的**：codegen 的 112 处硬诊断里只转了 17 处。剩下的多是「报错点已经生成了半个 IR」
+（结构体字面量、方法调用）或全局唯一的问题（`break` 在循环外、`main` 签名不对），
+多报的收益不大。
 
 ### 原因
 
@@ -64,7 +79,8 @@ void report_error(const ASTNode *node, const char *format, ...) {
 }
 ```
 
-整条流水线都是「遇错即停」，没有错误恢复。
+整条流水线都是「遇错即停」，没有错误恢复（借用检查与 parser 已在 2026-11-06 改成
+「报完继续」，见上）。
 
 ### 改法
 
@@ -72,10 +88,12 @@ void report_error(const ASTNode *node, const char *format, ...) {
 
 - **`borrow.c`（15 处）先做** ✅ 已完成：纯 AST 走查，不生成 IR，报错后继续最多是多报几条，
   不会崩。
-- **`parser.c` 次之**：语法错了之后 token 流没有可靠同步点，只在**语句边界**恢复
-  （跳过到 `;` / `}`），坏语句整条丢弃。
-- **`codegen.c`（88 处）最后**：它一边检查一边生成 IR，报完错继续走会拿着不一致的类型去
-  调 `LLVMBuild*`，触发 LLVM 断言。需要「语句级隔离 + 函数级毒化」，见计划文档 P5。
+- **`parser.c` 次之** ✅ 已完成：语法错了之后 token 流没有可靠同步点，只在**语句边界**
+  恢复（跳过到 `;` / `}`），坏语句整条丢弃。实现用 `setjmp` / `longjmp`，没有改
+  `parse_*` 的签名。
+- **`codegen.c`（88 处）最后** ✅ 已完成：它一边检查一边生成 IR，报完错继续走会拿着
+  不一致的类型去调 `LLVMBuild*`，触发 LLVM 断言。做法是「报错的语句自己收尾成合法 IR
+  + 逐条清毒化标记」，见计划文档 P5。
 
 ### 关键约束
 
@@ -91,6 +109,10 @@ void report_error(const ASTNode *node, const char *format, ...) {
 借用检查这一层的实际经验：级联是真的会出现（`let b = &mut x` 报一次、绑定登记时又报
 一次），解法是**同一条语句只报一条、同一个错误只查一次** —— 报完之后该 `return` 就
 `return`，该只登记状态就别再检查。这两条在 `borrow.c` 里都踩过。
+
+parser 那一层的经验：**恢复点要能表达嵌套**（用一个 `jmp_buf` 会被内层块覆盖，
+必须压栈），并且**恢复动作必须至少前进一个 token**（错误正好出在 `;` 上时不前进就
+原地打转）。
 
 ## 2. 没有调试信息（已完成，2026-11-06）
 
@@ -239,8 +261,8 @@ LLVM Module」的哈希与失效逻辑，不划算。
 | — | ~~3 `tap check`~~ | 已完成（2026-11-06） |
 | — | ~~2 调试信息（`-g`）~~ | 已完成（2026-11-06） |
 | — | ~~1 多条错误（borrow 起步）~~ | 已完成（2026-11-06），顺带把 `report_error_soft` 搭好了 |
-| 1 | **1 多条错误（parser 恢复）** | 需要新节点类型，改 AST |
-| 2 | 1 多条错误（codegen） | 唯一有崩溃风险的，放最后 |
+| — | ~~1 多条错误（parser 恢复）~~ | 已完成（2026-11-06），用 `setjmp` / `longjmp`，没动 AST |
+| — | ~~1 多条错误（codegen）~~ | 已完成（2026-11-07），语句级隔离 + 纯 AST 前置校验累积 |
 | — | ~~4 `tapm` 提示~~ | 已完成 |
 | — | 5 增量编译 | 收益上限只有 10~15ms，搁置 |
 

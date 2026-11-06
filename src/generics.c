@@ -998,9 +998,8 @@ static void bind_match_payloads(
 // 报告带调用位置的泛型错误并终止编译。
 static void generic_call_error(FunctionCallNode *call, const char *message,
                                const char *detail) {
-    print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                     message, detail);
-    exit(1);
+    report_error_at(call->filename, call->line, call->column,
+                    message, detail);
 }
 
 // 解析标识符、结构体字段或枚举成员的完整类型。
@@ -1114,11 +1113,9 @@ static void check_type_bounds(
             char *key = type_key(actual);
             // type_key 给具名类型加了 `n_` 前缀（单态化用），诊断里用源语言的名字更好读。
             const char *display = type_name ? type_name : key;
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "type '%s' does not implement trait '%s' required by '%s'",
-                             display, trait_name, type_param->name); // 中文：类型没有实现约束要求的 trait
-            free(key);
-            exit(1);
+            report_error_at(call->filename, call->line, call->column,
+                            "type '%s' does not implement trait '%s' required by '%s'",
+                            display, trait_name, type_param->name); // 中文：类型没有实现约束要求的 trait
         }
     }
 }
@@ -1258,24 +1255,20 @@ int validate_impl_signatures(ProgramNode *program) {
             char *method_name = impl_method_source_name(method);
             TraitMethodNode *signature = find_trait_method(trait_node, method_name);
             if (!signature) {
-                print_diagnostic(stderr, "error", method->filename, method->line,
-                                 method->column,
-                                 "method '%s' is not a member of trait '%s'",
-                                 method_name, impl_node->trait_name); // 中文：该方法不属于这个 trait
-                free(method_name);
-                return 1;
+                report_error_at(method->filename, method->line,
+                                method->column,
+                                "method '%s' is not a member of trait '%s'",
+                                method_name, impl_node->trait_name); // 中文：该方法不属于这个 trait
             }
 
             unsigned declared = node_count(signature->param_types) +
                                 (signature->has_self ? 1u : 0u);
             unsigned actual = node_count(method->params);
             if (declared != actual) {
-                print_diagnostic(stderr, "error", method->filename, method->line,
-                                 method->column,
-                                 "method '%s' has %u parameters, but trait '%s' declares %u",
-                                 method_name, actual, impl_node->trait_name, declared); // 中文：参数个数与 trait 声明不一致
-                free(method_name);
-                return 1;
+                report_error_at(method->filename, method->line,
+                                method->column,
+                                "method '%s' has %u parameters, but trait '%s' declares %u",
+                                method_name, actual, impl_node->trait_name, declared); // 中文：参数个数与 trait 声明不一致
             }
 
             VarTypeNode *impl_param = (VarTypeNode *)method->param_types;
@@ -1292,14 +1285,11 @@ int validate_impl_signatures(ProgramNode *program) {
                 const char *named = var_type_named(receiver_base);
                 if (!named || strcmp(named, impl_node->type_name) != 0) {
                     char *actual_type = describe_type(impl_param);
-                    print_diagnostic(stderr, "error", method->filename, method->line,
-                                     method->column,
-                                     "method '%s' takes '%s' as its receiver, but impl is for '%s'",
-                                     method_name, actual_type,
-                                     strip_module_prefix(impl_node->type_name)); // 中文：接收者类型与 impl 的目标类型不一致
-                    free(actual_type);
-                    free(method_name);
-                    return 1;
+                    report_error_at(method->filename, method->line,
+                                    method->column,
+                                    "method '%s' takes '%s' as its receiver, but impl is for '%s'",
+                                    method_name, actual_type,
+                                    strip_module_prefix(impl_node->type_name)); // 中文：接收者类型与 impl 的目标类型不一致
                 }
                 // 引用与否必须和 trait 声明一致。trait 说 `&self` 而 impl 按值接收，
                 // 方法改的是一份副本，调用方看不到；反过来则是把借来的值当成自己的用。
@@ -1308,14 +1298,11 @@ int validate_impl_signatures(ProgramNode *program) {
                      impl_param->reference_mutable == signature->self_is_mutable);
                 if (!same_mode) {
                     char *actual_type = describe_type(impl_param);
-                    print_diagnostic(stderr, "error", method->filename, method->line,
-                                     method->column,
-                                     "method '%s' takes '%s' as its receiver, but trait '%s' declares '%s'",
-                                     method_name, actual_type,
-                                     impl_node->trait_name, receiver_text(signature)); // 中文：接收者的借用方式与 trait 声明不一致
-                    free(actual_type);
-                    free(method_name);
-                    return 1;
+                    report_error_at(method->filename, method->line,
+                                    method->column,
+                                    "method '%s' takes '%s' as its receiver, but trait '%s' declares '%s'",
+                                    method_name, actual_type,
+                                    impl_node->trait_name, receiver_text(signature)); // 中文：接收者的借用方式与 trait 声明不一致
                 }
                 impl_param = (VarTypeNode *)impl_param->base.next;
                 index++;
@@ -1325,15 +1312,11 @@ int validate_impl_signatures(ProgramNode *program) {
                 if (!tap_type_equal((VarTypeNode *)trait_param, impl_param)) {
                     char *expected = describe_type((VarTypeNode *)trait_param);
                     char *actual_type = describe_type(impl_param);
-                    print_diagnostic(stderr, "error", method->filename, method->line,
-                                     method->column,
-                                     "method '%s' parameter %u has type '%s', but trait '%s' declares '%s'",
-                                     method_name, index, actual_type,
-                                     impl_node->trait_name, expected); // 中文：参数类型与 trait 声明不一致
-                    free(expected);
-                    free(actual_type);
-                    free(method_name);
-                    return 1;
+                    report_error_at(method->filename, method->line,
+                                    method->column,
+                                    "method '%s' parameter %u has type '%s', but trait '%s' declares '%s'",
+                                    method_name, index, actual_type,
+                                    impl_node->trait_name, expected); // 中文：参数类型与 trait 声明不一致
                 }
                 trait_param = trait_param->next;
                 impl_param = (VarTypeNode *)impl_param->base.next;
@@ -1343,15 +1326,11 @@ int validate_impl_signatures(ProgramNode *program) {
             if (!tap_type_equal(method->return_type, signature->return_type)) {
                 char *expected = describe_type(signature->return_type);
                 char *actual_type = describe_type(method->return_type);
-                print_diagnostic(stderr, "error", method->filename, method->line,
-                                 method->column,
-                                 "method '%s' returns '%s', but trait '%s' declares '%s'",
-                                 method_name, actual_type,
-                                 impl_node->trait_name, expected); // 中文：返回类型与 trait 声明不一致
-                free(expected);
-                free(actual_type);
-                free(method_name);
-                return 1;
+                report_error_at(method->filename, method->line,
+                                method->column,
+                                "method '%s' returns '%s', but trait '%s' declares '%s'",
+                                method_name, actual_type,
+                                impl_node->trait_name, expected); // 中文：返回类型与 trait 声明不一致
             }
             free(method_name);
         }
@@ -1369,13 +1348,12 @@ int validate_impl_signatures(ProgramNode *program) {
                 if (implemented) break;
             }
             if (!implemented) {
-                print_diagnostic(stderr, "error", impl_node->filename, impl_node->line,
-                                 impl_node->column,
-                                 "impl of trait '%s' for '%s' is missing method '%s'",
-                                 impl_node->trait_name,
-                                 strip_module_prefix(impl_node->type_name),
-                                 signature->name); // 中文：impl 缺少 trait 要求的方法
-                return 1;
+                report_error_at(impl_node->filename, impl_node->line,
+                                impl_node->column,
+                                "impl of trait '%s' for '%s' is missing method '%s'",
+                                impl_node->trait_name,
+                                strip_module_prefix(impl_node->type_name),
+                                signature->name); // 中文：impl 缺少 trait 要求的方法
             }
         }
     }

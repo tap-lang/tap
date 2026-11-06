@@ -281,12 +281,25 @@ int main(int argc, char *argv[]) {
 
     ProgramNode *program = parse_program(parser);
 
+    // 语法错误是「恢复后继续解析」的，所以 parse_program 会正常返回一棵**残缺**的 AST。
+    // 这时候不能往下走：后续阶段看到的是少了语句的程序，只会报出一串假错误。
+    // `-parse` 例外 —— 它本来就是给人看 AST 的，把残缺的树打出来反而有助于排查，
+    // 只是退出码仍然要给 1。
+    int syntax_errors = parser_had_error(parser);
+
     if (parse_only) {
         print_ast(program);
         free_ast((ASTNode *)program);
         free_parser(parser);
         free_lexer(lexer);
-        return 0;
+        return syntax_errors ? 1 : 0;
+    }
+
+    if (syntax_errors) {
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return 1;
     }
 
     // TAP_NO_SEMA=1 跳过语义分析，用于对照实验：确认 Codegen 的缓存命中确实来自 Sema，
@@ -330,6 +343,17 @@ int main(int argc, char *argv[]) {
 
     set_codegen_debug_info(codegen_context, debug_info);
     generate_code(codegen_context, program);
+
+    // 类型检查长在 Codegen 里，现在也是「报完继续查」：同一个文件里的多处类型错误
+    // 会一次全报。报过错之后 IR 只是勉强能过验证，绝不能拿去写文件、链接或运行。
+    if (codegen_had_error(codegen_context)) {
+        link_options_free(&link_options);
+        free_codegen_context(codegen_context);
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return 1;
+    }
 
     // `check` 到此为止：诊断已经全部产出（类型检查在 Codegen 里，IR 校验也在
     // generate_code 内部跑过），剩下的写文件、链接、运行一律跳过。

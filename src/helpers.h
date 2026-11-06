@@ -50,10 +50,10 @@ TAP_NORETURN void report_error_at(const char *filename, int line, int column,
 // 累积诊断：打印之后**继续往下走**，不终止编译
 // ---------------------------------------------------------------------------
 //
-// 只给能安全继续的检查阶段用（目前是 borrow.c 的纯 AST 走查）。`report_error` 的
-// `TAP_NORETURN` 不能去掉 —— 一百多处调用点靠它做控制流分析，去掉会引出一片
-// 「可能没有返回值」的警告，还会掩盖真正的漏 return。所以另开两个不终止的版本，
-// 想改哪一处就改哪一处。
+// 只给能安全继续的检查阶段用（borrow.c 的纯 AST 走查，以及 codegen.c 里那些
+// 「报完这一条、放弃这条语句」的类型检查）。`report_error` 的 `TAP_NORETURN`
+// 不能去掉 —— 一百多处调用点靠它做控制流分析，去掉会引出一片「可能没有返回值」
+// 的警告，还会掩盖真正的漏 return。所以另开两个不终止的版本，想改哪一处就改哪一处。
 //
 // 报够 TAP_MAX_ERRORS 条后由 report_error_limit() 终止：否则一个系统性错误
 // （比如类型整体没定义）会刷出成百上千条，反而看不清第一条。
@@ -62,6 +62,11 @@ TAP_NORETURN void report_error_at(const char *filename, int line, int column,
 void report_error_soft(const ASTNode *node, const char *format, ...);
 void report_error_at_soft(const char *filename, int line, int column,
                           const char *format, ...);
+// 可变参数版本。给「自己还想在报错前后多做一点事」的包装器用（例如 codegen 的
+// codegen_error：先置毒化标记、再转发出去），省得每个包装器都复制一遍格式化。
+void vreport_error_soft(const ASTNode *node, const char *format, va_list arguments);
+void vreport_error_at_soft(const char *filename, int line, int column,
+                           const char *format, va_list arguments);
 // 已经报了多少条（跨阶段累计，直到 tap_error_reset）。
 int tap_error_count(void);
 void tap_error_reset(void);

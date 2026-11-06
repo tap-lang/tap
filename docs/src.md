@@ -76,7 +76,10 @@ Prelude 和模块函数写入最终 IR。
 
 `report_error_soft` / `report_error_at_soft` 是同一套格式的**不终止**版本：打印完继续
 往下检查，最后用 `tap_error_count()` 判断有没有报过错。只有「报完还能安全继续」的阶段
-才能用 —— 目前是 `borrow.c`（纯 AST 走查，不生成 IR，多报几条最坏结果就是多几条诊断）。
+才能用 —— 目前是 `borrow.c`（纯 AST 走查，不生成 IR，多报几条最坏结果就是多几条诊断）
+和 `codegen.c` 里那些「报完这条语句、后面照常查」的类型检查（见下一节）。
+另有 `vreport_error_soft` / `vreport_error_at_soft` 两个可变参数版本，给 `codegen_error`
+这类「报错前还要多做一件事」的包装器转发用。
 
 - 达到 `TAP_MAX_ERRORS`（10）条时 `report_error_limit()` 打一行
   `error: too many errors (10), stopping now` 并退出，防止一个系统性错误刷成几百条。
@@ -87,6 +90,66 @@ Prelude 和模块函数写入最终 IR。
   保证不重复，现在得改成 `else`）。
 
 新增诊断一律用这几个函数，不要再写 `fprintf(stderr, "error: ..."); exit(1);`。
+
+### 类型错误的语句级隔离（codegen）
+
+`codegen.c` 比前两者难：它**一边检查一边生成 IR**，报完错继续走会拿着不一致的类型去调
+`LLVMBuild*`。所以那边的约定比「打印完继续」多一条 —— **报错的语句必须自己收尾成合法
+IR**，否则一条诊断会变成 `LLVM IR verification failed`，把真正的原因埋掉。
+
+两个入口：
+
+```c
+static void codegen_error(CodeGenContext *context, const ASTNode *node,
+                          const char *format, ...);          // 用节点位置
+static void codegen_error_at(CodeGenContext *context, const char *filename,
+                             int line, int column, const char *format, ...);
+```
+
+它们做三件事：打印（走 `vreport_error_soft`，共享同一个计数器）、`context->poisoned = 1`、
+`context->errors_reported++`。
+
+- `poisoned` 是**语句级**的：`generate_statement_list` 在每条语句开头把它清掉。所以毒化
+  不外溢 —— 同一个函数里的多处类型错误能一次报全。这比「一个函数只报一条」强得多，
+  代价是每个转 soft 的位置都得单独想清楚「报完这一句，IR 还合法吗」。
+- 收尾方式只有两种：**补一个目标类型的零值**（`zero_var_value` / `LLVMConstNull`，
+  用于 `let` 初始化、`return`、实参）或**整条跳过**（用于无返回值调用当表达式用）。
+  想不出怎么收尾就别转 soft。
+- `errors_reported` 是整份程序的累计值，`main.c` 靠 `codegen_had_error()` 在
+  `generate_code` 之后短路：报过错就不写 IR、不链接、不运行（`check` 也返回 1）。
+- 函数收尾的「补一条零值 `ret`」逻辑本来就有（所有路径都 `return` 的宽松语义），
+  报错后基本块没有终结指令时正好靠它兜底。
+
+还有一层**纯 AST 的前置校验**（`validate_user_types`：重复声明、未定义类型）在生成任何
+IR 之前跑，也全部用 `codegen_error`。它报过错就**直接返回**，IR 一行都不生成 —— 那种
+情况下 AST 已经不可信。而「缺返回值」这类只看语句形状的检查拆到了
+`validate_return_shapes`，放在短路之后，所以「函数缺返回值」和「`let` 初始化类型不匹配」
+能在同一轮里一起报出来。
+
+### 语法错误恢复
+
+`parser.c` 是另一套：它**在语句边界恢复**，报完一条语法错误后跳过坏语句继续解析，
+所以一个文件里的多处语法错误也是一次全报。
+
+实现用的是 `setjmp` / `longjmp`，而不是让每个 `parse_*` 返回 NULL：
+
+- `parser_error` 打印完，如果 `parser->error_frame` 非空就 `longjmp` 回去；为空时照旧
+  `exit(1)`（不在可恢复位置）。
+- 恢复点在两处循环里：`parse_block`（语句）和 `parse_program`（顶层声明）。它们各自压一个
+  `ParserErrorFrame` 到 `parser->error_frame` 链上，所以嵌套块跳的永远是最内层那个。
+- 恢复动作：`recover_to_statement_end` 跳到 `;`（消费掉）或 `}`（留给块循环）；
+  `recover_to_declaration` 跳到下一个顶层声明，**只在花括号深度 0 时认边界**，否则
+  函数体/impl 体里的 `fn` 会被当成同步点。
+- 两条都必须**至少前进一个 token**，否则错误正好出在 `;` 或 `fn` 上时外层循环会原地打转。
+- 同一行只报一条（`last_error_line`）：一行里连带出来的「expected `)`」之类都是第一个
+  错误的后果，报出来只会淹没原因。
+
+为什么不让 `parse_*` 返回 NULL：`parse_type` / `parse_expression` 的调用方全都假设返回值
+非空，改成可空是几十个函数的连锁改动。`longjmp` 只改 `parser_error` 一个地方。
+
+**报过语法错误之后 `parse_program` 仍然正常返回一棵残缺的 AST**，所以 `main.c` 必须查
+`parser_had_error(parser)` 并停在那里 —— 少了语句的程序交给后续阶段只会产生假错误。
+唯一例外是 `-parse`：它把残缺的树打出来有助于排查，但退出码仍是 1。
 
 ## 模块加载
 

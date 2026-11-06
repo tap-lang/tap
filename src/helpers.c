@@ -214,28 +214,38 @@ static void count_reported_error(void) {
     if (reported_errors >= TAP_MAX_ERRORS) report_error_limit();
 }
 
-void report_error_soft(const ASTNode *node, const char *format, ...) {
+void vreport_error_soft(const ASTNode *node, const char *format,
+                        va_list arguments) {
     const char *file = NULL;
     int line = 0;
     int column = 0;
     node_position(node, &file, &line, &column);
 
-    va_list arguments;
-    va_start(arguments, format);
     vprint_diagnostic(stderr, "error", file, line, column, format, arguments);
-    va_end(arguments);
 
     count_reported_error();
+}
+
+void vreport_error_at_soft(const char *filename, int line, int column,
+                           const char *format, va_list arguments) {
+    vprint_diagnostic(stderr, "error", filename, line, column, format, arguments);
+
+    count_reported_error();
+}
+
+void report_error_soft(const ASTNode *node, const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    vreport_error_soft(node, format, arguments);
+    va_end(arguments);
 }
 
 void report_error_at_soft(const char *filename, int line, int column,
                           const char *format, ...) {
     va_list arguments;
     va_start(arguments, format);
-    vprint_diagnostic(stderr, "error", filename, line, column, format, arguments);
+    vreport_error_at_soft(filename, line, column, format, arguments);
     va_end(arguments);
-
-    count_reported_error();
 }
 
 // 打印代码当前行以及上下各context_lines行

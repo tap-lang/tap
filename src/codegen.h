@@ -64,6 +64,13 @@ typedef struct {
     ProgramNode *program;           // 当前正在生成的AST，不拥有其内存
     enum LiteralType current_return_type;
     const VarTypeNode *current_return_var_type;
+    // 刚刚生成的那条语句报过类型错误。报错的语句必须自己收尾成合法 IR
+    // （补零值，或者整条跳过），generate_statement_list 在每条语句开头把它清掉 ——
+    // 毒化不外溢，所以同一个函数里的多处类型错误能一次报全。
+    int poisoned;
+    // 整份程序报过的类型错误条数。poisoned 每个函数都会重置，所以「要不要继续
+    // 写文件 / 链接」得看这个累计值。
+    int errors_reported;
     LoopContext *current_loop;
     VariadicForward *variadic_forwards; // 变参转发映射表
     // ---- 调试信息（-g）----
@@ -84,6 +91,8 @@ CodeGenContext *create_codegen_context(const char *module_name);
 // 打开/关闭 DWARF 生成。必须在 generate_code 之前调用（它只在生成开始时读这个开关）。
 void set_codegen_debug_info(CodeGenContext *context, int enabled);
 void generate_code(CodeGenContext *context, ProgramNode *program);
+// 本次生成里是否报过类型错误。报过之后调用方不能再写文件 / 链接 / 运行。
+int codegen_had_error(const CodeGenContext *context);
 void free_codegen_context(CodeGenContext *context);
 
 // 执行生成的代码

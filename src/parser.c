@@ -20,6 +20,9 @@ Parser *create_parser(Lexer *lexer) {
     parser->current_token = get_next_token(lexer);
     parser->loop_depth = 0;
     parser->variadic_depth = 0;
+    parser->error_frame = NULL;
+    parser->error_count = 0;
+    parser->last_error_line = 0;
     return parser;
 }
 
@@ -32,16 +35,109 @@ void free_parser(Parser *parser) {
         free(parser);
     }
 }
- 
+
+int parser_had_error(const Parser *parser) {
+    return parser && parser->error_count > 0;
+}
+
+// 前进一个 token。恢复时也要用它，所以和 consume 分开写 —— consume 校验类型，
+// 这里只是「把当前这个丢掉、看下一个」。
+static void advance_token(Parser *parser) {
+    Token *old_token = parser->current_token;
+    parser->current_token = get_next_token(parser->lexer);
+    free_token(old_token);
+}
+
 // 解析错误处理
+//
+// 两种情况：
+//   - 不在可恢复位置（`parser->error_frame` 为 NULL）—— 照旧打印后退出；
+//   - 在语句/声明的循环里 —— 打印后 `longjmp` 回那个循环，由它跳过坏语句继续。
+//
+// 同一行只报一条：语法错了之后，一行里往往还会连带出「expected `)`」之类，
+// 那些都是第一个错误的后果，报出来只会淹没真正的原因。
 void parser_error(Parser *parser, const char *message) {
-    print_diagnostic(stderr, "error", parser->lexer->filename,
-                     parser->current_token->line, parser->current_token->column,
-                     "%s", message);
+    int line = parser->current_token->line;
+
+    if (parser->error_frame) {
+        if (line != parser->last_error_line) {
+            parser->last_error_line = line;
+            parser->error_count++;
+            print_diagnostic(stderr, "error", parser->lexer->filename, line,
+                             parser->current_token->column, "%s", message);
+            if (parser->error_count >= TAP_MAX_ERRORS) report_error_limit();
+        }
+        // 同一行上的后续错误不打印，直接跳回恢复点 —— 它们基本都是第一条的后果。
+        longjmp(parser->error_frame->jump, 1);
+    }
+
+    print_diagnostic(stderr, "error", parser->lexer->filename, line,
+                     parser->current_token->column, "%s", message);
     //printf("Current token: %s\n", parser->current_token->lexeme);
     exit(1);
 }
 
+
+// ---------------------------------------------------------------------------
+// 错误恢复
+// ---------------------------------------------------------------------------
+//
+// 只在**语句/声明边界**恢复。语法错了之后 token 流没有可靠的同步点，在表达式内部
+// 硬恢复只会产生一串级联假错误，所以干脆丢掉当前这条语句，从最近的 `;` / `}` /
+// 下一个声明重新开始。
+
+// 跳过 token 到语句末尾：消费 `;`，停在 `}`（块的结束，留给块循环）或 EOF。
+//
+// 至少要前进一个 token，否则「错误正好出在 `;` 上」时外层循环会原地打转。
+static void recover_to_statement_end(Parser *parser) {
+    while (parser->current_token->type != TOKEN_EOF) {
+        if (parser->current_token->type == TOKEN_RBRACE) return;
+        int is_semicolon = parser->current_token->type == TOKEN_SEMICOLON;
+        advance_token(parser);
+        if (is_semicolon) return;
+    }
+}
+
+// 能开启一条顶层声明的 token。
+static int token_starts_declaration(enum TokenType type) {
+    switch (type) {
+        case TOKEN_FN:
+        case TOKEN_PUB:
+        case TOKEN_STRUCT:
+        case TOKEN_ENUM:
+        case TOKEN_CONST:
+        case TOKEN_TRAIT:
+        case TOKEN_IMPL:
+        case TOKEN_IMPORT:
+        case TOKEN_EXTERN:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// 跳过 token 到下一个顶层声明：只在花括号深度 0 时认边界，这样函数体、impl 体、
+// 结构体定义里的 `fn` 不会被误当成同步点。
+//
+// 先强制前进一个 token 再找边界：错误就出在 `fn` 上时（比如 `fn` 后面没有名字），
+// 不前进就会在同一个位置反复报同一个错误。
+static void recover_to_declaration(Parser *parser) {
+    int depth = 0;
+    int advanced = 0;
+    while (parser->current_token->type != TOKEN_EOF) {
+        if (advanced && depth == 0 &&
+            token_starts_declaration(parser->current_token->type)) {
+            return;
+        }
+        if (parser->current_token->type == TOKEN_LBRACE) {
+            depth++;
+        } else if (parser->current_token->type == TOKEN_RBRACE && depth > 0) {
+            depth--;
+        }
+        advance_token(parser);
+        advanced = 1;
+    }
+}
 
 // 消费当前标记并获取下一个
 static void consume(Parser *parser, enum TokenType expected_type) {
@@ -608,7 +704,20 @@ static ASTNode *parse_block(Parser *parser) {
 
     // 解析代码块中的语句
     while (parser->current_token->type != TOKEN_RBRACE && parser->current_token->type != TOKEN_EOF) {
-        add_statement(block, parse_statement(parser));
+        // 语句级恢复点：parser_error 会 longjmp 回这里，然后由
+        // recover_to_statement_end 跳到本语句的 `;` 之后，丢掉这条坏语句继续。
+        // 嵌套块各设各的返回点，跳的永远是最内层那个。
+        ParserErrorFrame frame;
+        frame.previous = parser->error_frame;
+        parser->error_frame = &frame;
+
+        if (setjmp(frame.jump) == 0) {
+            add_statement(block, parse_statement(parser));
+        } else {
+            recover_to_statement_end(parser);
+        }
+
+        parser->error_frame = frame.previous;
     }
 
     // 保存语句列表并释放临时函数节点
@@ -1800,6 +1909,18 @@ ProgramNode *parse_program(Parser *parser) {
     
     // 解析所有模块导入、顶层常量和函数定义
     while (parser->current_token->type != TOKEN_EOF) {
+        // 顶层声明级恢复点。语法错误（包括函数签名、struct 字段、impl 方法里的）
+        // 都跳回这里，由 recover_to_declaration 跳到下一个顶层声明继续。
+        ParserErrorFrame frame;
+        frame.previous = parser->error_frame;
+        parser->error_frame = &frame;
+
+        if (setjmp(frame.jump) != 0) {
+            recover_to_declaration(parser);
+            parser->error_frame = frame.previous;
+            continue;
+        }
+
         // 顶层声明不走 parse_statement，所以位置要在这里单独记下来并 stamp 到节点上；
         // 否则 duplicate struct / duplicate enum 这类诊断拿不到位置。
         SourceLoc start = current_location(parser);
@@ -1864,6 +1985,8 @@ ProgramNode *parse_program(Parser *parser) {
         } else {
             parser_error(parser, "expected module import, enum declaration, struct declaration, constant declaration, trait declaration, impl block, or function definition"); // 中文：期望模块导入、枚举声明、结构体声明、常量声明、trait 声明、impl 块或函数定义
         }
+
+        parser->error_frame = frame.previous;
     }
     
     return program;

@@ -10,6 +10,44 @@ static enum LiteralType default_integer_type(void) {
     return LITERAL_I32;
 }
 
+// ---------------------------------------------------------------------------
+// 累积类型错误：报一条，并把当前函数标成「毒化」
+// ---------------------------------------------------------------------------
+//
+// 类型检查长在 Codegen 里，而 Codegen 是一边走 AST 一边建 IR，所以「报完继续走」
+// 比语法/借用检查危险得多：报错点后面的代码原本靠 report_error 不返回来保证永远
+// 不会被执行。这里的约定是：
+//   * 报错的那个点必须自己收尾成合法 IR（补零值、跳过这条语句），
+//   * 毒化标记只描述当前这条语句，generate_statement_list 逐条清掉，
+//   * 所以同一个函数里的多处类型错误能一次报出来，模块仍然能通过 LLVMVerifyModule。
+// 每个转成 soft 的位置都得单独想清楚「报完这一句，IR 还合法吗」—— 想不清楚就别转。
+static void codegen_error(CodeGenContext *context, const ASTNode *node,
+                          const char *format, ...) {
+    context->poisoned = 1;
+    context->errors_reported++;
+    va_list arguments;
+    va_start(arguments, format);
+    vreport_error_soft(node, format, arguments);
+    va_end(arguments);
+}
+
+// 位置版本：调用点的位置记在 FunctionCallNode 的 filename/line/column 上，
+// 不一定等于节点自身的 loc（合成的调用节点没有 loc）。
+static void codegen_error_at(CodeGenContext *context, const char *filename,
+                             int line, int column, const char *format, ...) {
+    context->poisoned = 1;
+    context->errors_reported++;
+    va_list arguments;
+    va_start(arguments, format);
+    vreport_error_at_soft(filename, line, column, format, arguments);
+    va_end(arguments);
+}
+
+// 整份程序里是否报过类型错误。
+int codegen_had_error(const CodeGenContext *context) {
+    return context && context->errors_reported > 0;
+}
+
 // 判断字面量类型是否按整数类型处理。
 static int is_integer_type(enum LiteralType type) {
     switch (type) {
@@ -456,12 +494,11 @@ static void collect_variadic_forwards(CodeGenContext *context) {
 
         FunctionNode *target = NULL;
         if (!variadic_forward_target(context, function, &target)) {
-            print_diagnostic(stderr, "error", function->filename,
-                             function->line, function->column,
-                             "variadic function '%s' must forward its arguments in a single call, "
-                             "for example `return printf(format, ...);`",
-                             function->name); // 中文：变参函数体必须是一句纯转发
-            exit(1);
+            report_error_at(function->filename,
+                            function->line, function->column,
+                            "variadic function '%s' must forward its arguments in a single call, "
+                            "for example `return printf(format, ...);`",
+                            function->name); // 中文：变参函数体必须是一句纯转发
         }
 
         VariadicForward *forward = malloc(sizeof(VariadicForward));
@@ -776,6 +813,11 @@ static LLVMValueRef generate_try_expression(
     CodeGenContext *context, TryNode *try_node, const VarTypeNode *target_type);
 static const VarTypeNode *indexed_value_type(
     CodeGenContext *context, ASTNode *expression);
+// 类型不匹配之后仍然要交出一个「合法值」，否则调用指令 / 返回指令的签名对不上，
+// 模块通不过 LLVMVerifyModule。两个零值生成器定义在文件末尾。
+static LLVMValueRef zero_value(CodeGenContext *context, enum LiteralType type);
+static LLVMValueRef zero_var_value(
+    CodeGenContext *context, const VarTypeNode *type, enum LiteralType scalar_type);
 static const char *index_base_name(ASTNode *expression);
 
 // 将形如 base.field 的限定名拆成两个部分；调用方负责释放输出字符串。
@@ -2095,8 +2137,10 @@ static LLVMValueRef generate_expression_for_type(
             return LLVMConstNull(get_llvm_var_type(context, target_type));
         }
         if (!expression_assignable_to(context, expression, target_type)) {
-            report_error((const ASTNode *)expression,
-                         "function pointer expression type mismatch"); // 中文：函数指针表达式类型不匹配
+            codegen_error(context, (const ASTNode *)expression,
+                          "function pointer expression type mismatch"); // 中文：函数指针表达式类型不匹配
+            // 类型对不上就别再按目标类型用它，交个空指针让上层指令保持合法。
+            return LLVMConstNull(get_llvm_var_type(context, target_type));
         }
         return generate_expression(context, expression);
     }
@@ -2106,14 +2150,18 @@ static LLVMValueRef generate_expression_for_type(
             return LLVMConstNull(get_llvm_var_type(context, target_type));
         }
         if (!expression_assignable_to(context, expression, target_type)) {
-            report_error((const ASTNode *)expression, "pointer expression type mismatch"); // 中文：指针表达式类型不匹配
+            codegen_error(context, (const ASTNode *)expression,
+                          "pointer expression type mismatch"); // 中文：指针表达式类型不匹配
+            return LLVMConstNull(get_llvm_var_type(context, target_type));
         }
         return generate_expression(context, expression);
     }
     if (target_type->struct_name) {
         if (!expression_assignable_to(context, expression, target_type)) {
-            report_error((const ASTNode *)expression,
-                         "struct expression type mismatch"); // 中文：结构体表达式类型不匹配
+            codegen_error(context, (const ASTNode *)expression,
+                          "struct expression type mismatch"); // 中文：结构体表达式类型不匹配
+            // 结构体零值：整条语句的值类型仍然对得上，IR 保持合法。
+            return LLVMConstNull(get_llvm_var_type(context, target_type));
         }
         if (expression && expression->type == NODE_STRUCT_LITERAL) {
             return generate_struct_literal_value(
@@ -2708,11 +2756,10 @@ static LLVMValueRef generate_string_receiver(
         ? argument_count
         : argument_count > 0 ? argument_count - 1 : 0;
     if (user_argument_count != expected_argument_count) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "method '%s' expects %u arguments, but got %u",
-                         string_method_name(method), expected_argument_count,
-                         user_argument_count);
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "method '%s' expects %u arguments, but got %u",
+                        string_method_name(method), expected_argument_count,
+                        user_argument_count);
     }
 
     if (receiver_name) {
@@ -2736,16 +2783,14 @@ static LLVMValueRef generate_string_receiver(
             free(name);
 
             if (!constant || !constant->type || !global) {
-                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                                 "undefined variable '%.*s'",
-                                 (int)receiver_length, receiver_name);
-                exit(1);
+                report_error_at(call->filename, call->line, call->column,
+                                "undefined variable '%.*s'",
+                                (int)receiver_length, receiver_name);
             }
             if (constant->type->is_array || constant->type->type != LITERAL_STRING) {
-                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                                 "method '%s' is only available on String values",
-                                 string_method_name(method));
-                exit(1);
+                report_error_at(call->filename, call->line, call->column,
+                                "method '%s' is only available on String values",
+                                string_method_name(method));
             }
             *arguments_out = call->arguments;
             return LLVMBuildLoad2(
@@ -2753,10 +2798,9 @@ static LLVMValueRef generate_string_receiver(
                 global, "string_method_receiver");
         }
         if (symbol->array_type || symbol->type != LITERAL_STRING) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "method '%s' is only available on String values",
-                             string_method_name(method));
-            exit(1);
+            report_error_at(call->filename, call->line, call->column,
+                            "method '%s' is only available on String values",
+                            string_method_name(method));
         }
         *arguments_out = call->arguments;
         return LLVMBuildLoad2(
@@ -2766,10 +2810,9 @@ static LLVMValueRef generate_string_receiver(
 
     ASTNode *receiver_expression = call->arguments;
     if (!receiver_expression || expression_type(context, receiver_expression) != LITERAL_STRING) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "method '%s' is only available on String values",
-                         string_method_name(method));
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "method '%s' is only available on String values",
+                        string_method_name(method));
     }
     *arguments_out = receiver_expression->next;
     return generate_expression(context, receiver_expression);
@@ -2846,20 +2889,17 @@ static LLVMValueRef call_runtime_function(
 // 生成显式标量转换。字符串转换通过 Runtime 的稳定 C ABI 完成，数值转换则使用 LLVM 原生指令。
 static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *cast) {
     if (!cast || !is_scalar_var_type(cast->target_type)) {
-        print_diagnostic(stderr, "error", cast ? cast->filename : NULL,
-                         cast ? cast->line : 0, cast ? cast->column : 0,
-                         "cast target must be a scalar type");
-        exit(1);
+        report_error_at(cast ? cast->filename : NULL,
+                        cast ? cast->line : 0, cast ? cast->column : 0,
+                        "cast target must be a scalar type");
     }
 
     enum LiteralType target = cast->target_type->type;
     VarTypeNode *source_full = expression_full_type(context, cast->expression);
     if (source_full && !is_scalar_var_type(source_full)) {
-        print_diagnostic(stderr, "error", cast->filename, cast->line, cast->column,
-                         "cannot cast a non-scalar value to %s",
-                         literal_type_name(target));
-        free_ast((ASTNode *)source_full);
-        exit(1);
+        report_error_at(cast->filename, cast->line, cast->column,
+                        "cannot cast a non-scalar value to %s",
+                        literal_type_name(target));
     }
     enum LiteralType source = source_full
         ? source_full->type : expression_type(context, cast->expression);
@@ -2986,20 +3026,18 @@ static LLVMValueRef generate_cast_expression(CodeGenContext *context, CastNode *
 
     if (target == LITERAL_STRING || source == LITERAL_STRING ||
         target == LITERAL_C_STRING || source == LITERAL_C_STRING) {
-        print_diagnostic(stderr, "error", cast->filename, cast->line, cast->column,
-                         "cannot cast %s to %s",
-                         literal_type_name(source), literal_type_name(target));
-        exit(1);
+        report_error_at(cast->filename, cast->line, cast->column,
+                        "cannot cast %s to %s",
+                        literal_type_name(source), literal_type_name(target));
     }
     if ((is_integer_type(source) && is_integer_type(target)) ||
         (is_integer_type(source) && is_float_type(target)) ||
         (is_float_type(source) && is_float_type(target))) {
         return cast_value(context, value, source, target);
     }
-    print_diagnostic(stderr, "error", cast->filename, cast->line, cast->column,
-                     "cannot cast %s to %s",
-                     literal_type_name(source), literal_type_name(target));
-    exit(1);
+    report_error_at(cast->filename, cast->line, cast->column,
+                    "cannot cast %s to %s",
+                    literal_type_name(source), literal_type_name(target));
 }
 
 // 按 UTF-8 编码字节序生成字符串内容比较。
@@ -3049,12 +3087,11 @@ static LLVMValueRef generate_string_integer_argument(
     unsigned argument_index) {
     enum LiteralType type = expression_type(context, argument);
     if (!is_integer_type(type) || integer_type_bits(type) > 64) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "method '%s' argument %u must be an integer of at most 64 bits",
-                         strchr(call->name, '.') ? strrchr(call->name, '.') + 1 :
-                         string_method_name(internal_string_method(call)),
-                         argument_index);
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "method '%s' argument %u must be an integer of at most 64 bits",
+                        strchr(call->name, '.') ? strrchr(call->name, '.') + 1 :
+                        string_method_name(internal_string_method(call)),
+                        argument_index);
     }
     return generate_expression_as(context, argument, LITERAL_I64);
 }
@@ -3065,12 +3102,11 @@ static LLVMValueRef generate_string_string_argument(
     unsigned argument_index) {
     enum LiteralType type = expression_type(context, argument);
     if (type != LITERAL_STRING) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "method '%s' argument %u must be a String value",
-                         strchr(call->name, '.') ? strrchr(call->name, '.') + 1 :
-                         string_method_name(internal_string_method(call)),
-                         argument_index);
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "method '%s' argument %u must be a String value",
+                        strchr(call->name, '.') ? strrchr(call->name, '.') + 1 :
+                        string_method_name(internal_string_method(call)),
+                        argument_index);
     }
     return generate_expression(context, argument);
 }
@@ -3171,29 +3207,26 @@ static LLVMValueRef generate_method_call(
 
     unsigned expected_count = function_param_count(function);
     if (user_count + 1 != expected_count) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "method '%s' expects %u arguments, but got %u",
-                         function_base_name(function->name),
-                         expected_count > 0 ? expected_count - 1 : 0,
-                         user_count); // 中文：方法参数数量不匹配
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "method '%s' expects %u arguments, but got %u",
+                        function_base_name(function->name),
+                        expected_count > 0 ? expected_count - 1 : 0,
+                        user_count); // 中文：方法参数数量不匹配
     }
 
     const VarTypeNode *receiver_type = receiver_symbol->declared_type;
     const VarTypeNode *first_param = function_param_var_type(function, 0);
     if (!first_param || !tap_receiver_type_matches(first_param, receiver_type)) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "method '%s' receiver type mismatch",
-                         function_base_name(function->name)); // 中文：方法接收者类型不匹配
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "method '%s' receiver type mismatch",
+                        function_base_name(function->name)); // 中文：方法接收者类型不匹配
     }
 
     LLVMValueRef llvm_function = LLVMGetNamedFunction(
         context->module, llvm_call_name(function->name));
     if (!llvm_function) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "undefined function '%s'", function_display_name(function)); // 中文：未定义的函数
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "undefined function '%s'", function_display_name(function)); // 中文：未定义的函数
     }
 
     LLVMValueRef *arguments = expected_count
@@ -3211,12 +3244,10 @@ static LLVMValueRef generate_method_call(
     // 否则 `const` 的「不可写」承诺会被一个 `&mut self` 方法从后门破掉。
     if (first_param->is_reference && !receiver_type->is_reference) {
         if (first_param->reference_mutable && receiver_symbol->is_const) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "cannot call mutating method '%s' on constant '%s'",
-                             function_base_name(function->name),
-                             receiver_symbol->name); // 中文：不能对常量调用可变方法
-            free(arguments);
-            exit(1);
+            report_error_at(call->filename, call->line, call->column,
+                            "cannot call mutating method '%s' on constant '%s'",
+                            function_base_name(function->name),
+                            receiver_symbol->name); // 中文：不能对常量调用可变方法
         }
         arguments[0] = receiver_symbol->value;
     } else {
@@ -3231,11 +3262,9 @@ static LLVMValueRef generate_method_call(
         if (param_type &&
             (param_type->enum_name || param_type->struct_name || param_type->is_pointer) &&
             !expression_assignable_to(context, argument, param_type)) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "method '%s' argument %u type mismatch",
-                             function_base_name(function->name), i); // 中文：方法参数类型不匹配
-            free(arguments);
-            exit(1);
+            report_error_at(call->filename, call->line, call->column,
+                            "method '%s' argument %u type mismatch",
+                            function_base_name(function->name), i); // 中文：方法参数类型不匹配
         }
         arguments[i] = param_type
             ? generate_expression_for_type(context, argument, param_type)
@@ -3255,11 +3284,10 @@ static LLVMValueRef generate_method_call(
     const VarTypeNode *return_type = function_return_var_type(function);
     if (write_back_receiver && return_type && tap_type_equal(return_type, receiver_type)) {
         if (receiver_symbol->is_const) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "cannot call mutating method '%s' on constant '%s'",
-                             function_base_name(function->name),
-                             receiver_symbol->name); // 中文：不能对常量调用可变方法
-            exit(1);
+            report_error_at(call->filename, call->line, call->column,
+                            "cannot call mutating method '%s' on constant '%s'",
+                            function_base_name(function->name),
+                            receiver_symbol->name); // 中文：不能对常量调用可变方法
         }
         LLVMBuildStore(context->builder, value, receiver_symbol->value);
     }
@@ -3280,10 +3308,9 @@ static LLVMValueRef generate_variant_value(
     unsigned actual = 0;
     for (ASTNode *argument = arguments; argument; argument = argument->next) actual++;
     if (expected != actual) {
-        print_diagnostic(stderr, "error", filename, line, column,
-                         "variant '%s.%s' expects %u value(s), but got %u",
-                         enum_node->name, variant->name, expected, actual); // 中文：成员载荷数量不匹配
-        exit(1);
+        report_error_at(filename, line, column,
+                        "variant '%s.%s' expects %u value(s), but got %u",
+                        enum_node->name, variant->name, expected, actual); // 中文：成员载荷数量不匹配
     }
 
     StructNode *struct_node = tap_find_struct(context->program, struct_name);
@@ -3346,10 +3373,9 @@ static LLVMValueRef generate_indirect_call(
     for (ASTNode *type = pointer_type->parameter_types; type; type = type->next) expected++;
 
     if (count != expected) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "function pointer expects %u arguments, but got %u",
-                         expected, count); // 中文：函数指针参数个数不符
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "function pointer expects %u arguments, but got %u",
+                        expected, count); // 中文：函数指针参数个数不符
     }
 
     LLVMValueRef *arguments = count ? malloc(sizeof(LLVMValueRef) * count) : NULL;
@@ -3362,11 +3388,9 @@ static LLVMValueRef generate_indirect_call(
     for (unsigned i = 0; i < count; i++, argument = argument->next, type = type->next) {
         const VarTypeNode *parameter_type = (const VarTypeNode *)type;
         if (!expression_assignable_to(context, argument, parameter_type)) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "function pointer argument %u type mismatch",
-                             i + 1); // 中文：函数指针参数类型不匹配
-            free(arguments);
-            exit(1);
+            report_error_at(call->filename, call->line, call->column,
+                            "function pointer argument %u type mismatch",
+                            i + 1); // 中文：函数指针参数类型不匹配
         }
         arguments[i] = generate_expression_for_type(context, argument, parameter_type);
     }
@@ -3431,9 +3455,8 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     }
 
     if (strcmp(call->name, "assert") == 0) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "assert can only be used as a statement"); // 中文：assert 只能作为语句使用
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "assert can only be used as a statement"); // 中文：assert 只能作为语句使用
     }
 
     const char *callee_name = function ? llvm_call_name(function->name) : call->name;
@@ -3444,28 +3467,24 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         if (split_field_access_name(call->name, &base_name, &method_name)) {
             Symbol *receiver_symbol = find_symbol(context, base_name);
             if (!receiver_symbol) {
-                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                                 "namespace '%s' was not imported",
-                                 base_name); // 中文：未导入名称空间
+                report_error_at(call->filename, call->line, call->column,
+                                "namespace '%s' was not imported",
+                                base_name); // 中文：未导入名称空间
             } else if (symbol_has_function_pointer_field(
                            context, receiver_symbol, method_name)) {
                 // `handler.run(7)`：字段里的函数指针不能直接调用 —— 调用点只认
                 // 标识符接收者，`a.b(...)` 会被当成「类型 a 的方法 b」。
-                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                                 "'%s.%s' is a function pointer field; read it into a variable first",
-                                 base_name, method_name); // 中文：函数指针字段要先取到变量再调用
+                report_error_at(call->filename, call->line, call->column,
+                                "'%s.%s' is a function pointer field; read it into a variable first",
+                                base_name, method_name); // 中文：函数指针字段要先取到变量再调用
             } else {
-                print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                                 "type has no method '%s'",
-                                 method_name); // 中文：类型没有该方法
+                report_error_at(call->filename, call->line, call->column,
+                                "type has no method '%s'",
+                                method_name); // 中文：类型没有该方法
             }
-            free(base_name);
-            free(method_name);
-            exit(1);
         }
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "undefined function '%s'", call->name); // 中文：未定义的函数
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "undefined function '%s'", call->name); // 中文：未定义的函数
     }
 
     unsigned count = 0;
@@ -3478,12 +3497,11 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     // 变参函数只约束具名参数的下限；多出来的实参落到 `...` 里，由调用方负责格式串匹配。
     int is_variadic_call = function->is_variadic;
     if (is_variadic_call ? count < expected_count : count != expected_count) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         is_variadic_call
-                             ? "function '%s' expects at least %u arguments, but got %u"
-                             : "function '%s' expects %u arguments, but got %u",
-                         display_name, expected_count, count);
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        is_variadic_call
+                        ? "function '%s' expects at least %u arguments, but got %u"
+                        : "function '%s' expects %u arguments, but got %u",
+                        display_name, expected_count, count);
     }
 
     // extern 边界的 String 走指针 ABI（见 tap_runtime.h）：参数 alloca 后传地址，
@@ -3518,19 +3536,23 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         // 一律校验，不再区分标量/非标量。以前这里带着「只查 enum/struct/pointer」的限定，
         // 标量实参（`f("x")` 传给 i32 参数）被整段跳过，最后崩成 LLVM 的
         // "Call parameter type does not match function signature"，连位置都没有。
+        LLVMValueRef value;
         if (!erased_pointer_argument && param_type &&
             !expression_assignable_to(context, argument, param_type)) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
+            codegen_error_at(context, call->filename, call->line, call->column,
                              "function '%s' argument %u type mismatch",
                              display_name, i + 1); // 中文：函数参数类型不匹配
-            free(arguments);
-            exit(1);
+            // 这个实参按目标类型的零值顶替：调用指令的签名必须对得上，
+            // 后面的实参也还要接着查（所以不能整条语句跳过）。
+            value = zero_var_value(context, param_type,
+                                   function_param_type(function, i));
+        } else {
+            value = erased_pointer_argument
+                ? generate_expression(context, argument)
+                : param_type
+                ? generate_expression_for_type(context, argument, param_type)
+                : generate_expression_as(context, argument, function_param_type(function, i));
         }
-        LLVMValueRef value = erased_pointer_argument
-            ? generate_expression(context, argument)
-            : param_type
-            ? generate_expression_for_type(context, argument, param_type)
-            : generate_expression_as(context, argument, function_param_type(function, i));
         if (lower_string && function_tap_param_type(context, function, i) == string_type) {
             LLVMValueRef slot = LLVMBuildAlloca(
                 context->builder, string_type, "extern_string_arg");
@@ -3723,18 +3745,16 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 FunctionCallNode *call = (FunctionCallNode *)expression;
                 // 无返回值函数的调用只能作语句；走到这里说明它被当成了值。
                 if (call_returns_no_value(context, call)) {
-                    print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                        "function '%s' returns no value and cannot be used in an expression",
-                        call->name); // 中文：无返回值函数不能当表达式用
-                    exit(1);
+                    report_error_at(call->filename, call->line, call->column,
+                                    "function '%s' returns no value and cannot be used in an expression",
+                                    call->name); // 中文：无返回值函数不能当表达式用
                 }
                 // 载荷枚举构造需要目标类型才能确定结果类型，与结构体字面量一致。
                 EnumVariantNode *variant = NULL;
                 EnumNode *enum_node = variant_reference(context, call->name, &variant);
                 if (enum_node && enum_node->has_payload) {
-                    print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                        "variant construction must be used where an enum type is expected"); // 中文：载荷枚举构造必须用于期望枚举类型的场合
-                    exit(1);
+                    report_error_at(call->filename, call->line, call->column,
+                                    "variant construction must be used where an enum type is expected"); // 中文：载荷枚举构造必须用于期望枚举类型的场合
                 }
                 FunctionNode *function = find_function(context, call->name);
                 const VarTypeNode *return_type = function_return_var_type(function);
@@ -4152,9 +4172,8 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) count++;
 
     if (count < 1 || count > 2) {
-        print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                         "assert expects one or two arguments"); // 中文：assert 需要一到两个参数
-        exit(1);
+        report_error_at(call->filename, call->line, call->column,
+                        "assert expects one or two arguments"); // 中文：assert 需要一到两个参数
     }
 
     const char *message = "condition is false";
@@ -4162,9 +4181,8 @@ static void generate_assert(CodeGenContext *context, FunctionCallNode *call) {
         ASTNode *message_node = call->arguments->next;
         if (message_node->type != NODE_LITERAL ||
             ((LiteralNode *)message_node)->literal_type != LITERAL_STRING) {
-            print_diagnostic(stderr, "error", call->filename, call->line, call->column,
-                             "assert message must be a string literal"); // 中文：assert 消息必须是字符串字面量
-            exit(1);
+            report_error_at(call->filename, call->line, call->column,
+                            "assert message must be a string literal"); // 中文：assert 消息必须是字符串字面量
         }
         message = ((LiteralNode *)message_node)->value.string_value;
     }
@@ -4347,25 +4365,22 @@ static void validate_match_statement(
         MatchArmNode *arm = (MatchArmNode *)node;
         if (!arm->variant_name) {
             if (arm->bindings) {
-                print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
-                    "wildcard arm cannot bind payload values"); // 中文：通配分支不能绑定载荷
-                exit(1);
+                report_error_at(arm->filename, arm->line, arm->column,
+                                "wildcard arm cannot bind payload values"); // 中文：通配分支不能绑定载荷
             }
             has_wildcard = 1;
             continue;
         }
         if (strcmp(arm->enum_name, enum_node->name) != 0) {
-            print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
-                "arm pattern '%s.%s' does not belong to enum '%s'",
-                arm->enum_name, arm->variant_name, enum_node->name); // 中文：分支模式不属于该枚举
-            exit(1);
+            report_error_at(arm->filename, arm->line, arm->column,
+                            "arm pattern '%s.%s' does not belong to enum '%s'",
+                            arm->enum_name, arm->variant_name, enum_node->name); // 中文：分支模式不属于该枚举
         }
         EnumVariantNode *variant = find_enum_variant(enum_node, arm->variant_name);
         if (!variant) {
-            print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
-                "enum '%s' has no variant '%s'",
-                enum_node->name, arm->variant_name); // 中文：枚举没有该成员
-            exit(1);
+            report_error_at(arm->filename, arm->line, arm->column,
+                            "enum '%s' has no variant '%s'",
+                            enum_node->name, arm->variant_name); // 中文：枚举没有该成员
         }
         unsigned bindings = 0;
         for (ASTNode *binding = arm->bindings; binding; binding = binding->next) {
@@ -4373,10 +4388,9 @@ static void validate_match_statement(
         }
         unsigned payload = variant_payload_count(variant);
         if (bindings != payload) {
-            print_diagnostic(stderr, "error", arm->filename, arm->line, arm->column,
-                "variant '%s.%s' has %u payload value(s), but the arm binds %u",
-                enum_node->name, variant->name, payload, bindings); // 中文：绑定数量与载荷数量不一致
-            exit(1);
+            report_error_at(arm->filename, arm->line, arm->column,
+                            "variant '%s.%s' has %u payload value(s), but the arm binds %u",
+                            enum_node->name, variant->name, payload, bindings); // 中文：绑定数量与载荷数量不一致
         }
     }
 
@@ -4394,10 +4408,9 @@ static void validate_match_statement(
             }
         }
         if (matches > 1) {
-            print_diagnostic(stderr, "error", first_arm->filename, first_arm->line,
-                first_arm->column, "variant '%s.%s' is matched more than once",
-                enum_node->name, variant->name); // 中文：成员被重复匹配
-            exit(1);
+            report_error_at(first_arm->filename, first_arm->line,
+                            first_arm->column, "variant '%s.%s' is matched more than once",
+                            enum_node->name, variant->name); // 中文：成员被重复匹配
         }
         if (matches == 0 && !has_wildcard) {
             fprintf(stderr,
@@ -4500,25 +4513,24 @@ static int statement_list_definitely_returns(ASTNode *statement) {
 
 // 有显式返回类型的普通函数必须在所有路径返回值。省略 `: T` 的函数是无返回值函数
 // （LITERAL_VOID），落到末尾就是 `ret void`，不要求返回值。
-static void validate_function_returns(FunctionNode *function) {
+static void validate_function_returns(CodeGenContext *context, FunctionNode *function) {
     if (!function || function->is_extern || !function->return_type) return;
     if (statement_list_definitely_returns(function->body)) return;
 
-    print_diagnostic(stderr, "error", function->filename, function->line, function->column,
-                     "function '%s' may exit without returning a value", function->name);
-    exit(1);
+    codegen_error_at(context, function->filename, function->line, function->column,
+                     "function '%s' may exit without returning a value",
+                     function->name);
 }
 
 // 无返回值函数（省略了 `: T`）允许裸 `return;` 提前退出，但 `return value;` 是错的 ——
 // 没有返回类型能承载那个值。
-static void validate_implicit_return(FunctionNode *function) {
+static void validate_implicit_return(CodeGenContext *context, FunctionNode *function) {
     if (!function || function->is_extern || function->return_type) return;
     if (!statement_list_contains_valued_return(function->body)) return;
 
-    print_diagnostic(stderr, "error", function->filename, function->line, function->column,
+    codegen_error_at(context, function->filename, function->line, function->column,
                      "function '%s' returns no value, so `return` cannot carry one",
                      function->name);
-    exit(1);
 }
 
 // 生成 match 语句：按判别标签分派到各分支，并把该分支的载荷绑定到局部变量。
@@ -4772,9 +4784,8 @@ static LLVMValueRef generate_try_expression(
     EnumNode *inner_enum = inner_type && inner_type->struct_name
         ? struct_tagged_enum(context, inner_type->struct_name) : NULL;
     if (!inner_enum || !inner_enum->has_payload) {
-        print_diagnostic(stderr, "error", try_node->filename, try_node->line,
-            try_node->column, "`?` requires a Result value");
-        exit(1); // 中文：? 需要 Result 类型的值
+        report_error_at(try_node->filename, try_node->line, try_node->column,
+                        "`?` requires a Result value"); // 中文：? 需要 Result 类型的值
     }
 
     // 所在函数的返回类型必须也是载荷枚举，否则 Err 带不出去。
@@ -4782,19 +4793,18 @@ static LLVMValueRef generate_try_expression(
     EnumNode *return_enum = return_type && return_type->struct_name
         ? struct_tagged_enum(context, return_type->struct_name) : NULL;
     if (!return_enum || !return_enum->has_payload) {
-        print_diagnostic(stderr, "error", try_node->filename, try_node->line,
-            try_node->column,
-            "`?` requires the enclosing function to return a payload enum");
-        exit(1); // 中文：? 要求所在函数返回载荷枚举
+        report_error_at(try_node->filename, try_node->line, try_node->column,
+                        "`?` requires the enclosing function to return a payload enum");
+        // 中文：? 要求所在函数返回载荷枚举
     }
 
     EnumVariantNode *ok_variant = find_enum_variant(inner_enum, "Ok");
     EnumVariantNode *err_variant = find_enum_variant(inner_enum, "Err");
     EnumVariantNode *return_err = find_enum_variant(return_enum, "Err");
     if (!ok_variant || !err_variant || !return_err) {
-        print_diagnostic(stderr, "error", try_node->filename, try_node->line,
-            try_node->column, "`?` requires Ok and Err variants");
-        exit(1); // 中文：? 要求 Ok 和 Err 两个成员
+        report_error_at(try_node->filename, try_node->line, try_node->column,
+                        "`?` requires Ok and Err variants");
+        // 中文：? 要求 Ok 和 Err 两个成员
     }
 
     StructNode *inner_struct_node = tap_find_struct(context->program, inner_type->struct_name);
@@ -4864,6 +4874,11 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
     for (; statement; statement = statement->next) {
         LLVMBasicBlockRef block = LLVMGetInsertBlock(context->builder);
         if (block && LLVMGetBasicBlockTerminator(block)) break;
+
+        // 毒化标记只描述「刚刚这条语句报过错」，不外溢到下一条：报错的语句自己
+        // 收尾成合法 IR（补零值或整条跳过），后面的语句照常生成，这样同一个函数
+        // 里的多处类型错误才能一次报全。
+        context->poisoned = 0;
 
         // 每条语句单独定位，gdb 才能在语句粒度上停住。没有位置信息的合成语句
         // 会清空位置，避免继承上一条的行号造成误导。
@@ -4959,15 +4974,23 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                     // 无返回值函数的调用只能作语句。这里先单独判一次，否则会退化成
                     // 「初始化类型不匹配」，报错点离真正的原因太远。
                     if (expression_is_void_call(context, declaration->expression)) {
-                        report_error((const ASTNode *)declaration->expression,
-                                     "function '%s' returns no value and cannot be used in an expression", // 中文：无返回值函数不能当表达式用
-                                     ((FunctionCallNode *)declaration->expression)->name);
+                        codegen_error(context, (const ASTNode *)declaration->expression,
+                                      "function '%s' returns no value and cannot be used in an expression", // 中文：无返回值函数不能当表达式用
+                                      ((FunctionCallNode *)declaration->expression)->name);
+                        break; // 没有值可存，这条声明到此为止
                     }
                     if (declaration->type &&
                         !expression_assignable_to(context, declaration->expression,
                                                   declaration->type)) {
-                        report_error((const ASTNode *)declaration, "initializer type mismatch for '%s'",
-                                declaration->name); // 中文：初始化表达式类型不匹配
+                        codegen_error(context, (const ASTNode *)declaration,
+                                      "initializer type mismatch for '%s'",
+                                      declaration->name); // 中文：初始化表达式类型不匹配
+                        // 类型完全不对的表达式不能再按声明类型强转（会生成验证不过的
+                        // IR），写一个零值让存储指令保持合法。
+                        LLVMBuildStore(context->builder,
+                                       zero_var_value(context, declaration->type, type),
+                                       storage);
+                        break;
                     }
                     LLVMValueRef value = generate_expression_as(
                         context, declaration->expression, type);
@@ -4989,15 +5012,23 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                                    context->current_return_type == LITERAL_VOID;
                 if (!return_node->expression) {
                     if (!returns_void) {
-                        report_error((const ASTNode *)statement,
-                                     "function must return a value"); // 中文：函数必须返回值
+                        codegen_error(context, (const ASTNode *)statement,
+                                      "function must return a value"); // 中文：函数必须返回值
+                        // 有返回值的函数里写裸 `return;`：补一条零值返回，
+                        // 基本块必须有终结指令，否则模块验证不过。
+                        LLVMBuildRet(context->builder,
+                                     zero_var_value(context, context->current_return_var_type,
+                                                    context->current_return_type));
+                        break;
                     }
                     LLVMBuildRetVoid(context->builder);
                     break;
                 }
                 if (returns_void) {
-                    report_error((const ASTNode *)statement,
-                                 "function returns no value, so `return` cannot carry one"); // 中文：无返回值函数不能带返回值
+                    // 这条错误在 validate_implicit_return 里已经报过了（那是纯语句形状
+                    // 检查，整个程序一次报完）。这里只负责把 IR 收尾成 `ret void`。
+                    LLVMBuildRetVoid(context->builder);
+                    break;
                 }
                 // 标量返回类型同样要校验。以前这里只查 enum/struct/pointer，
                 // `fn g(): i32 { return "x"; }` 被跳过，最后崩成 LLVM 的
@@ -5008,7 +5039,12 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 const VarTypeNode *return_type = context->current_return_var_type;
                 if (return_type && !return_type->is_array &&
                     !expression_assignable_to(context, return_node->expression, return_type)) {
-                    report_error((const ASTNode *)statement, "return type mismatch"); // 中文：返回值类型不匹配
+                    codegen_error(context, (const ASTNode *)statement,
+                                  "return type mismatch"); // 中文：返回值类型不匹配
+                    LLVMBuildRet(context->builder,
+                                 zero_var_value(context, return_type,
+                                                context->current_return_type));
+                    break;
                 }
                 LLVMValueRef value = context->current_return_var_type
                     ? generate_expression_for_type(
@@ -5465,12 +5501,12 @@ static void validate_var_type(CodeGenContext *context, VarTypeNode *type) {
         }
     }
     if (type->enum_name && !tap_find_enum(context->program, type->enum_name)) {
-        report_error(NULL, "undefined enum type '%s'",
-                type->enum_name); // 中文：未定义的枚举类型
+        codegen_error(context, NULL, "undefined enum type '%s'",
+                      type->enum_name); // 中文：未定义的枚举类型
     }
     if (type->struct_name && !tap_find_struct(context->program, type->struct_name)) {
-        report_error(NULL, "undefined struct type '%s'",
-                type->struct_name); // 中文：未定义的结构体类型
+        codegen_error(context, NULL, "undefined struct type '%s'",
+                      type->struct_name); // 中文：未定义的结构体类型
     }
     if (type->is_array) validate_var_type(context, type->element_type);
     if (type->is_pointer) validate_var_type(context, type->element_type);
@@ -5525,16 +5561,19 @@ static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
         for (ASTNode *other = node->next; other; other = other->next) {
             EnumNode *other_enum = (EnumNode *)other;
             if (strcmp(enum_node->name, other_enum->name) == 0) {
-                report_error((const ASTNode *)enum_node, "duplicate enum '%s'",
-                        enum_node->name); // 中文：重复的枚举声明
+                codegen_error(context, (const ASTNode *)enum_node,
+                              "duplicate enum '%s'",
+                              enum_node->name); // 中文：重复的枚举声明
             }
         }
         for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
             EnumVariantNode *variant_node = (EnumVariantNode *)variant;
             for (ASTNode *other = variant->next; other; other = other->next) {
                 if (strcmp(variant_node->name, ((EnumVariantNode *)other)->name) == 0) {
-                    report_error((const ASTNode *)enum_node, "duplicate enum variant '%s.%s'",
-                            enum_node->name, variant_node->name); // 中文：重复的枚举成员
+                    codegen_error(context, (const ASTNode *)enum_node,
+                                  "duplicate enum variant '%s.%s'",
+                                  enum_node->name,
+                                  variant_node->name); // 中文：重复的枚举成员
                 }
             }
         }
@@ -5545,21 +5584,25 @@ static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
         for (ASTNode *other = node->next; other; other = other->next) {
             StructNode *other_struct = (StructNode *)other;
             if (strcmp(struct_node->name, other_struct->name) == 0) {
-                report_error((const ASTNode *)struct_node, "duplicate struct '%s'",
-                        struct_node->name); // 中文：重复的结构体声明
+                codegen_error(context, (const ASTNode *)struct_node,
+                              "duplicate struct '%s'",
+                              struct_node->name); // 中文：重复的结构体声明
             }
         }
         if (!struct_node->is_tagged_enum && tap_find_enum(context->program, struct_node->name)) {
-            report_error((const ASTNode *)struct_node, "type '%s' is already declared as enum",
-                    struct_node->name); // 中文：类型名已声明为枚举
+            codegen_error(context, (const ASTNode *)struct_node,
+                          "type '%s' is already declared as enum",
+                          struct_node->name); // 中文：类型名已声明为枚举
         }
         for (ASTNode *field = struct_node->fields; field; field = field->next) {
             StructFieldNode *struct_field = (StructFieldNode *)field;
             validate_var_type(context, struct_field->field_type);
             for (ASTNode *other = field->next; other; other = other->next) {
                 if (strcmp(struct_field->name, ((StructFieldNode *)other)->name) == 0) {
-                    report_error((const ASTNode *)struct_node, "duplicate struct field '%s.%s'",
-                            struct_node->name, struct_field->name); // 中文：重复的结构体字段
+                    codegen_error(context, (const ASTNode *)struct_node,
+                                  "duplicate struct field '%s.%s'",
+                                  struct_node->name,
+                                  struct_field->name); // 中文：重复的结构体字段
                 }
             }
         }
@@ -5571,12 +5614,22 @@ static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
         validate_var_type(context, function->return_type);
-        validate_function_returns(function);
-        validate_implicit_return(function);
         for (ASTNode *type = function->param_types; type; type = type->next) {
             validate_var_type(context, (VarTypeNode *)type);
         }
         validate_statement_types(context, function->body);
+    }
+}
+
+// 「返回值形状」的检查：有返回类型的函数必须所有路径都 return，无返回类型的函数
+// 不能 `return value;`。这两条只看语句形状，不依赖类型信息，所以即使
+// validate_user_types 已经报过结构性问题也照样跑 —— 它们不会让 IR 生成变得不安全。
+static void validate_return_shapes(CodeGenContext *context, ProgramNode *program) {
+    for (ASTNode *node = program->functions; node; node = node->next) {
+        if (node->type != NODE_FUNCTION) continue;
+        FunctionNode *function = (FunctionNode *)node;
+        validate_function_returns(context, function);
+        validate_implicit_return(context, function);
     }
 }
 
@@ -5702,7 +5755,13 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
     // 调试信息要在生成任何指令之前建好：DICompileUnit 是后续所有 DISubprogram 的父节点。
     if (context->debug_info) debug_info_initialize(context);
     FunctionNode *user_main = find_user_main(program);
+    // 结构性问题（重复声明、未定义类型、缺返回值）全是纯 AST 检查，报完能继续查下一条。
+    // 但报过之后 AST 已经不可信，IR 生成一律不做 —— 直接收工，让 main 退出 1。
     validate_user_types(context, program);
+    if (context->errors_reported > 0) return;
+    // 返回值形状与类型无关，放在短路之后单独跑：这样「函数缺返回值」和
+    // 「let 初始化类型不匹配」能在同一轮里一起报出来。
+    validate_return_shapes(context, program);
     declare_struct_types(context, program);
 
     LLVMTypeRef int32_type = LLVMInt32TypeInContext(context->context);
@@ -5760,6 +5819,8 @@ void generate_code(CodeGenContext *context, ProgramNode *program) {
         context->symbols = NULL;
         context->current_return_type = function_return_type(function);
         context->current_return_var_type = function_return_var_type(function);
+        // 毒化状态按函数隔离：上一个函数的类型错误不该让这个函数一条都不查。
+        context->poisoned = 0;
 
         debug_info_begin_function(context, llvm_function, function->name,
                                   function->filename, (unsigned)function->line,

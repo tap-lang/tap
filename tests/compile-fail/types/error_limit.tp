@@ -1,0 +1,26 @@
+// 一个系统性错误（比如整份文件都写错了类型）不该刷出成百上千条诊断：报够
+// TAP_MAX_ERRORS 条就停。上限和语法 / 借用检查共用同一个计数器。
+fn main(): i32 {
+    let v0: i32 = "s0";
+    let v1: i32 = "s1";
+    let v2: i32 = "s2";
+    let v3: i32 = "s3";
+    let v4: i32 = "s4";
+    let v5: i32 = "s5";
+    let v6: i32 = "s6";
+    let v7: i32 = "s7";
+    let v8: i32 = "s8";
+    let v9: i32 = "s9";
+    let v10: i32 = "s10";
+    let v11: i32 = "s11";
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: initializer type mismatch for 'v0'
+error: initializer type mismatch for 'v9'
+error: too many errors (10), stopping now
+- .exit
+1
+-- */
