@@ -1,0 +1,22 @@
+// 反方向：只借了一个字段，不能把整个结构体当成还能随便用的。
+// `take(point)` 会把 point 整个拷走，调用方手里那条 `&mut point.left` 立刻悬垂。
+
+struct Point { left: i32, right: i32 }
+
+fn take(point: Point): i32 {
+    return point.left + point.right;
+}
+
+fn main(): i32 {
+    let point: Point = Point { left: 1, right: 2 };
+    let left: &mut i32 = &mut point.left;
+    let value: i32 = take(point);
+    return left[0] + value;
+}
+
+/** -- test
+- .stderr
+error: 'point' is mutably borrowed and cannot be used here
+- .exit
+1
+-- */

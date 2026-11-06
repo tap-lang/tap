@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | 1 | 结构体存借用不查寿命 | 「返回字面量」已挡住；经变量中转、进容器仍能带出悬垂 | 高 | 大 |
 | 2 | 没有 NLL | 借用活到作用域结束，与之后用不用无关 | 中 | 中 |
-| 3 | 借用粒度是变量，不是字段 | `&p.left` 借走整个 `p`，改 `p.right` 也报错 | 中 | 中 |
+| 3 | ~~借用粒度是变量，不是字段~~ | ✅ 已细化到字段路径（2026-11-07） | 中 | 中 |
 | 4 | `Vec<&T>` 推不出类型实参 | `cannot infer compatible generic arguments for 'push'` | 低 | 中 |
 | 5 | 不支持 `&&T` | `expected type` | 低 | 小 |
 | 6 | 多引用参数不能返回借用 | 报「两个引用参数，无法确定借自哪个」 | 中 | 大（等于 1） |
@@ -126,8 +126,8 @@ print("%d\n", value);      // error: 'value' is mutably borrowed and cannot be u
 
 ### 为什么现在不行
 
-检查器是**作用域秩**模型：`&mut x` 一旦绑到变量，就把 `x` 的 `mutable_borrow_rank` 设成
-该变量的作用域秩，出作用域才清。没有「最后一次使用」的概念，也就没有活跃点分析。
+检查器是**作用域秩**模型：`&mut x` 一旦绑到变量，就留下一条 `BorrowRecord`（带建立时
+的作用域秩），出作用域才清。没有「最后一次使用」的概念，也就没有活跃点分析。
 
 ### 改法
 
@@ -143,9 +143,31 @@ print("%d\n", value);      // error: 'value' is mutably borrowed and cannot be u
 先只对 `&mut` 做（`&` 共享借用的冲突本来就少），并且保留一个开关（`TAP_BORROW_LEXICAL=1`）
 回到词法语义，方便对比排查。
 
-## 3. 借用粒度是变量，不是字段
+## 3. 借用粒度是变量，不是字段（✅ 已完成，2026-11-07）
 
-### 现在什么表现
+> 已按下面的「改法」落地：`BorrowSymbol` 上的两个 `*_borrow_rank` 整数换成挂在
+> `BorrowContext` 上的 `BorrowRecord` 链表，每条记录带 `base + path`。路径的段写成
+> `/left`、`/left/next`（字段链）、`/items/#0`（常量下标）、`/items/*`（非常量下标，
+> 通配），空串表示整个对象。冲突判定改成 `paths_overlap()`（两条路径互为前缀即重叠）。
+> 新用例：[`run-pass/types/borrow_field_granularity.tp`](../tests/run-pass/types/borrow_field_granularity.tp)、
+> [`compile-fail/borrow/borrow_parent_while_child_borrowed.tp`](../tests/compile-fail/borrow/borrow_parent_while_child_borrowed.tp)、
+> [`compile-fail/borrow/use_whole_while_field_borrowed.tp`](../tests/compile-fail/borrow/use_whole_while_field_borrowed.tp)。
+> 全量 289 tests：288 passed, 1 skipped, 0 failed。
+>
+> 落地时的两个取舍：
+>
+> 1. **路径穿过引用/指针就不跟踪**（`base` 置空，记录根本不参与比较）。这样
+>    「两个引用参数可能指向同一块内存」那个风险自动消失 —— 不是「保守按冲突算」，
+>    而是「这两处都不归本帧管」。
+> 2. **方法返回借用的登记仍然是整个接收者**（路径为空）。方法签名里没有「返回的
+>    引用指向哪个字段」的信息，`let r = p.peek()` 之后 `p.right = x` 照样报。
+>
+> 顺带发现一个**独立的 Codegen 缺口**：`&mut a.b.c`（多级字段取地址，`a` 是结构体
+> 值或 `&mut` 引用）会报 `pointer expression type mismatch`。借用检查这一侧认得这条
+> 路径（`/inner/value` 这种记录是正常的），纯粹是取地址那一步没打通。要修得动
+> `codegen.c` 的字段地址生成，没在这一项里做。
+
+### 当初什么表现
 
 ```text
 struct Pair { left: i32, right: i32 }
@@ -160,12 +182,12 @@ p.right = 5;                      // error: 'p' is borrowed and cannot be assign
 读 `p.right` 是允许的（`check_plain_use` 只拦 `&mut` 借出时的独占冲突），但**写另一个
 字段**被拦。两个字段在内存上完全不重叠，这里报错是纯保守。
 
-### 为什么现在不行
+### 为什么当时不行
 
 `BorrowSymbol` 只存 `mutable_borrow_rank` / `shared_borrow_rank` 两个整数，记的是
 「这个**变量**被借走了」，没有记「被借走的是哪个字段」。
 
-### 改法
+### 当时的改法
 
 把两个秩换成一张「借用路径」小表：每条借用记 `base 符号 + 字段/下标链`（例如
 `p.left`、`items[2].x`）。冲突判定从「同一个符号」改成「路径有前缀关系」：
@@ -174,13 +196,7 @@ p.right = 5;                      // error: 'p' is borrowed and cannot be assign
 - `p.left` 和 `p.right` → 不冲突
 - `p.left` 和 `p.left` → 冲突
 
-`codegen.c` 的 `generate_field_address` 已经在走这条路径了，判定逻辑可以直接复用
-`borrow.c` 里已有的 `resolve_lvalue` 那套「左值路径」遍历。
-
-### 风险
-
-路径里一旦穿过 `*T` / `&T`（`&pair.left` 里 `pair` 是 `&Pair`），路径的「根」就是函数外
-的对象，前缀比较要做特殊处理（两个不同的引用参数可能指向同一块内存，保守起见仍按冲突算）。
+判定逻辑直接复用 `borrow.c` 里已有的 `resolve_lvalue` 那套「左值路径」遍历。
 
 ## 4. `Vec<&T>` 推不出类型实参
 
@@ -303,14 +319,14 @@ pub fn free(builder: StringBuilder): i32 { ... }   // 保持按值，同 Vec
 |---|---|---|
 | ~~1~~ | ~~**1c 结构体借用禁止出函数**~~ | ✅ 已完成（2026-11-07） |
 | ~~2~~ | ~~**7 `StringBuilder` 迁移**~~ | ✅ 已完成（2026-11-07） |
-| 1 | **3 借用粒度到字段** | 日常写代码最容易撞上的误报；改动局限在 `borrow.c` |
-| 2 | **2 NLL** | 减少「必须把 `&mut` 塞进小作用域」的别扭写法；需要加一趟活跃性分析 |
-| 3 | **1b 生命周期参数** | 真正的 L2；会动单态化，单独一期做 |
-| 4 | 4 / 5 / 6 | 都依赖 1b 或 3，跟着做 |
+| ~~3~~ | ~~**3 借用粒度到字段**~~ | ✅ 已完成（2026-11-07） |
+| 1 | **2 NLL** | 减少「必须把 `&mut` 塞进小作用域」的别扭写法；需要加一趟活跃性分析 |
+| 2 | **1b 生命周期参数** | 真正的 L2；会动单态化，单独一期做 |
+| 3 | 4 / 5 / 6 | 都依赖 1b，跟着做 |
 
-如果只做一件：**3**。它是写代码时最常撞上的误报（`&p.left` 拦住 `p.right`），改动只在
-`borrow.c` 的借用记录结构里，不牵动类型系统。1c 挡不住的那部分悬垂（经变量中转）只能靠
-1b，别用加状态传播的方式硬撑 —— 误报会立刻出现在正常代码里。
+如果只做一件：**2（NLL）**。字段粒度的误报清掉之后，剩下的别扭几乎都来自「借用到
+作用域结束」——把 `&mut` 塞进小块的写法会成批消失。1c 挡不住的那部分悬垂（经变量
+中转）只能靠 1b，别用加状态传播的方式硬撑 —— 误报会立刻出现在正常代码里。
 
 ## 怎么验证
 

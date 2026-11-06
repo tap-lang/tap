@@ -18,24 +18,37 @@ typedef struct BorrowSymbol {
     int pointee_rank;
     int is_reference;
     int reference_mutable;
-    // 被 `&mut` 借出时记下借用所在的作用域秩，-1 表示当前没有独占借用。
-    int mutable_borrow_rank;
-    // 被 `&` 借出时同理。多次共享借用取**最外层**的秩，保证内层块退出时不会误清。
-    int shared_borrow_rank;
-    // 当前**语句**里已经发生的临时借用（`f(&mut x, &mut x)` 的实参位置）。
-    // 语句边界清空：它们不像 `let r = &mut x` 那样活到作用域末尾，所以不能记在
-    // 上面两个秩字段里 —— 那样会把「同一语句内的冲突」和「跨语句的冲突」混为一谈。
-    int temp_mutable_borrow;
-    int temp_shared_borrow;
     // 声明的完整类型，用来判断 `&a.b[i]` 到底指向栈帧还是堆。未知时为 NULL，
     // 此时一律按「还在栈帧里」处理（保守方向：宁可报错也不放过悬垂）。
     const VarTypeNode *type;
     struct BorrowSymbol *next;
 } BorrowSymbol;
 
+// 借用路径的最大长度。路径是按字段/下标逐段拼出来的，正常代码很难超过这个长度；
+// 真超了就退化成「整个对象」，方向是保守的。
+#define BORROW_PATH_MAX 128
+
+// 一条借用记录。
+//
+// 借用的粒度是**路径**而不是整个变量：`&mut p.left` 只占住 `p.left`，不影响
+// `p.right`。路径写成 '/' 分隔的段：`/left`、`/left/next`（字段链）、
+// `/items/#0`（常量下标）、`/items/*`（下标不是常量，通配）。空串表示整个对象。
+//
+// 记录挂在 context 的链表里而不是挂在符号上：一个变量同时被借出多条互不相交的路径
+// 是常态（`&mut p.left` + `&mut p.right`），链天然支持，也不用给符号预留槽位。
+typedef struct BorrowRecord {
+    BorrowSymbol *base;   // 路径的起点变量
+    char path[BORROW_PATH_MAX];
+    int is_mutable;       // &mut 借出
+    int rank;             // 建立这条记录时的作用域秩，用来在块退出时清掉
+    int is_temp;          // 语句级临时借用：语句结束就不存在了
+    struct BorrowRecord *next;
+} BorrowRecord;
+
 typedef struct {
     ProgramNode *program;
     BorrowSymbol *symbols;
+    BorrowRecord *borrows;
     int rank; // 当前作用域秩
 } BorrowContext;
 
@@ -45,10 +58,16 @@ typedef struct {
 // 指向的东西就不归本函数管，base 置空、rank 置 -1。
 typedef struct {
     BorrowSymbol *base;   // 可跟踪的本地槽位；穿过指针后为 NULL
+    // 路径起点的变量：`base` 穿过指针后会被清空，这个不清，只用来在诊断里报名字。
+    BorrowSymbol *root;
     int rank;             // 存储所在作用域秩；-1 表示函数外
     const VarTypeNode *type; // 这个左值本身的类型；未知为 NULL
     int crossed_shared;   // 路径上穿过了共享引用 `&T`
     int crossed_mutable;  // 路径上穿过了独占引用 `&mut T`
+    // 从 base 走到这个左值经过的字段/下标链，格式见 BorrowRecord::path。
+    // 空串表示就是 base 本身。base 为 NULL 时无意义。
+    char path[BORROW_PATH_MAX];
+    int path_overflow;    // 路径太长被截断，已退化成「整个对象」
 } LValueInfo;
 
 static void walk_expression(BorrowContext *context, ASTNode *expression);
@@ -94,40 +113,63 @@ static BorrowSymbol *insert_symbol(BorrowContext *context, const char *name,
     symbol->pointee_rank = pointee_rank;
     symbol->is_reference = is_reference;
     symbol->reference_mutable = reference_mutable;
-    symbol->mutable_borrow_rank = -1;
-    symbol->shared_borrow_rank = -1;
-    symbol->temp_mutable_borrow = 0;
-    symbol->temp_shared_borrow = 0;
     symbol->type = type;
     symbol->next = context->symbols;
     context->symbols = symbol;
     return symbol;
 }
 
-// 退出作用域：弹出符号，并把**在这个作用域里建立的**借用标记清掉。
+// 退出作用域：弹出符号，并把**在这个作用域里建立的**借用记录清掉。
 //
-// 只清 rank 完全相等的标记：内层块退出时不能把外层的共享借用一起清掉，否则
+// 只清 rank 完全相等的记录：内层块退出时不能把外层的共享借用一起清掉，否则
 // `let a = &x; { let b = &x; } x = 1;` 会被误判成合法。
+//
+// 顺带清掉「base 就是这一批被弹出的符号」的记录 —— 它们不可能还有效，而且 base
+// 指针马上就要被 free，留着就是悬垂。
 static void pop_symbols_to(BorrowContext *context, BorrowSymbol *mark, int rank) {
+    BorrowRecord **link = &context->borrows;
+    while (*link) {
+        BorrowRecord *record = *link;
+        int popped = record->rank == rank;
+        for (BorrowSymbol *symbol = context->symbols;
+             !popped && symbol != mark; symbol = symbol->next) {
+            if (symbol == record->base) popped = 1;
+        }
+        if (popped) {
+            *link = record->next;
+            free(record);
+            continue;
+        }
+        link = &record->next;
+    }
+
     while (context->symbols != mark) {
         BorrowSymbol *next = context->symbols->next;
         free(context->symbols);
         context->symbols = next;
     }
-    for (BorrowSymbol *symbol = context->symbols; symbol; symbol = symbol->next) {
-        if (symbol->mutable_borrow_rank == rank) symbol->mutable_borrow_rank = -1;
-        if (symbol->shared_borrow_rank == rank) symbol->shared_borrow_rank = -1;
+}
+
+// 语句边界：清掉上一句留下的临时借用记录。
+static void clear_temp_borrows(BorrowContext *context) {
+    BorrowRecord **link = &context->borrows;
+    while (*link) {
+        BorrowRecord *record = *link;
+        if (record->is_temp) {
+            *link = record->next;
+            free(record);
+            continue;
+        }
+        link = &record->next;
     }
 }
 
-// 语句边界：清掉上一句留下的临时借用标记。
-//
-// 直接遍历当前符号表就够了 —— 语句内的临时借用一定落在**当前作用域里已登记**的
-// 名字上，不需要额外维护一个链表。
-static void clear_temp_borrows(BorrowContext *context) {
-    for (BorrowSymbol *symbol = context->symbols; symbol; symbol = symbol->next) {
-        symbol->temp_mutable_borrow = 0;
-        symbol->temp_shared_borrow = 0;
+// 把整个借用记录链清空（一个函数检查完时用）。
+static void clear_all_borrows(BorrowContext *context) {
+    while (context->borrows) {
+        BorrowRecord *next = context->borrows->next;
+        free(context->borrows);
+        context->borrows = next;
     }
 }
 
@@ -167,6 +209,53 @@ static void apply_field(BorrowContext *context, LValueInfo *info,
     info->type = struct_field_type(context, info->type, field);
 }
 
+// 往路径末尾追加一段。路径超出 BORROW_PATH_MAX 时退化成「整个对象」——
+// 保守方向，宁可多报也不漏。
+static void path_push(LValueInfo *info, const char *segment) {
+    if (!info->base || info->path_overflow) return;
+    size_t used = strlen(info->path);
+    size_t length = strlen(segment);
+    if (used + 1 + length + 1 > BORROW_PATH_MAX) {
+        info->path[0] = '\0';
+        info->path_overflow = 1;
+        return;
+    }
+    info->path[used] = '/';
+    memcpy(info->path + used + 1, segment, length + 1);
+}
+
+// 路径整体是不是「前缀」关系（含相等）。逐段比较，段边界是 '/'；
+// 段 `*` 是下标通配：非常量下标的元素和任何下标都算重叠。
+static int path_is_prefix(const char *whole, const char *prefix) {
+    const char *left = whole;
+    const char *right = prefix;
+    for (;;) {
+        if (*right == '\0') return 1;
+        if (*left == '\0') return 0;
+        left++; // 跳过 '/'
+        right++;
+        const char *left_end = strchr(left, '/');
+        const char *right_end = strchr(right, '/');
+        size_t left_length = left_end ? (size_t)(left_end - left) : strlen(left);
+        size_t right_length =
+            right_end ? (size_t)(right_end - right) : strlen(right);
+        int wildcard = (left_length == 1 && *left == '*') ||
+                       (right_length == 1 && *right == '*');
+        if (!wildcard &&
+            (left_length != right_length ||
+             memcmp(left, right, left_length) != 0)) {
+            return 0;
+        }
+        left += left_length;
+        right += right_length;
+    }
+}
+
+// 两个左值是否可能指向同一块存储：只要有前缀关系就算（保守）。
+static int paths_overlap(const char *left, const char *right) {
+    return path_is_prefix(left, right) || path_is_prefix(right, left);
+}
+
 // 把 `a.b.c` 的第一个点前面的部分取出来。成功返回 1。
 static int split_dotted(const char *name, char *buffer, size_t size,
                         const char **rest) {
@@ -192,41 +281,59 @@ static int next_segment(const char **rest, char *buffer, size_t size) {
     return 1;
 }
 
-static void resolve_lvalue(BorrowContext *context, ASTNode *expression,
-                           LValueInfo *info) {
+static void reset_lvalue(LValueInfo *info) {
     info->base = NULL;
+    info->root = NULL;
     info->rank = -1;
     info->type = NULL;
     info->crossed_shared = 0;
     info->crossed_mutable = 0;
+    info->path[0] = '\0';
+    info->path_overflow = 0;
+}
+
+// 名字 → 左值。`point.x` 这种只有字段链的写法在 AST 里是一个带点的标识符，
+// 所以路径要从名字里拆。
+static void resolve_identifier(BorrowContext *context, const char *name,
+                               LValueInfo *info) {
+    reset_lvalue(info);
+    BorrowSymbol *symbol = find_symbol(context, name);
+    if (symbol) {
+        info->base = symbol;
+        info->root = symbol;
+        info->rank = symbol->storage_rank;
+        info->type = symbol->type;
+        return;
+    }
+
+    char base_name[256];
+    const char *rest = NULL;
+    if (!split_dotted(name, base_name, sizeof(base_name), &rest)) return;
+    symbol = find_symbol(context, base_name);
+    if (!symbol) return; // 模块名、常量、枚举成员等，不归借用检查管
+
+    // 取的是变量本身的地址，所以起点还在栈帧里；字段链后面可能穿指针。
+    info->base = symbol;
+    info->root = symbol;
+    info->rank = symbol->storage_rank;
+    info->type = symbol->type;
+
+    char field[256];
+    while (next_segment(&rest, field, sizeof(field))) {
+        apply_field(context, info, field);
+        path_push(info, field);
+    }
+}
+
+static void resolve_lvalue(BorrowContext *context, ASTNode *expression,
+                           LValueInfo *info) {
+    reset_lvalue(info);
     if (!expression) return;
 
     switch (expression->type) {
         case NODE_IDENTIFIER: {
-            const char *name = ((IdentifierNode *)expression)->name;
-            BorrowSymbol *symbol = find_symbol(context, name);
-            if (symbol) {
-                info->base = symbol;
-                info->rank = symbol->storage_rank;
-                info->type = symbol->type;
-                return;
-            }
-
-            char base_name[256];
-            const char *rest = NULL;
-            if (!split_dotted(name, base_name, sizeof(base_name), &rest)) return;
-            symbol = find_symbol(context, base_name);
-            if (!symbol) return; // 模块名、常量、枚举成员等，不归借用检查管
-
-            // 取的是变量本身的地址，所以起点还在栈帧里；字段链后面可能穿指针。
-            info->base = symbol;
-            info->rank = symbol->storage_rank;
-            info->type = symbol->type;
-
-            char field[256];
-            while (next_segment(&rest, field, sizeof(field))) {
-                apply_field(context, info, field);
-            }
+            resolve_identifier(context, ((IdentifierNode *)expression)->name,
+                               info);
             return;
         }
 
@@ -241,6 +348,20 @@ static void resolve_lvalue(BorrowContext *context, ASTNode *expression,
             } else {
                 info->type = NULL;
             }
+            // 常量下标按具体元素记（`&v[0]` 和 `v[1] = x` 互不相干），
+            // 非常量只能用通配 —— 判断不了是不是同一个元素，按重叠处理。
+            if (index->index && index->index->type == NODE_LITERAL) {
+                LiteralNode *literal = (LiteralNode *)index->index;
+                if (literal->literal_type >= LITERAL_INT &&
+                    literal->literal_type <= LITERAL_U128) {
+                    char segment[32];
+                    snprintf(segment, sizeof(segment), "#%llu",
+                             (unsigned long long)literal->value.int_value);
+                    path_push(info, segment);
+                    return;
+                }
+            }
+            path_push(info, "*");
             return;
         }
 
@@ -248,6 +369,7 @@ static void resolve_lvalue(BorrowContext *context, ASTNode *expression,
             FieldAccessNode *access = (FieldAccessNode *)expression;
             resolve_lvalue(context, access->object, info);
             apply_field(context, info, access->field);
+            path_push(info, access->field);
             return;
         }
 
@@ -450,57 +572,91 @@ static int reference_is_mutable(ASTNode *expression) {
 // 借用规则
 // ---------------------------------------------------------------------------
 
-// 借用冲突检查的核心：source 这个符号要被借出 is_mutable。
+// 追加一条借用记录。path 是相对 base 的路径，空串表示借走整个对象。
+static void add_borrow_record(BorrowContext *context, BorrowSymbol *base,
+                              const char *path, int is_mutable, int is_temp) {
+    BorrowRecord *record = (BorrowRecord *)malloc(sizeof(BorrowRecord));
+    if (!record) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    record->base = base;
+    snprintf(record->path, sizeof(record->path), "%s", path ? path : "");
+    record->is_mutable = is_mutable;
+    record->rank = context->rank;
+    record->is_temp = is_temp;
+    record->next = context->borrows;
+    context->borrows = record;
+}
+
+// 统计 base 上与被查路径重叠的借用。
+//
+// only_mutable 为真时只关心独占借用（`&self` 接收、普通读取用得上）；
+// 为假时两类都算。
+static void collect_overlapping_borrows(BorrowContext *context,
+                                        BorrowSymbol *base, const char *path,
+                                        int only_mutable, int include_temp,
+                                        int *has_mutable, int *has_shared) {
+    if (has_mutable) *has_mutable = 0;
+    if (has_shared) *has_shared = 0;
+    if (!base) return;
+    for (BorrowRecord *record = context->borrows; record;
+         record = record->next) {
+        if (record->base != base) continue;
+        if (record->is_temp && !include_temp) continue;
+        if (only_mutable && !record->is_mutable) continue;
+        if (!paths_overlap(record->path, path)) continue;
+        if (record->is_mutable) {
+            if (has_mutable) *has_mutable = 1;
+        } else if (has_shared) {
+            *has_shared = 1;
+        }
+    }
+}
+
+// 借用冲突检查的核心：把 base 上的 path 借出去（is_mutable 表示独占）。
 //
 // mark 只在借用**会持续**的地方为真（`let r = ...`）：临时借用（`f(&mut x)` 这种）
-// 在语句结束时就不存在了，不记进秩字段，只记一个语句级的临时标记。
+// 在语句结束时就不存在了，只留一条 is_temp 记录，语句边界清掉。
 //
 // 反过来，检查临时借用时**必须**把同一语句里已经发生的临时借用也算进来，
-// 否则 `f(&mut x, &mut x)` 这种写法会溜过去 —— 两次借用都没留下持久标记。
+// 否则 `f(&mut x, &mut x)` 这种写法会溜过去 —— 两次借用都没留下持久记录。
 static void check_symbol_borrow_conflict(BorrowContext *context,
-                                         BorrowSymbol *source, int is_mutable,
-                                         int mark,
+                                         BorrowSymbol *source, const char *path,
+                                         int is_mutable, int mark,
                                          const ASTNode *diagnostic_node) {
     if (!source) return;
-    int check_temp = !mark;
+    int has_mutable = 0;
+    int has_shared = 0;
+    collect_overlapping_borrows(context, source, path, 0, !mark, &has_mutable,
+                                &has_shared);
 
-    // 每条冲突只报一条然后返回：报完之后继续改状态会让后面的语句再报一遍，
+    // 每条冲突只报一条然后返回：报完之后继续登记会让后面的语句再报一遍，
     // 一个错误刷出三四条诊断，反而看不清。返回也意味着不再登记这次借用 ——
     // 反正已经有错，编译不会走到生成代码那一步。
     if (is_mutable) {
-        if (source->mutable_borrow_rank >= 0 ||
-            (check_temp && source->temp_mutable_borrow)) {
+        if (has_mutable) {
             report_error_soft(diagnostic_node, "'%s' is already mutably borrowed",
                               source->name); // 中文：已经被独占借用
             return;
         }
-        if (source->shared_borrow_rank >= 0 ||
-            (check_temp && source->temp_shared_borrow)) {
+        if (has_shared) {
             report_error_soft(diagnostic_node,
                               "'%s' is already borrowed, so it cannot be borrowed mutably",
                               source->name); // 中文：已被共享借用，不能再独占借用
             return;
         }
-        if (mark) source->mutable_borrow_rank = context->rank;
-        else source->temp_mutable_borrow = 1;
+        add_borrow_record(context, source, path, 1, !mark);
         return;
     }
 
-    if (source->mutable_borrow_rank >= 0 ||
-        (check_temp && source->temp_mutable_borrow)) {
+    if (has_mutable) {
         report_error_soft(diagnostic_node,
                           "'%s' is mutably borrowed, so it cannot be borrowed again",
                           source->name); // 中文：已被独占借用，不能再借用
         return;
     }
-    if (mark) {
-        if (source->shared_borrow_rank < 0 ||
-            context->rank < source->shared_borrow_rank) {
-            source->shared_borrow_rank = context->rank;
-        }
-    } else {
-        source->temp_shared_borrow = 1;
-    }
+    add_borrow_record(context, source, path, 0, !mark);
 }
 
 // 只登记「这次借用持续到作用域末尾」，不报诊断。
@@ -508,16 +664,9 @@ static void check_symbol_borrow_conflict(BorrowContext *context,
 // 用在 `let r = &mut x;` 上：冲突检查在遍历表达式时就做过了（那里拿得到 `&mut x`
 // 自己的位置，比整条语句精确），这里再检查一遍会为同一个错误报两条。
 static void mark_persistent_borrow(BorrowContext *context, BorrowSymbol *source,
-                                   int is_mutable) {
+                                   const char *path, int is_mutable) {
     if (!source) return;
-    if (is_mutable) {
-        source->mutable_borrow_rank = context->rank;
-        return;
-    }
-    if (source->shared_borrow_rank < 0 ||
-        context->rank < source->shared_borrow_rank) {
-        source->shared_borrow_rank = context->rank;
-    }
+    add_borrow_record(context, source, path, is_mutable, 0);
 }
 
 // 检查一次借用是否与已有借用冲突。
@@ -534,7 +683,7 @@ static void check_borrow_conflict(BorrowContext *context, ASTNode *target,
         // 中文：不能透过共享引用取独占借用
     }
 
-    check_symbol_borrow_conflict(context, info.base, is_mutable, mark,
+    check_symbol_borrow_conflict(context, info.base, info.path, is_mutable, mark,
                                  diagnostic_node);
 }
 
@@ -561,7 +710,7 @@ static void mark_method_receiver_borrow(BorrowContext *context,
     const VarTypeNode *self_type = function_parameter_type(function, 0);
     if (!self_type || !self_type->is_reference) return;
 
-    check_symbol_borrow_conflict(context, receiver,
+    check_symbol_borrow_conflict(context, receiver, "",
                                  self_type->reference_mutable, 1,
                                  diagnostic_node);
 }
@@ -591,8 +740,11 @@ static void check_method_receiver_borrow(BorrowContext *context,
     // 按值接收：单独一条诊断。说「借用了就不能再借」会让人以为只是借用冲突，
     // 实际是「这个值被拿走了，你手上那个引用要悬垂」。
     if (!self_type->is_reference) {
-        if (receiver->mutable_borrow_rank >= 0 ||
-            receiver->shared_borrow_rank >= 0) {
+        int has_mutable = 0;
+        int has_shared = 0;
+        collect_overlapping_borrows(context, receiver, "", 0, 1, &has_mutable,
+                                    &has_shared);
+        if (has_mutable || has_shared) {
             const char *dot = strrchr(call->name, '.');
             report_error_soft(expression,
                               "cannot call method '%s' on '%s' while it is borrowed",
@@ -603,54 +755,63 @@ static void check_method_receiver_borrow(BorrowContext *context,
     }
 
     // `&mut self` 是独占要求；`&self` 只要接收者没被独占借走就行。
-    check_symbol_borrow_conflict(context, receiver,
+    check_symbol_borrow_conflict(context, receiver, "",
                                  self_type->reference_mutable, 0, expression);
 }
 
-// 普通使用（读取）一个已经被 `&mut` 借出的变量。
-static void check_plain_use(BorrowContext *context, ASTNode *expression) {
-    if (!expression || expression->type != NODE_IDENTIFIER) return;
-    BorrowSymbol *symbol =
-        lookup_symbol(context, ((IdentifierNode *)expression)->name);
+// 普通使用（读取）一个已经被 `&mut` 借出的左值。
+//
+// 路径同样细化到字段：握着 `&mut p.left` 去读 `p.right` 不该报错，读 `p` 整个
+// 或者读 `p.left` 才报。
+static void check_plain_use(BorrowContext *context, BorrowSymbol *symbol,
+                            const char *path, const ASTNode *diagnostic_node) {
     if (!symbol) return;
+    int has_mutable = 0;
     // 临时借用也算：`f(&mut x, x)` 里第二个实参读的就是被独占借走的 x。
-    if (symbol->mutable_borrow_rank < 0 && !symbol->temp_mutable_borrow) return;
-    report_error_soft(expression,
+    collect_overlapping_borrows(context, symbol, path, 1, 1, &has_mutable, NULL);
+    if (!has_mutable) return;
+    report_error_soft(diagnostic_node,
                       "'%s' is mutably borrowed and cannot be used here",
                       symbol->name); // 中文：变量已被独占借用
 }
 
-// 写入一个变量（`x = v`、`x.f = v`、`x[i] = v`）时的检查。
+// 写入一个左值（`x = v`、`x.f = v`、`x[i] = v`）时的检查。
 //
-// 两件事：不能写正在被借用的变量；不能通过共享引用 `&T` 写 —— 后者正是 `&T`
+// 两件事：不能写正在被借用的地方；不能通过共享引用 `&T` 写 —— 后者正是 `&T`
 // 唯一的承诺（借给你只是看），破了它整个借用体系就没意义了。
 //
-// through_reference 用来区分「给引用变量本身重新赋值」和「穿过引用写它指向的东西」：
-// `held = &other;` 改的是 held 这个槽，合法；`held.field = v` / `held[0] = v` 改的是
-// 被借的对象，只有 `&mut` 才允许。
-static void check_write_target(BorrowSymbol *symbol, int through_reference,
+// 写入也按路径判：握着 `&mut p.left` 时写 `p.right` 合法，写 `p` 或 `p.left`
+// 不合法。`crossed_shared` 区分「给引用变量本身重新赋值」和「穿过共享引用写它
+// 指向的东西」：`held = &other;` 改的是 held 这个槽，合法；`held.field = v` 改的
+// 是被借的对象，只有 `&mut` 才允许。
+static void check_write_target(BorrowContext *context, const LValueInfo *info,
                                const ASTNode *diagnostic_node) {
-    if (!symbol) return;
+    if (!info->base && !info->crossed_shared) return;
+
+    if (info->crossed_shared) {
+        report_error_soft(diagnostic_node,
+                          "cannot write through a shared reference '%s'",
+                          info->root ? info->root->name : "?");
+        // 中文：不能通过共享引用写入
+        return;
+    }
 
     // 一条语句只报一条：`&x` 和 `&mut x` 同时挂着的时候，两条都报会让人以为
     // 有两处不同的错误。
-    if (through_reference && symbol->is_reference &&
-        !symbol->reference_mutable) {
-        report_error_soft(diagnostic_node,
-                          "cannot write through a shared reference '%s'",
-                          symbol->name); // 中文：不能通过共享引用写入
-        return;
-    }
-    if (symbol->mutable_borrow_rank >= 0) {
+    int has_mutable = 0;
+    int has_shared = 0;
+    collect_overlapping_borrows(context, info->base, info->path, 0, 0,
+                                &has_mutable, &has_shared);
+    if (has_mutable) {
         report_error_soft(diagnostic_node,
                           "'%s' is mutably borrowed and cannot be assigned here",
-                          symbol->name); // 中文：变量已被独占借用
+                          info->base->name); // 中文：变量已被独占借用
         return;
     }
-    if (symbol->shared_borrow_rank >= 0) {
+    if (has_shared) {
         report_error_soft(diagnostic_node,
                           "'%s' is borrowed and cannot be assigned here",
-                          symbol->name); // 中文：变量已被借用，不能赋值
+                          info->base->name); // 中文：变量已被借用，不能赋值
     }
 }
 
@@ -721,9 +882,12 @@ static void walk_expression(BorrowContext *context, ASTNode *expression) {
         case NODE_SIZEOF:
             break;
 
-        case NODE_IDENTIFIER:
-            check_plain_use(context, expression);
+        case NODE_IDENTIFIER: {
+            LValueInfo info;
+            resolve_lvalue(context, expression, &info);
+            check_plain_use(context, info.base, info.path, expression);
             break;
+        }
 
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
@@ -760,14 +924,31 @@ static void walk_expression(BorrowContext *context, ASTNode *expression) {
 
         case NODE_INDEX_EXPRESSION: {
             IndexExpressionNode *index = (IndexExpressionNode *)expression;
-            walk_expression(context, index->array);
+            LValueInfo info;
+            resolve_lvalue(context, expression, &info);
+            if (info.base) {
+                // 下标表达式本身就是一个左值：只按这条路径查，别把整个数组算成
+                // 「读过一遍」，否则 `&mut v[0]` 会拦住 `v[1]`。
+                check_plain_use(context, info.base, info.path, expression);
+            } else {
+                walk_expression(context, index->array);
+            }
             walk_expression(context, index->index);
             break;
         }
 
-        case NODE_FIELD_ACCESS:
-            walk_expression(context, ((FieldAccessNode *)expression)->object);
+        case NODE_FIELD_ACCESS: {
+            FieldAccessNode *access = (FieldAccessNode *)expression;
+            LValueInfo info;
+            resolve_lvalue(context, expression, &info);
+            if (info.base) {
+                check_plain_use(context, info.base, info.path, expression);
+            } else {
+                // 接收者是调用结果、或者路径穿过了指针：退回原来的遍历方式。
+                walk_expression(context, access->object);
+            }
             break;
+        }
 
         case NODE_STRUCT_LITERAL: {
             StructLiteralNode *literal = (StructLiteralNode *)expression;
@@ -857,7 +1038,8 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
                     (ReferenceNode *)declaration->expression;
                 LValueInfo info;
                 resolve_lvalue(context, reference->target, &info);
-                mark_persistent_borrow(context, info.base, reference->is_mutable);
+                mark_persistent_borrow(context, info.base, info.path,
+                                       reference->is_mutable);
             }
             mark_method_receiver_borrow(context, declaration->expression,
                                         statement);
@@ -874,11 +1056,13 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             AssignmentNode *assignment = (AssignmentNode *)statement;
             walk_expression(context, assignment->expression);
 
-            BorrowSymbol *target = lookup_symbol(context, assignment->name);
-            // 带点的名字（`point.x`）是穿过结构体写字段，算「通过引用写」。
-            check_write_target(target,
-                               strchr(assignment->name, '.') != NULL, statement);
+            LValueInfo info;
+            resolve_identifier(context, assignment->name, &info);
+            check_write_target(context, &info, statement);
 
+            // 寿命与别名登记仍然按「整个引用变量」做：`r = &other` 改的是 r 这个槽，
+            // 它指向哪里是类型层面的事，和字段路径无关。
+            BorrowSymbol *target = info.base;
             int pointee_rank = -1;
             if (target && target->is_reference &&
                 reference_rank_of(context, assignment->expression,
@@ -901,13 +1085,11 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
         case NODE_INDEX_ASSIGNMENT: {
             IndexAssignmentNode *assignment = (IndexAssignmentNode *)statement;
             LValueInfo info;
-            resolve_lvalue(context, assignment->target->array, &info);
-            if (info.crossed_shared) {
-                report_error_soft(statement,
-                                  "cannot write through a shared reference");
-            }
-            check_write_target(info.base, 1, statement);
-            walk_expression(context, (ASTNode *)assignment->target);
+            resolve_lvalue(context, (ASTNode *)assignment->target, &info);
+            check_write_target(context, &info, statement);
+            // 只走下标表达式：目标本身是写入位置，已经查过了。再当读表达式走一遍
+            // 会对同一个错误报两条（「不能赋值」+「不能使用」）。
+            walk_expression(context, assignment->target->index);
             walk_expression(context, assignment->expression);
             break;
         }
@@ -1021,6 +1203,7 @@ static void check_function(BorrowContext *context, FunctionNode *function) {
     if (!function || function->is_extern) return;
 
     context->symbols = NULL;
+    context->borrows = NULL;
     context->rank = 0;
 
     // 参数存储在自己的栈帧里（秩 0），但引用型参数指向的是函数外，所以
@@ -1039,6 +1222,8 @@ static void check_function(BorrowContext *context, FunctionNode *function) {
     context->rank = 1;
     walk_statement_list(context, function->body);
     pop_symbols_to(context, NULL, context->rank);
+    // 兜底：参数（秩 0）上的借用不会在 pop 里被清掉，函数结束时统一释放。
+    clear_all_borrows(context);
 
     // 签名检查放在函数体之后：函数体里的错误更具体（「返回了局部值的引用」比
     // 「引用参数不是恰好一个」更能说明问题），先报更有用的那条。
@@ -1051,6 +1236,7 @@ int check_borrows(ProgramNode *program) {
     BorrowContext context;
     context.program = program;
     context.symbols = NULL;
+    context.borrows = NULL;
     context.rank = 0;
 
     // 只统计本次借用检查报了几条：调用方可能已经跑过别的阶段（现在不会，但

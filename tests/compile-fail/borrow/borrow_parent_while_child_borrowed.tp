@@ -1,0 +1,21 @@
+// 路径有前缀关系就是同一块存储：借走 `point.inner` 之后，它的子字段也不能再借。
+// 这是宽松化之后必须守住的那一侧 —— 只放宽「互不相交的兄弟路径」。
+
+struct Inner { value: i32 }
+struct Point { inner: Inner }
+
+fn main(): i32 {
+    let point: Point = Point { inner: Inner { value: 1 } };
+    let whole: &mut Inner = &mut point.inner;
+    let part: &mut i32 = &mut point.inner.value;
+    whole.value = 2;
+    part[0] = 3;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'point' is already mutably borrowed
+- .exit
+1
+-- */

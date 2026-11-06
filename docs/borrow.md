@@ -173,6 +173,44 @@ g(&x, &x);                          // 合法：两个共享借用
 实现上，语句内的临时借用单独记一份标记、语句边界清空，不和「活到作用域结束」的
 持久借用混在一起。
 
+### 借用的粒度是字段路径，不是整个变量
+
+`&mut pair.left` 只占住 `pair.left`。判定方式是「两条路径有没有前缀关系」：
+`/left` 和 `/right` 不相干，`/inner` 和 `/inner/value` 有（前者是后者的前缀，指向
+同一块存储），而空路径（整个对象）是所有路径的前缀。
+
+```text
+let left: &mut i32 = &mut pair.left;
+pair.right = 5;                         // 合法：兄弟字段
+let right: &mut i32 = &mut pair.right;  // 合法：两条不相交的路径
+
+let x: i32 = pair.left;                 // error: 这条路径已被独占借用
+let whole: Pair = pair;                 // error: 整个对象是所有路径的前缀
+```
+
+数组下标也算一段路径。**常量**下标按具体元素比较：
+
+```text
+let first: &mut i32 = &mut items[0];
+items[1] = 7;                           // 合法
+items[i] = 7;                           // error：i 不是常量，只能按重叠算
+```
+
+下标不是常量（或不是字面量）时统一记成通配段 —— 判断不了是不是同一个元素，保守
+按冲突处理。路径一旦穿过引用或指针，目标就不归本帧管，这类记录根本不参与判定，
+和以前一样。
+
+只放宽「互不相交的兄弟路径」这一侧，另一侧照旧：
+
+```text
+let whole: &mut Inner = &mut point.inner;
+let part: &mut i32 = &mut point.inner.value;   // error: 父路径已借出
+```
+
+写法上要注意 `&mut a.b.c`（多级字段取地址）是 **Codegen 侧**的独立缺口，会报
+`pointer expression type mismatch` —— 借用检查本身认得这条路径，是取地址那一步没
+打通，和这一节无关。
+
 通过共享引用写也是禁止的 —— 那是 `&T` 唯一的承诺：
 
 ```text
@@ -240,6 +278,9 @@ p.reset();              // error: 'p' is already borrowed, so it cannot be
 方法返回借用时，这次借用会登记到接收者身上（`let r = p.peek()` 之后 `p` 就被借走了）。
 **只对返回值是引用的方法生效** —— 否则 `let n = vec.len()` 会让后面所有
 `vec.data[i] = x` 全部误报。
+
+登记的路径是**整个接收者**：方法签名里没有「返回的引用指向哪个字段」的信息，所以
+`let r = p.peek()` 之后连 `p.right = x` 也会报。要精确到字段得等生命周期参数。
 
 注意：从**裸指针**绕出去的借用不受这条保护（`&values.data[0]` 里的 `data` 是 `*T`），
 那是显式的「遗忘借用」，规则 2 也管不到它。
@@ -418,11 +459,16 @@ now`），免得一个系统性错误刷屏。
   （按值接收者，改的是副本）。
 - [`self_reference_generic.tp`](../tests/run-pass/traits/self_reference_generic.tp)：
   泛型约束下的 `&self` 调用、引用接收者、方法互相调用。
+- [`borrow_field_granularity.tp`](../tests/run-pass/types/borrow_field_granularity.tp)：
+  借用粒度到字段 —— 借一个字段时写/借兄弟字段、常量下标互不相干。
 - `tests/compile-fail/borrow/` 和 `tests/compile-fail/traits/` 下每条规则一个用例；
   [`multiple_errors.tp`](../tests/compile-fail/borrow/multiple_errors.tp) 断言三处错误
   一次全报，[`error_limit.tp`](../tests/compile-fail/borrow/error_limit.tp) 断言第 10 条
   之后停下，[`return_nested_struct_holding_local_borrow.tp`](../tests/compile-fail/borrow/return_nested_struct_holding_local_borrow.tp)
-  断言结构体字面量的字段检查会按层递归、也能穿过返回引用的调用。
+  断言结构体字面量的字段检查会按层递归、也能穿过返回引用的调用，
+  [`borrow_parent_while_child_borrowed.tp`](../tests/compile-fail/borrow/borrow_parent_while_child_borrowed.tp)
+  和 [`use_whole_while_field_borrowed.tp`](../tests/compile-fail/borrow/use_whole_while_field_borrowed.tp)
+  守住路径前缀关系的另一侧（借了父路径/整个对象就不能再借子路径或整体使用）。
 
 只跑借用相关的用例：
 
