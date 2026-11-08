@@ -1,0 +1,12 @@
+fn main(): int {
+    let bad: i32 = 0x_FF;
+    return bad;
+}
+
+/** -- test
+- .stderr
+error: digit separator '_' cannot start a hexadecimal literal
+leading_digit_separator.tp:2:22
+- .exit
+1
+-- */

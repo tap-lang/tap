@@ -26,7 +26,10 @@
   `invalid digit '2' in binary literal`。单独的 `0` 仍是十进制零。
 - 整数字面量的文本在解析期归一化成十进制，所以 `0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF`
   这种超过 64 位的写法可以直接构造 `i128/u128` 常量，不会截断成 `ULLONG_MAX`。
-- 还没有数字分隔符 `_`：`0b1010_0000` 会报 `invalid digit '_' in binary literal`。
+- 数字之间可以插 `_` 分隔符提高可读性：`1_000_000`、`0xFFFF_FFFF`、`0b1010_0000`、
+  `0o7_777` 都合法，值不变。`_` 只能夹在两个数字之间：`1_`、`1__0` 报
+  `digit separator '_' in decimal literal must be followed by a digit`，
+  `0x_FF` 报 `digit separator '_' cannot start a hexadecimal literal`。
 - 运算宽度由表达式自身的操作数类型决定，与目标类型无关。写入更窄的目标类型时先按表达式
   类型求值，再按 LLVM 整数截断规则处理：`let digit: u8 = wide % 10;` 中的 `wide % 10`
   仍按 `wide` 的类型求值，不会降级成 `u8` 运算。
@@ -139,7 +142,8 @@ let nested = Box { value: Box { value: 9 } };   // Box<Box<i32>>
 实现约定如下：
 
 - 字面量支持小数写法 `1.5` 和指数写法 `1e10`、`1.5e-3`、`2E+8`；带小数点或指数的数字一律
-  解析为浮点，字面量默认类型是 `f32`。
+  解析为浮点，字面量默认类型是 `f32`。整数部分、小数部分和指数部分都可以用 `_` 分组：
+  `1_000.5`、`1.5e1_0`。
 - `f32` 与 `f64` 之间可以隐式转换：拓宽到 `f64` 使用 `FPExt`，收窄到 `f32` 使用 `FPTrunc`。
 - 整数可以隐式转换为浮点，例如 `let value: f64 = 3;`。反方向不会隐式发生，
   `let count: i32 = 1.5;` 会报类型不匹配。

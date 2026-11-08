@@ -260,6 +260,8 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 可以直接构造超过 64 位的 `i128/u128` 常量。`0x`/`0o`/`0b` 前缀的字面量在词法阶段就算出
 `Token.value.int_value`，`create_int_literal_text()` 再把原文归一化成十进制写进
 `integer_text`（超过 64 位的十六进制也走手写的十进制累加，不用 `strtoull`）。
+数字分隔符 `_` 在词法阶段就跳过（`Token.value.int_value` 自己按位累加），
+`create_int_literal_text()` 入口再统一剥一遍，所以 `integer_text` 里不会有 `_`。
 浮点字面量（`1.5` 和 `1e10` 两种写法）创建为
 `LITERAL_F32`，布尔字面量 `true` / `false` 创建为 `LITERAL_BOOL`。
 

@@ -834,21 +834,50 @@ static char *base_digits_to_decimal(const char *digits, int base) {
     return buffer;
 }
 
+// 去掉数字分隔符 '_'，返回 malloc 的副本（调用方接管所有权）。
+static char *strip_digit_separators(const char *text) {
+    size_t length = strlen(text);
+    char *clean = (char *)malloc(length + 1);
+    if (!clean) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < length; i++) {
+        if (text[i] != '_') {
+            clean[used++] = text[i];
+        }
+    }
+    clean[used] = '\0';
+    return clean;
+}
+
 LiteralNode *create_int_literal_text(const char *value) {
+    // '_' 只是可读性糖，先剥掉：base 检测、进制归一化和 strtoull 都不用再管它。
+    // 不剥的话 `1_000` 会在 '_' 处被 strtoull 截成 1。
+    char *cleaned = strip_digit_separators(value);
+
     // 0x / 0o / 0b 前缀要归一化成十进制：integer_text 在 codegen 里是按十进制交给
     // LLVMConstIntOfStringAndSize 的，带前缀的原文喂进去只会得到 0。
     int base = 10;
-    const char *digits = value;
-    if (value[0] == '0' && value[1] != '\0') {
-        switch (value[1]) {
-            case 'x': case 'X': base = 16; digits = value + 2; break;
-            case 'o': case 'O': base = 8;  digits = value + 2; break;
-            case 'b': case 'B': base = 2;  digits = value + 2; break;
+    const char *digits = cleaned;
+    if (cleaned[0] == '0' && cleaned[1] != '\0') {
+        switch (cleaned[1]) {
+            case 'x': case 'X': base = 16; digits = cleaned + 2; break;
+            case 'o': case 'O': base = 8;  digits = cleaned + 2; break;
+            case 'b': case 'B': base = 2;  digits = cleaned + 2; break;
             default: break;
         }
     }
 
-    char *text = base == 10 ? strdup(value) : base_digits_to_decimal(digits, base);
+    char *text;
+    if (base == 10) {
+        text = cleaned; // 直接接管
+    } else {
+        text = base_digits_to_decimal(digits, base);
+        free(cleaned);
+    }
+
     LiteralNode *literal = create_int_literal(strtoull(text, NULL, 10));
     literal->integer_text = text;
     return literal;

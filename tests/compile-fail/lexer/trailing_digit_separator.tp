@@ -1,0 +1,12 @@
+fn main(): int {
+    let bad: i32 = 0b1010_;
+    return bad;
+}
+
+/** -- test
+- .stderr
+error: digit separator '_' in binary literal must be followed by a digit
+trailing_digit_separator.tp:2:26
+- .exit
+1
+-- */

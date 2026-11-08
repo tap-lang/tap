@@ -351,6 +351,70 @@ static int digit_value(char c, int base) {
     return value < base ? value : -1;
 }
 
+// 扫描一段数字，允许 '_' 作为可读性分隔符。进入时 current 必须指向第一位数字
+// （调用方保证），退出时停在第一个非数字字符上。
+//
+// '_' 只允许夹在两个该进制的数字之间：`1_000`、`0xFF_FF`、`1_000.5` 都合法；
+// `1_`、`1__0` 当场报错 —— 静默放过的话会退化成「字面量 + 标识符」，一路飘到
+// 语法分析才炸，错误位置离现场很远。
+static void scan_digits(Lexer *lexer, int base, const char *base_name) {
+    while (digit_value(peek(lexer), base) >= 0) {
+        advance(lexer);
+        if (peek(lexer) != '_') {
+            continue;
+        }
+        if (digit_value(peek_next(lexer), base) < 0) {
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line,
+                             lexer->column,
+                             "digit separator '_' in %s literal must be followed by a digit",
+                             base_name);
+            exit(1);
+        }
+        advance(lexer); // 跳过 '_'
+    }
+}
+
+// 把 [start, end) 的数字串按 base 累加成 64 位无符号数，跳过 '_'。
+//
+// 不能直接 strtoull：它会在 '_' 处停下，`1_000` 会被算成 1。溢出时饱和到
+// ULLONG_MAX，和 strtoull 的 ERANGE 行为保持一致。
+static uint64_t parse_digit_run(const char *start, const char *end, int base) {
+    uint64_t value = 0;
+    int overflow = 0;
+    for (const char *cursor = start; cursor < end; cursor++) {
+        int digit = digit_value(*cursor, base);
+        if (digit < 0) {
+            continue; // '_'
+        }
+        if (value > ((uint64_t)-1 - (uint64_t)digit) / (uint64_t)base) {
+            overflow = 1;
+        } else {
+            value = value * (uint64_t)base + (uint64_t)digit;
+        }
+    }
+    return overflow ? (uint64_t)-1 : value;
+}
+
+// atof 同样不认 '_'，先把分隔符去掉再解析。
+static double parse_float_lexeme(const char *text) {
+    size_t length = strlen(text);
+    char *clean = (char *)malloc(length + 1);
+    if (!clean) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < length; i++) {
+        if (text[i] != '_') {
+            clean[used++] = text[i];
+        }
+    }
+    clean[used] = '\0';
+    double value = atof(clean);
+    free(clean);
+    return value;
+}
+
 // 解析带进制前缀的整数字面量（0x/0X 十六进制、0o/0O 八进制、0b/0B 二进制）。
 // 进入时 current 指向前缀的 '0'。
 static Token *based_number(Lexer *lexer, int base) {
@@ -362,16 +426,21 @@ static Token *based_number(Lexer *lexer, int base) {
     advance(lexer); // 跳过 '0'
     advance(lexer); // 跳过 x / o / b
     const char *digits = lexer->current;
-    while (digit_value(peek(lexer), base) >= 0) {
-        advance(lexer);
-    }
 
-    if (lexer->current == digits) {
-        print_diagnostic(stderr, "error", lexer->filename, lexer->line,
-                         lexer->column,
-                         "%s literal needs at least one digit", base_name);
+    if (digit_value(peek(lexer), base) < 0) {
+        if (peek(lexer) == '_') {
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line,
+                             lexer->column,
+                             "digit separator '_' cannot start a %s literal",
+                             base_name);
+        } else {
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line,
+                             lexer->column,
+                             "%s literal needs at least one digit", base_name);
+        }
         exit(1);
     }
+    scan_digits(lexer, base, base_name);
 
     // 前缀后面不能再跟字母/数字/下划线：0b102、0o18、0x1G 这类必须当场报错，
     // 否则会退化成「字面量 + 标识符」，一路飘到语法分析才炸，位置离现场很远。
@@ -384,8 +453,8 @@ static Token *based_number(Lexer *lexer, int base) {
     }
 
     Token *token = create_token(lexer, TOKEN_I32, start, lexer->current);
-    // 原文带前缀，所以从第一位数字开始按对应进制解析。
-    token->value.int_value = strtoull(digits, NULL, base);
+    // 原文带前缀和分隔符，所以从第一位数字开始按对应进制、跳过 '_' 自己累加。
+    token->value.int_value = parse_digit_run(digits, lexer->current, base);
     return token;
 }
 
@@ -405,19 +474,15 @@ static Token *number(Lexer *lexer) {
         }
     }
 
-    while (isdigit(peek(lexer))) {
-        advance(lexer);
-    }
-    
+    scan_digits(lexer, 10, "decimal");
+
     // 检查是否是浮点数
     if (peek(lexer) == '.' && isdigit(peek_next(lexer))) {
         has_dot = 1;
         advance(lexer);
-        while (isdigit(peek(lexer))) {
-            advance(lexer);
-        }
+        scan_digits(lexer, 10, "decimal");
     }
-    
+
     // 指数记法：e/E 后必须是可选符号加至少一位数字，否则回退，把 e 留给标识符。
     if (peek(lexer) == 'e' || peek(lexer) == 'E') {
         char *mark = lexer->current;
@@ -428,22 +493,20 @@ static Token *number(Lexer *lexer) {
         }
         if (isdigit(peek(lexer))) {
             has_exponent = 1;
-            while (isdigit(peek(lexer))) {
-                advance(lexer);
-            }
+            scan_digits(lexer, 10, "decimal");
         } else {
             lexer->current = mark;
             lexer->column = mark_column;
         }
     }
-    
+
     Token *token;
     if (has_dot || has_exponent) {
         token = create_token(lexer, TOKEN_F32, start, lexer->current);
-        token->value.float_value = atof(token->lexeme);
+        token->value.float_value = parse_float_lexeme(token->lexeme);
     } else {
         token = create_token(lexer, TOKEN_I32, start, lexer->current);
-        token->value.int_value = strtoull(token->lexeme, NULL, 10);
+        token->value.int_value = parse_digit_run(start, lexer->current, 10);
     }
     
     return token;
