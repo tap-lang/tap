@@ -1,0 +1,24 @@
+// 自由函数返回借用：调用点必须把借用登记到那个引用实参上。
+//
+// `peek(&p)` 和 `p.peek()` 是同一个函数，判定不该有差别 —— 但实参形态以前整条
+// 漏掉（只有接收者形态会登记），于是 `p.left = 5` 一句诊断都不出。
+struct Pair { left: i32, right: i32 }
+
+fn peek(p: &Pair): &i32 {
+    return &p.left;
+}
+
+fn main(): i32 {
+    let p: Pair = Pair { left: 1, right: 2 };
+    let r: &i32 = peek(&p);
+    p.left = 5;
+    return r[0];
+}
+
+/** -- test
+- .stderr
+error: 'p' is borrowed and cannot be assigned here
+return_borrow_from_free_call.tp:14:5
+- .exit
+1
+-- */

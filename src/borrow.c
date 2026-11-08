@@ -687,22 +687,56 @@ static void check_borrow_conflict(BorrowContext *context, ASTNode *target,
                                  is_mutable, mark, diagnostic_node);
 }
 
-// 方法返回借用时，把这次借用登记到接收者身上。
+// 调用返回借用时，把这次借用登记到「借用来源」上。
 //
 // `let r = point.first();` 之后 r 就别名了 point，这时再改 point 必须报错 ——
-// 但方法调用不像 `&point` 那样有个显式的取地址节点，不登记就会漏过去。
+// 调用不像 `&point` 那样有个显式的取地址节点，不登记就会漏过去。
 //
-// 只处理**返回值是引用**的方法：返回普通值的调用不产生持续借用，登记反而会误报
+// 两种写法都要管：
+//
+// - `p.first()` —— 来源是接收者（`&self` / `&mut self`）；
+// - `first(&p)` —— 来源是规则 4 认定的那个唯一引用参数。
+//
+// 后者以前整条漏掉：`let r = peek(&p); p.left = 5;` 一句诊断都不出，而同样的事情
+// 写成 `p.peek()` 就会报。两种写法是同一个函数，判定不该有差别。
+//
+// 只处理**返回值是引用**的调用：返回普通值的调用不产生持续借用，登记反而会误报
 // （`let n = vec.len();` 之后 `vec.data[i] = x` 会全部被拦下）。
-// 接收者本身是引用时也不登记：借的是它指向的存储，不是这个槽。
-static void mark_method_receiver_borrow(BorrowContext *context,
-                                        ASTNode *expression,
-                                        const ASTNode *diagnostic_node) {
+// 来源本身是引用时也不登记：借的是它指向的存储，不是这个槽。
+static void mark_return_borrow(BorrowContext *context, ASTNode *expression,
+                               const ASTNode *diagnostic_node) {
     if (!expression || expression->type != NODE_FUNCTION_CALL) return;
 
+    FunctionCallNode *call = (FunctionCallNode *)expression;
+
+    // 自由函数形态：借用来源是参数，实参里本来就有 `&x` / `&mut x` 节点，
+    // 冲突检查和诊断都由遍历实参时做了（那里的位置更准），这里只补登记。
+    if (!call->receiver) {
+        FunctionNode *function = resolve_called_function(context, call, NULL);
+        if (!function || !function->return_type ||
+            !function->return_type->is_reference) {
+            return;
+        }
+        int source = borrow_source_parameter(function, NULL);
+        if (source < 0) return;
+
+        ASTNode *argument = nth_argument(call->arguments, (unsigned)source);
+        if (!argument || argument->type != NODE_REFERENCE) return;
+
+        ReferenceNode *reference = (ReferenceNode *)argument;
+        LValueInfo info;
+        resolve_lvalue(context, reference->target, &info);
+        BorrowSymbol *holder = lvalue_borrow_base(&info);
+        if (!holder || holder->is_reference) return;
+
+        mark_persistent_borrow(context, holder, info.path,
+                               reference->is_mutable);
+        return;
+    }
+
+    // 方法形态：接收者没有 `&` 节点，检查和登记都在这里。
     LValueInfo receiver;
-    FunctionNode *function = resolve_called_function(
-        context, (FunctionCallNode *)expression, &receiver);
+    FunctionNode *function = resolve_called_function(context, call, &receiver);
     BorrowSymbol *holder = lvalue_borrow_base(&receiver);
     if (!function || !holder || holder->is_reference) return;
     if (!function->return_type || !function->return_type->is_reference) return;
@@ -1448,7 +1482,7 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
                 mark_persistent_borrow(context, lvalue_borrow_base(&info),
                                        info.path, reference->is_mutable);
             }
-            mark_method_receiver_borrow(context, declaration->expression,
+            mark_return_borrow(context, declaration->expression,
                                         statement);
 
             // NLL：借用的寿命收到「这个引用变量最后一次被使用」为止。
@@ -1499,7 +1533,7 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
                     mark_persistent_borrow(context, lvalue_borrow_base(&borrowed),
                                            borrowed.path, reference->is_mutable);
                 }
-                mark_method_receiver_borrow(context, assignment->expression,
+                mark_return_borrow(context, assignment->expression,
                                             statement);
                 // NLL：新借的这条 lifetime 也收到「变量最后一次使用」为止。
                 apply_borrow_lifetime(context, borrow_mark, target->name);

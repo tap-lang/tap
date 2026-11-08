@@ -1,0 +1,43 @@
+// 自由函数返回借用：登记的位置跟着实参走，NLL 也照常收窄。
+//
+// 三种该放过的写法：
+//   1. 实参是字段 —— 借的只是那一个字段，写别的字段不受影响；
+//   2. NLL —— 引用最后一次用过之后，源对象随便改；
+//   3. 接收者形态（`p.pick()` 就是 `pick(&p)`）判定与实参形态一致。
+struct Pair { left: i32, right: i32 }
+
+fn identity(p: &i32): &i32 {
+    return p;
+}
+
+fn pick(p: &Pair): &i32 {
+    return &p.left;
+}
+
+fn main(): i32 {
+    let p: Pair = Pair { left: 1, right: 2 };
+
+    // 1. 来源是 `p.left`，写 `p.right` 与它无关
+    let left: &i32 = identity(&p.left);
+    p.right = 5;
+    let first: i32 = left[0];
+
+    // 2. `left` 已经用完，借还回去了，可以改 `p.left`
+    p.left = 6;
+
+    // 3. 接收者形态借的是整个 p（签名没说借的是哪个字段），
+    //    所以要等 `r` 用完再写
+    let r: &i32 = p.pick();
+    let second: i32 = r[0];
+    p.left = 7;
+
+    print("%d %d %d\n", first, second, p.left);
+    return 0;
+}
+
+/** -- test
+- .stdout
+1 6 7
+- .exit
+0
+-- */

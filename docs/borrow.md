@@ -263,6 +263,20 @@ fn bad(values: &Vec<i32>): &i32 {
 }
 ```
 
+调用点据此把借用登记到那个引用实参上，所以「拿着返回的引用去改源对象」会被拦下：
+
+```text
+let r: &i32 = first(&values);
+values.data[0] = 5;              // error: 'values' is borrowed and cannot be assigned here
+```
+
+**两种调用写法判定一致。** `values.first()` 和 `first(&values)` 是同一个函数，
+登记的也是同一件事 —— 以前只有接收者形态会登记，实参形态整条漏掉。
+
+**粒度跟着实参走。** 实参是字段（`first(&pair.left)`）时借的只是那个字段，写
+`pair.right` 不报；实参是整对象时按「整个对象被借走」算（`let r = first(&pair);`
+之后写 `pair.right` 也会报）—— 签名里没有「返回的引用指向哪个字段」的信息，方向保守。
+
 ### 5. 方法调用也是一次借用
 
 调方法时接收者要满足方法声明的借用方式：
