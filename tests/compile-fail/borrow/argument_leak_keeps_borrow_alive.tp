@@ -1,0 +1,21 @@
+// 引用作为实参交出去，可能被调用方存起来，所以这条借用的寿命不放宽 ——
+// 保守地活到作用域结束。
+fn consume(r: &i32): i32 {
+    return r[0];
+}
+
+fn main(): int {
+    let p: i32 = 1;
+    let r: &i32 = &p;
+    print("%d\n", consume(r));
+    p = 2;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'p' is borrowed and cannot be assigned here
+argument_leak_keeps_borrow_alive.tp:11:5
+- .exit
+1
+-- */

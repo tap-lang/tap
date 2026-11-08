@@ -1,5 +1,6 @@
 #include "borrow.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,14 +43,40 @@ typedef struct BorrowRecord {
     int is_mutable;       // &mut 借出
     int rank;             // 建立这条记录时的作用域秩，用来在块退出时清掉
     int is_temp;          // 语句级临时借用：语句结束就不存在了
+    // NLL 的失效点：借用活到第几条语句之后。`INT_MAX` 表示活到作用域结束（保守，
+    // 也是没开 NLL 时的行为）。
+    //
+    // 值来自预扫描算出的「接收这次借用的引用变量最后一次被使用的语句」；算不出来
+    // （名字会逃出这条语句、预扫描遇到不认识的节点、没开 NLL）就保持 INT_MAX。
+    int dead_at;
     struct BorrowRecord *next;
 } BorrowRecord;
+
+// 一个名字在函数体里的活跃信息，由 NLL 预扫描填。
+typedef struct LastUseEntry {
+    char *name;           // strdup 出来的副本，函数检查完统一释放
+    int last_stmt;        // 最后一次出现在表达式里的语句编号（从 1 开始）
+    int leaks;            // 出现在「指针可能活过这条语句」的位置
+    struct LastUseEntry *next;
+} LastUseEntry;
+
+// `let to = from;` 这种别名复制。from 的活跃期必须覆盖 to 的活跃期，否则
+// `let r = &mut x; let s = r; use(s); x = 1;` 里 r 的借用会在第二句就结束。
+typedef struct AliasEdge {
+    const char *from;
+    const char *to;
+    struct AliasEdge *next;
+} AliasEdge;
 
 typedef struct {
     ProgramNode *program;
     BorrowSymbol *symbols;
     BorrowRecord *borrows;
     int rank; // 当前作用域秩
+    // 当前语句编号。预扫描和正式遍历按同样的顺序编号，两边才能对上。
+    int statement_index;
+    int nll_enabled;      // 0 表示本函数退回纯词法语义
+    LastUseEntry *last_uses;
 } BorrowContext;
 
 // 一个可寻址表达式的解析结果。
@@ -585,6 +612,7 @@ static void add_borrow_record(BorrowContext *context, BorrowSymbol *base,
     record->is_mutable = is_mutable;
     record->rank = context->rank;
     record->is_temp = is_temp;
+    record->dead_at = INT_MAX; // 默认活到作用域结束，NLL 在 let 处再收窄
     record->next = context->borrows;
     context->borrows = record;
 }
@@ -603,6 +631,9 @@ static void collect_overlapping_borrows(BorrowContext *context,
     for (BorrowRecord *record = context->borrows; record;
          record = record->next) {
         if (record->base != base) continue;
+        // NLL：已经过了失效点的记录不再参与冲突判定。`dead_at` 是「最后一次使用」
+        // 所在的语句，所以那一句本身还算活着（`dead_at < 当前` 才失效）。
+        if (record->dead_at < context->statement_index) continue;
         if (record->is_temp && !include_temp) continue;
         if (only_mutable && !record->is_mutable) continue;
         if (!paths_overlap(record->path, path)) continue;
@@ -871,6 +902,388 @@ static void check_escaping_borrow(BorrowContext *context, ASTNode *expression,
 }
 
 // ---------------------------------------------------------------------------
+// NLL：活跃性预扫描
+// ---------------------------------------------------------------------------
+//
+// 词法模型里借用的寿命 = 作用域，`let r = &mut x; r[0] = 1; print(x);` 会被拦下，
+// 因为 r 到作用域结束都算「还在借」。NLL 把寿命改成「最后一次使用」：
+//
+//   1. 预扫描把函数体里的语句按**正式遍历的顺序**从 1 开始编号，同时记下每个名字
+//      最后一次出现在哪条语句（last_stmt），以及它是否出现在「指针可能活过这条语句」
+//      的位置（leaks：装进结构体/数组、作为调用实参、作为返回值）。
+//   2. `let r = &mut x;` 建立的持久借用把 dead_at 设成 last_use(r)；leaks 或算不出来
+//      就保持 INT_MAX，也就是退化成原来的词法语义。
+//   3. 冲突判定（collect_overlapping_borrows）跳过 dead_at 已经过去的记录。
+//
+// 为什么用独立的预扫描而不是复用正式遍历：正式遍历里边走边查，看不到后面还有没有
+// 使用。两趟遍历必须**顺序一致**（语句编号要对上），所以 prescan_* 的分支顺序刻意
+// 抄 walk_* 的顺序，改一边记得改另一边。
+//
+// 安全阀：预扫描遇到不认识的节点就置 unknown，整个函数退回词法语义。宁可少优化，
+// 不能在「可能还有一次使用没看见」的情况下缩短借用。
+
+// 语句编号从 1 开始；-1 表示「这个名字一次都没在表达式里出现过」。
+static LastUseEntry *last_use_find(BorrowContext *context, const char *name) {
+    if (!name) return NULL;
+    for (LastUseEntry *entry = context->last_uses; entry; entry = entry->next) {
+        if (strcmp(entry->name, name) == 0) return entry;
+    }
+    return NULL;
+}
+
+static LastUseEntry *last_use_ensure(BorrowContext *context, const char *name) {
+    if (!name || !*name) return NULL;
+    LastUseEntry *entry = last_use_find(context, name);
+    if (entry) return entry;
+
+    entry = (LastUseEntry *)malloc(sizeof(LastUseEntry));
+    if (!entry) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    entry->name = strdup(name);
+    if (!entry->name) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    entry->last_stmt = -1;
+    entry->leaks = 0;
+    entry->next = context->last_uses;
+    context->last_uses = entry;
+    return entry;
+}
+
+// 记一次「名字在语句 stmt 里被用到」。
+//
+// `p.left` 这种带点标识符算到基名 p 上：借用是挂在基名上的，活跃期也要按基名算。
+static void last_use_record(BorrowContext *context, const char *name, int stmt,
+                            int leaks) {
+    if (!name || !*name) return;
+
+    char buffer[256];
+    const char *dot = strchr(name, '.');
+    if (dot) {
+        size_t length = (size_t)(dot - name);
+        if (length == 0 || length >= sizeof(buffer)) return;
+        memcpy(buffer, name, length);
+        buffer[length] = '\0';
+        name = buffer;
+    }
+
+    LastUseEntry *entry = last_use_ensure(context, name);
+    if (!entry) return;
+    if (stmt > entry->last_stmt) entry->last_stmt = stmt;
+    if (leaks) entry->leaks = 1;
+}
+
+static void free_last_uses(BorrowContext *context) {
+    while (context->last_uses) {
+        LastUseEntry *next = context->last_uses->next;
+        free(context->last_uses->name);
+        free(context->last_uses);
+        context->last_uses = next;
+    }
+}
+
+// 别名复制 `let to = from;`：from 的活跃期要覆盖 to 的活跃期。
+//
+// 不做这一步的话 `let r = &mut x; let s = r; use(s); x = 1;` 会让 r 的借用停在
+// 第二句 —— s 还指着 x，那是真的悬垂。
+typedef struct NllScan {
+    BorrowContext *context;
+    int index;          // 当前语句编号
+    int unknown;        // 遇到不认识的节点
+    AliasEdge *edges;
+} NllScan;
+
+static void free_alias_edges(AliasEdge *edge) {
+    while (edge) {
+        AliasEdge *next = edge->next;
+        free(edge);
+        edge = next;
+    }
+}
+
+static void add_alias_edge(NllScan *scan, const char *from, const char *to) {
+    if (!from || !to) return;
+    AliasEdge *edge = (AliasEdge *)malloc(sizeof(AliasEdge));
+    if (!edge) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    edge->from = from;
+    edge->to = to;
+    edge->next = scan->edges;
+    scan->edges = edge;
+}
+
+// 反复传播到不动点：链式复制（`let a = r; let b = a;`）一轮可能不够。
+static void propagate_aliases(NllScan *scan) {
+    int changed = 1;
+    int rounds = 0;
+    while (changed && rounds < 64) {
+        changed = 0;
+        rounds++;
+        for (AliasEdge *edge = scan->edges; edge; edge = edge->next) {
+            LastUseEntry *to = last_use_find(scan->context, edge->to);
+            if (!to) continue;
+            LastUseEntry *from = last_use_ensure(scan->context, edge->from);
+            if (!from) continue;
+            if (to->last_stmt > from->last_stmt) {
+                from->last_stmt = to->last_stmt;
+                changed = 1;
+            }
+            if (to->leaks && !from->leaks) {
+                from->leaks = 1;
+                changed = 1;
+            }
+        }
+    }
+}
+
+static void prescan_statement_list(NllScan *scan, ASTNode *statement);
+static void prescan_expression(NllScan *scan, ASTNode *expression, int leaks);
+
+// 预扫描一条语句。编号顺序必须和 walk_statement 完全一致。
+static void prescan_statement(NllScan *scan, ASTNode *statement) {
+    if (!statement) return;
+    scan->index++;
+
+    switch (statement->type) {
+        case NODE_VAR_DECL: {
+            VarDeclNode *declaration = (VarDeclNode *)statement;
+            prescan_expression(scan, declaration->expression, 0);
+            // `let s = r;` 是别名复制，不当逃逸处理，交给 propagate_aliases。
+            if (declaration->expression &&
+                declaration->expression->type == NODE_IDENTIFIER) {
+                add_alias_edge(scan,
+                               ((IdentifierNode *)declaration->expression)->name,
+                               declaration->name);
+            }
+            break;
+        }
+
+        case NODE_ASSIGNMENT: {
+            AssignmentNode *assignment = (AssignmentNode *)statement;
+            // 赋给别的变量等于把指针交出去，按逃逸算（保守方向）。
+            prescan_expression(scan, assignment->expression, 1);
+            break;
+        }
+
+        case NODE_INDEX_ASSIGNMENT: {
+            IndexAssignmentNode *assignment = (IndexAssignmentNode *)statement;
+            // 基对象在正式遍历里走的是 resolve_lvalue（不走 walk_expression），
+            // 但 `r[0] = 1` 里读 r 这件事对活跃性照样算一次使用，必须记下来。
+            prescan_expression(scan, assignment->target->array, 0);
+            prescan_expression(scan, assignment->target->index, 0);
+            prescan_expression(scan, assignment->expression, 1);
+            break;
+        }
+
+        case NODE_IF_STATEMENT: {
+            IfStatementNode *if_node = (IfStatementNode *)statement;
+            prescan_expression(scan, if_node->condition, 0);
+            prescan_statement_list(scan, if_node->consequence);
+            prescan_statement_list(scan, if_node->alternative);
+            break;
+        }
+
+        case NODE_FOR_STATEMENT: {
+            ForStatementNode *for_node = (ForStatementNode *)statement;
+            prescan_statement_list(scan, for_node->initializer);
+            prescan_expression(scan, for_node->condition, 0);
+            prescan_statement_list(scan, for_node->update);
+            prescan_statement_list(scan, for_node->body);
+            break;
+        }
+
+        case NODE_RETURN:
+            prescan_expression(scan, ((ReturnNode *)statement)->expression, 1);
+            break;
+
+        case NODE_MATCH_STATEMENT:
+            prescan_expression(scan, statement, 0);
+            break;
+
+        case NODE_BREAK_STATEMENT:
+        case NODE_CONTINUE_STATEMENT:
+            break;
+
+        default:
+            prescan_expression(scan, statement, 0);
+            break;
+    }
+}
+
+static void prescan_statement_list(NllScan *scan, ASTNode *statement) {
+    for (; statement; statement = statement->next) {
+        prescan_statement(scan, statement);
+    }
+}
+
+// 预扫描一个表达式。`leaks` 表示这个表达式的值可能活过当前语句。
+static void prescan_expression(NllScan *scan, ASTNode *expression, int leaks) {
+    if (!expression) return;
+
+    switch (expression->type) {
+        case NODE_LITERAL:
+        case NODE_SIZEOF:
+            return;
+
+        case NODE_IDENTIFIER:
+            last_use_record(scan->context, ((IdentifierNode *)expression)->name,
+                            scan->index, leaks);
+            return;
+
+        case NODE_BINARY_OP: {
+            BinaryOpNode *binary = (BinaryOpNode *)expression;
+            prescan_expression(scan, binary->left, leaks);
+            prescan_expression(scan, binary->right, leaks);
+            return;
+        }
+
+        case NODE_REFERENCE:
+            // 取地址的结果是个指针，可能活过这条语句。
+            prescan_expression(scan, ((ReferenceNode *)expression)->target, 1);
+            return;
+
+        case NODE_DEREFERENCE:
+            prescan_expression(scan, ((DereferenceNode *)expression)->operand,
+                               leaks);
+            return;
+
+        case NODE_CAST:
+            prescan_expression(scan, ((CastNode *)expression)->expression, leaks);
+            return;
+
+        case NODE_FUNCTION_CALL: {
+            FunctionCallNode *call = (FunctionCallNode *)expression;
+            // 方法调用的接收者写在调用名的点号前面。
+            const char *dot = strrchr(call->name, '.');
+            if (dot && dot != call->name) {
+                char buffer[256];
+                size_t length = (size_t)(dot - call->name);
+                if (length < sizeof(buffer)) {
+                    memcpy(buffer, call->name, length);
+                    buffer[length] = '\0';
+                    last_use_record(scan->context, buffer, scan->index, 1);
+                }
+            }
+            // 实参可能被调用方存起来，按逃逸算。
+            for (ASTNode *argument = call->arguments; argument;
+                 argument = argument->next) {
+                prescan_expression(scan, argument, 1);
+            }
+            return;
+        }
+
+        case NODE_INDEX_EXPRESSION: {
+            IndexExpressionNode *index = (IndexExpressionNode *)expression;
+            // 下标取出来的是元素值（拷贝），指针本身没交出去，所以基对象不算逃逸。
+            // `r[0] = 1` 这种最常见的用法正是靠这条才不至于把 r 判成逃逸。
+            prescan_expression(scan, index->array, 0);
+            prescan_expression(scan, index->index, 0);
+            return;
+        }
+
+        case NODE_FIELD_ACCESS: {
+            FieldAccessNode *access = (FieldAccessNode *)expression;
+            // 字段可能是引用，值逃出去就等于基对象的借用逃出去。
+            prescan_expression(scan, access->object, leaks);
+            return;
+        }
+
+        case NODE_STRUCT_LITERAL: {
+            StructLiteralNode *literal = (StructLiteralNode *)expression;
+            for (ASTNode *node = literal->fields; node; node = node->next) {
+                prescan_expression(scan, ((StructInitFieldNode *)node)->expression,
+                                   1);
+            }
+            return;
+        }
+
+        case NODE_ARRAY_LITERAL: {
+            ArrayLiteralNode *array = (ArrayLiteralNode *)expression;
+            for (ASTNode *element = array->elements; element;
+                 element = element->next) {
+                prescan_expression(scan, element, 1);
+            }
+            return;
+        }
+
+        case NODE_TRY:
+            prescan_expression(scan, ((TryNode *)expression)->inner, leaks);
+            return;
+
+        case NODE_MATCH_STATEMENT: {
+            MatchStatementNode *match_node = (MatchStatementNode *)expression;
+            prescan_expression(scan, match_node->expression, 0);
+            for (ASTNode *node = match_node->arms; node; node = node->next) {
+                MatchArmNode *arm = (MatchArmNode *)node;
+                prescan_statement_list(scan, arm->body);
+                prescan_expression(scan, arm->value, 1);
+            }
+            return;
+        }
+
+        default:
+            scan->unknown = 1;
+            return;
+    }
+}
+
+// `TAP_BORROW_LEXICAL=1` 关掉 NLL，退回词法语义，方便对比和排查误报。
+static int borrow_nll_enabled_from_env(void) {
+    const char *flag = getenv("TAP_BORROW_LEXICAL");
+    if (!flag || !*flag) return 1;
+    return strcmp(flag, "0") == 0;
+}
+
+// 每个函数开始前跑一次：清表、预扫描、算别名传播。
+static void prepare_nll(BorrowContext *context, FunctionNode *function) {
+    free_last_uses(context);
+    context->statement_index = 0;
+    context->nll_enabled = borrow_nll_enabled_from_env();
+    if (!context->nll_enabled) return;
+
+    NllScan scan;
+    scan.context = context;
+    scan.index = 0;
+    scan.unknown = 0;
+    scan.edges = NULL;
+    prescan_statement_list(&scan, function->body);
+    if (scan.unknown) {
+        // 有没认全的节点：整个函数退回词法语义，宁可少放行也不误判悬垂。
+        context->nll_enabled = 0;
+        free_last_uses(context);
+    } else {
+        propagate_aliases(&scan);
+    }
+    free_alias_edges(scan.edges);
+    context->statement_index = 0; // 正式遍历从 1 开始重新编号
+}
+
+// 把刚建立的持久借用的失效点收窄到「引用变量最后一次被使用的语句」。
+//
+// `stop` 是 walk_expression 之后、登记借用之前的链表头 —— 这一段里新增的记录就是
+// 这条 let 建立的借用（前面 walk_expression 产生的临时记录已经排在 stop 之后了）。
+static void apply_borrow_lifetime(BorrowContext *context, BorrowRecord *stop,
+                                  const char *name) {
+    if (!context->nll_enabled) return;
+
+    LastUseEntry *entry = last_use_find(context, name);
+    // 没找到使用（一次都没出现过）、或者指针会逃出这条语句 → 活到作用域结束。
+    if (!entry || entry->leaks || entry->last_stmt < 0) return;
+    // 只在声明之前用过同名变量（影子声明），编号对不上，保守处理。
+    if (entry->last_stmt < context->statement_index) return;
+
+    for (BorrowRecord *record = context->borrows; record && record != stop;
+         record = record->next) {
+        record->dead_at = entry->last_stmt;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 遍历
 // ---------------------------------------------------------------------------
 
@@ -998,12 +1411,16 @@ static void walk_expression(BorrowContext *context, ASTNode *expression) {
 }
 
 static void walk_statement(BorrowContext *context, ASTNode *statement) {
+    // 语句编号：和 prepare_nll 的预扫描按同样的顺序递增，NLL 的失效点才对得上。
+    context->statement_index++;
     // 临时借用是**语句级**的：上一句的 `&mut x` 到这一句就不存在了。
     clear_temp_borrows(context);
     switch (statement->type) {
         case NODE_VAR_DECL: {
             VarDeclNode *declaration = (VarDeclNode *)statement;
             walk_expression(context, declaration->expression);
+            // 这里之后的记录才是这条 let 建立的持久借用，用来给 NLL 收窄失效点。
+            BorrowRecord *borrow_mark = context->borrows;
 
             // 显式标注成裸指针 `*T` 就是「遗忘借用」：不跟踪寿命，也不登记别名。
             // 这是和 C 打交道、以及需要长期持有指针时唯一的出口。
@@ -1043,6 +1460,9 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             }
             mark_method_receiver_borrow(context, declaration->expression,
                                         statement);
+
+            // NLL：借用的寿命收到「这个引用变量最后一次被使用」为止。
+            apply_borrow_lifetime(context, borrow_mark, declaration->name);
 
             int is_mutable = declaration->type && declaration->type->is_reference
                 ? declaration->type->reference_mutable
@@ -1205,6 +1625,8 @@ static void check_function(BorrowContext *context, FunctionNode *function) {
     context->symbols = NULL;
     context->borrows = NULL;
     context->rank = 0;
+    // NLL 的活跃性分析：必须在正式遍历之前跑完（正式遍历看不到后面的使用）。
+    prepare_nll(context, function);
 
     // 参数存储在自己的栈帧里（秩 0），但引用型参数指向的是函数外，所以
     // pointee_rank 是 -1 —— 这类引用可以原样返回。
@@ -1228,6 +1650,7 @@ static void check_function(BorrowContext *context, FunctionNode *function) {
     // 签名检查放在函数体之后：函数体里的错误更具体（「返回了局部值的引用」比
     // 「引用参数不是恰好一个」更能说明问题），先报更有用的那条。
     check_borrow_signature(function);
+    free_last_uses(context);
 }
 
 int check_borrows(ProgramNode *program) {
@@ -1238,6 +1661,9 @@ int check_borrows(ProgramNode *program) {
     context.symbols = NULL;
     context.borrows = NULL;
     context.rank = 0;
+    context.statement_index = 0;
+    context.nll_enabled = 0;
+    context.last_uses = NULL;
 
     // 只统计本次借用检查报了几条：调用方可能已经跑过别的阶段（现在不会，但
     // 计数是全局的，用差值才不会把别人的错误算到自己头上）。

@@ -309,19 +309,62 @@ fn bad_array(values: &i32): &i32 {
 同样地，`&values.data[0]`（`data` 是 `*T`）算作函数外 —— 元素在堆上，`Vec` 活着
 就一直有效。
 
-## 词法语义：借用活到作用域结束
+## 借用的寿命到「最后一次使用」为止（NLL）
 
-这一版**不做活跃点分析**（Rust 的 NLL）。`&mut x` 一旦绑定到变量，就独占 `x`
-直到该变量所在的作用域结束，和「后面还用不用这个引用」无关：
+`&mut x` 绑定到变量之后，独占 `x` 到**这个引用最后一次被使用**的那条语句为止，
+之后 `x` 就能重新读写：
 
 ```text
 let exclusive: &mut i32 = &mut value;
 exclusive[0] = 1;
-print("%d\n", value);      // 报错，虽然 exclusive 之后不再使用
+print("%d\n", value);      // 合法：exclusive 之后不再使用
 ```
 
-这是**有意的保守**：报错位置永远等于 `&mut` 所在的作用域，不会因为后面有没有用到
-引用而漂移，行为可预测、实现简单。
+反过来，只要后面还会用到引用，源对象就不能碰：
+
+```text
+let exclusive: &mut i32 = &mut value;
+print("%d\n", value);      // error: mutably borrowed and cannot be used here
+exclusive[0] = 1;          // 这句还要用 exclusive
+```
+
+判定方式是「引用变量最后一次出现在哪条语句」：编译期先扫一遍函数体，给每条语句
+编号、记下每个名字的最后一个使用点，再把借用的失效点设成那个编号。同一句里的使用
+也算在内 —— `print("%d %d\n", value, exclusive[0])` 仍然冲突。
+
+### 什么时候不放宽
+
+引用变量出现在「指针可能活过这条语句」的位置时，借用仍然活到作用域结束：
+
+- 装进结构体 / 数组（`Holder { src: r }`、`[r, s]`）；
+- 作为函数实参传出去（调用方可能把它存起来）；
+- 作为返回值；
+- 赋给别的变量。
+
+```text
+let r: &i32 = &p;
+consume(r);                // 传出去了，之后 p 仍算被借用
+p = 2;                     // error: 'p' is borrowed and cannot be assigned here
+```
+
+`let s = r;` 是别名复制，不算逃逸，但 `s` 的活跃期会并到 `r` 上 —— `s` 还在用，
+`r` 的借用就不算结束：
+
+```text
+let r: &mut i32 = &mut value;
+let s: &mut i32 = r;
+print("%d\n", value);      // error：s 后面还要写 value
+s[0] = 9;
+```
+
+另外两种情况也保持保守：
+
+- 一次都没用过的引用（`let r = &mut x;` 之后完全不提 r）仍然独占 `x` 到作用域结束 ——
+  没找到使用点就不敢断定它真的不再使用；
+- 预扫描遇到它不认识的语法节点时，**整个函数**退回词法语义。
+
+`TAP_BORROW_LEXICAL=1` 强制退回词法语义（借用一律活到作用域结束），用来对比行为、
+排查误报。
 
 **临时借用不受影响。** 直接传给函数、不当变量保存的借用，在语句结束时就消失：
 
@@ -329,9 +372,6 @@ print("%d\n", value);      // 报错，虽然 exclusive 之后不再使用
 increment(&mut count);     // 借用到此为止
 print("%d\n", count);      // 合法
 ```
-
-所以推荐的写法是**把 `&mut` 交给函数，别在局部变量里长期持有**。需要长期持有时，
-用 `*T` 显式放弃检查。
 
 ## 什么时候用哪个
 
@@ -436,7 +476,8 @@ now`），免得一个系统性错误刷屏。
   在那之前，**别让结构体长期持有借用**，需要带出函数时用 `*T` 并自己管寿命。
 - **接收者只能是 `&self` / `&mut self` 这一层。** `&&self`、按值 + 借用的组合都不支持；
   方法签名里也不能出现生命周期标注。
-- **借用活到作用域结束**，不做 NLL。见上一节。
+- **借用只在「引用变量最后一次使用」之前有效（NLL）**，但遇到「指针可能逃出这条语句」
+  的位置就退回作用域语义。见上一节。
 - **不做自动 drop。** 借用检查只保证「引用不会悬垂」，不负责释放。`Vec` 仍然手工
   `free()`，字符串仍然由 Runtime 统一在进程退出时释放。
 
@@ -447,6 +488,8 @@ now`），免得一个系统性错误刷屏。
   共享借用、结构体字段借用、降级成裸指针。
 - [`reference_scopes.tp`](../tests/run-pass/types/reference_scopes.tp)：借用随作用域结束，
   之后可以重新借用。
+- [`borrow_last_use.tp`](../tests/run-pass/types/borrow_last_use.tp)：NLL —— 独占/共享
+  借用都在最后一次使用之后失效（读源对象、写源对象、字段粒度、方法返回的借用、循环体内）。
 - [`borrow_return.tp`](../tests/run-pass/types/borrow_return.tp)：返回借用的函数
   （`fn first(v: &Vec<T>): &T`）、借用穿过函数调用、`&param.field`。
 - [`reference_narrowing.tp`](../tests/run-pass/types/reference_narrowing.tp)：
@@ -469,6 +512,12 @@ now`），免得一个系统性错误刷屏。
   [`borrow_parent_while_child_borrowed.tp`](../tests/compile-fail/borrow/borrow_parent_while_child_borrowed.tp)
   和 [`use_whole_while_field_borrowed.tp`](../tests/compile-fail/borrow/use_whole_while_field_borrowed.tp)
   守住路径前缀关系的另一侧（借了父路径/整个对象就不能再借子路径或整体使用）。
+  NLL 的三条边界各有一个用例：[`conflict_before_last_use.tp`](../tests/compile-fail/borrow/conflict_before_last_use.tp)
+  （最后一次使用之前读源对象仍报错）、
+  [`alias_copy_keeps_borrow_alive.tp`](../tests/compile-fail/borrow/alias_copy_keeps_borrow_alive.tp)
+  （`let s = r;` 的别名把活跃期并过去）、
+  [`argument_leak_keeps_borrow_alive.tp`](../tests/compile-fail/borrow/argument_leak_keeps_borrow_alive.tp)
+  （引用作为实参传出去就不放宽寿命）。
 
 只跑借用相关的用例：
 
@@ -480,4 +529,5 @@ TEST_FILTER=traits/self sh tests/run-tests.sh build/tap
 ```
 
 `TAP_NO_BORROW=1` 可以跳过整个借用检查，用来确认某段代码到底是被借用检查还是别的
-阶段拦下的。
+阶段拦下的。`TAP_BORROW_LEXICAL=1` 把 NLL 关掉、退回词法语义，用来对比「这条报错
+是不是 NLL 造成的」。

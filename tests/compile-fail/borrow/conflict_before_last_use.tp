@@ -1,0 +1,16 @@
+// NLL 只把借用的寿命缩到「最后一次使用」。在最后一次使用之前读源对象，照样报错。
+fn main(): int {
+    let value: i32 = 1;
+    let r: &mut i32 = &mut value;
+    print("%d\n", value);
+    r[0] = 5;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'value' is mutably borrowed and cannot be used here
+conflict_before_last_use.tp:5:19
+- .exit
+1
+-- */

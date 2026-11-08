@@ -1,0 +1,83 @@
+// NLL：借用的寿命到「最后一次使用」为止，不再到作用域结束。
+//
+// 词法模型下 `let r = &mut x;` 之后 x 一直被独占借到块结束，哪怕 r 再也不用。
+// 现在借用跟着引用变量的活跃期走：r 用完就把 x 还回去。
+//
+// 判定依据是「引用变量最后一次出现在哪条语句」，所以下面每个场景都是
+// 「先用完借用、再碰源对象」；反过来（先碰源对象、后面还要用借用）仍然报错，
+// 那部分在 compile-fail/borrow 里守着。
+
+struct Pair { left: i32, right: i32 }
+
+trait Peek {
+    fn peek(&self): &i32;
+}
+
+impl Peek for Pair {
+    fn peek(&self): &i32 {
+        return &self.left;
+    }
+}
+
+fn main(): int {
+    // 1. 独占借用用完，就能读源对象
+    let value: i32 = 1;
+    let exclusive: &mut i32 = &mut value;
+    exclusive[0] = 7;
+    print("%d\n", value);
+
+    // 2. 独占借用用完，就能写源对象
+    let other: i32 = 2;
+    let writer: &mut i32 = &mut other;
+    writer[0] = 8;
+    print("%d\n", writer[0]);
+    other = 9;
+    print("%d\n", other);
+
+    // 3. 共享借用用完同样能写
+    let shared_value: i32 = 3;
+    let reader: &i32 = &shared_value;
+    print("%d\n", reader[0]);
+    shared_value = 4;
+    print("%d\n", shared_value);
+
+    // 4. 字段粒度 + NLL：借用只占 p.left，用完连 p.left 都能写
+    let pair: Pair = Pair { left: 1, right: 2 };
+    let left: &mut i32 = &mut pair.left;
+    left[0] = 10;
+    print("%d %d\n", pair.left, pair.right);
+    pair.left = 11;
+    print("%d\n", pair.left);
+
+    // 5. 方法返回的借用也一样，收到接收者上的那条记录同样会失效
+    let point: Pair = Pair { left: 5, right: 6 };
+    let peeked: &i32 = point.peek();
+    print("%d\n", peeked[0]);
+    point.left = 7;
+    print("%d\n", point.left);
+
+    // 6. 借用建立在循环体里，循环结束就还回去
+    let counted: i32 = 0;
+    for (let i: i32 = 0; i < 3; i++) {
+        let cell: &mut i32 = &mut counted;
+        cell[0] = cell[0] + 1;
+    }
+    print("%d\n", counted);
+    return 0;
+}
+
+/** -- test
+- .stdout
+7
+8
+9
+3
+4
+10 2
+11
+5
+7
+3
+- .exit
+0
+-- */

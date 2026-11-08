@@ -1,0 +1,17 @@
+// `let s = r;` 是别名复制：s 还活着的时候，r 的借用不能提前结束。
+fn main(): int {
+    let value: i32 = 1;
+    let r: &mut i32 = &mut value;
+    let s: &mut i32 = r;
+    print("%d\n", value);
+    s[0] = 9;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'value' is mutably borrowed and cannot be used here
+alias_copy_keeps_borrow_alive.tp:6:19
+- .exit
+1
+-- */
