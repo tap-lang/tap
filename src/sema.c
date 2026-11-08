@@ -254,6 +254,14 @@ static void analyze_statement(SemaContext *context, ASTNode *statement) {
             analyze_expression_only(context, ((AssignmentNode *)statement)->expression);
             break;
 
+        case NODE_FIELD_ASSIGNMENT: {
+            // 目标是左值：也要走一遍，字段的类型才能进表达式缓存。
+            FieldAssignmentNode *assignment = (FieldAssignmentNode *)statement;
+            analyze_expression_only(context, (ASTNode *)assignment->target);
+            analyze_expression_only(context, assignment->expression);
+            break;
+        }
+
         case NODE_IF_STATEMENT: {
             IfStatementNode *if_node = (IfStatementNode *)statement;
             analyze_expression_only(context, if_node->condition);

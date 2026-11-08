@@ -853,148 +853,17 @@ static int split_field_access_name(
     return 1;
 }
 
-// 解析结构体字段访问，返回基础符号、字段声明和字段下标。
-// 把结构体模板的字段类型按实例的类型实参替换。
-//
-// `Vec<T>` 的 `data: *T` 里，`T` 是一个 `enum_name == "T"` 的占位 VarTypeNode。
-// 泛型结构体本身是单态化的（IR 里能看到 `Vec$i32` / `Vec$p_i32` 两个独立类型），
-// 但 `field_access_info` 查的是**模板**，拿到的字段类型仍是 `*T` —— 于是
-// `Vec<*i32>.data[i]` 被推断成 `T`，和 `*i32` 比较永远不相等，
-// `get<T>()` 的 `return vec.data[index]` 就报 `return type mismatch`。
-//
-// LLVM 侧不受影响：opaque pointer 把 `*T` 和 `*i32` 都表示成 `ptr`。
-static VarTypeNode *specialize_field_type(
-    StructNode *structure, const VarTypeNode *field_type,
-    const VarTypeNode *instance_type) {
-    if (!field_type) return NULL;
-    if (!structure || !instance_type || !instance_type->type_arguments) {
-        return tap_type_clone(field_type);
-    }
 
-    // 字段类型本身就是类型参数（`value: T`）。
-    if (!field_type->is_pointer && !field_type->is_array &&
-        !field_type->struct_name && field_type->enum_name) {
-        ASTNode *parameter = structure->type_params;
-        ASTNode *argument = instance_type->type_arguments;
-        while (parameter && argument) {
-            const char *parameter_name = ((IdentifierNode *)parameter)->name;
-            if (parameter_name && strcmp(parameter_name, field_type->enum_name) == 0) {
-                return tap_type_clone((VarTypeNode *)argument);
-            }
-            parameter = parameter->next;
-            argument = argument->next;
-        }
-        return tap_type_clone(field_type);
-    }
-
-    if (field_type->is_pointer) {
-        return create_pointer_type(
-            specialize_field_type(structure, field_type->element_type, instance_type));
-    }
-    if (field_type->is_array) {
-        return create_array_type(
-            specialize_field_type(structure, field_type->element_type, instance_type),
-            field_type->array_length);
-    }
-
-    VarTypeNode *copy = field_type->struct_name
-        ? create_struct_type(field_type->struct_name)
-        : field_type->enum_name
-            ? create_enum_type(field_type->enum_name)
-            : create_var_type(field_type->type);
-    for (ASTNode *argument = field_type->type_arguments; argument;
-         argument = argument->next) {
-        add_var_type_argument(copy, specialize_field_type(
-            structure, (VarTypeNode *)argument, instance_type));
-    }
-    return copy;
-}
-
-static StructFieldNode *field_access_info(
-    CodeGenContext *context, const char *name, Symbol **symbol_out,
-    StructNode **struct_out, unsigned *index_out,
-    VarTypeNode **field_type_out) {
-    char *base_name = NULL;
-    char *field_name = NULL;
-    if (!split_field_access_name(name, &base_name, &field_name)) return NULL;
-
-    Symbol *symbol = find_symbol(context, base_name);
-    if (!symbol) {
-        free(base_name);
-        free(field_name);
-        return NULL;
-    }
-    if (!symbol->declared_type || !symbol->declared_type->struct_name) {
-        // report_error 不返回，进程即将退出，不再单独 free 临时字符串。
-        report_error(NULL, "variable '%s' is not a struct", base_name); // 中文：变量不是结构体
-    }
-
-    StructNode *struct_node = tap_find_struct(context->program, symbol->declared_type->struct_name);
-    StructFieldNode *field = tap_find_struct_field(struct_node, field_name, index_out);
-    if (!field) {
-        report_error(NULL, "struct '%s' has no field '%s'",
-                     symbol->declared_type->struct_name, field_name); // 中文：结构体没有该字段
-    }
-
-    if (symbol_out) *symbol_out = symbol;
-    if (struct_out) *struct_out = struct_node;
-    // 按实例的类型实参替换模板里的类型参数（`Vec<T>.data` 的 `*T`）。
-    if (field_type_out) {
-        *field_type_out =
-            specialize_field_type(struct_node, field->field_type, symbol->declared_type);
-    }
-    free(base_name);
-    free(field_name);
-    return field;
-}
-
-// 生成结构体字段地址，用于字段读取和字段赋值。
 // 空指针守卫。定义在后面的「数值守卫」一节，字段访问 / 下标 / 解引用都要用。
 // `node` 只用来给运行时消息带上源码位置，可以传 NULL。
 static void emit_null_guard(CodeGenContext *context, LLVMValueRef pointer,
                             const ASTNode *node);
 
-static LLVMValueRef generate_field_address(
-    CodeGenContext *context, const char *name, StructFieldNode **field_out,
-    Symbol **symbol_out, const ASTNode *node) {
-    Symbol *symbol = NULL;
-    StructNode *struct_node = NULL;
-    unsigned index = 0;
-    StructFieldNode *field =
-        field_access_info(context, name, &symbol, &struct_node, &index, NULL);
-    if (!field) return NULL;
-
-    LLVMTypeRef struct_type = get_llvm_struct_type_by_name(context, struct_node->name);
-
-    // 变量本身是指针时（`let q: *P = &p;` 里的 `q.x`），槽位里存的是**地址**，
-    // 必须先 load 出指针值再 GEP。
-    //
-    // 注意 create_pointer_type 会把元素的名字复制到指针节点上（所以 `*P` 的
-    // struct_name 仍是 "P"，field_access_info 才能查到字段）。正因如此，直接拿
-    // symbol->value 去 GEP 在类型上不会报错 —— 它会读栈上相邻的垃圾，编译和运行
-    // 都悄无声息。这是最难查的一类错，必须显式区分。
-    LLVMValueRef base = symbol->value;
-    if (symbol->declared_type && symbol->declared_type->is_pointer) {
-        base = LLVMBuildLoad2(context->builder,
-                              LLVMPointerType(struct_type, 0),
-                              symbol->value, "pointer_value");
-        // 指针可能是 null（`*T` 没有非空保证），GEP 之前先挡一道。
-        // 引用跳过：构造上不可能为空，而且借用体系承诺零运行时开销。
-        if (!symbol->declared_type->is_reference) {
-            emit_null_guard(context, base, node);
-        }
-    }
-
-    if (field_out) *field_out = field;
-    if (symbol_out) *symbol_out = symbol;
-    return LLVMBuildStructGEP2(
-        context->builder, struct_type, base, index, "struct_field_ptr");
-}
-
-// 按名字查值的完整类型：局部变量、单层字段（`a.b`）、多级字段（`a.b.c`）。
+// 按名字查值的完整类型：局部变量、顶层常量。
 //
-// `parse_primary` 会把一整串点拼成一个标识符名，所以多级字段访问到这里才拆开 —— 按
-// **最后一个**点切成 base + 字段，递归拿 base 的类型再查字段。返回的节点归调用方所有。
+// **不再处理 `a.b.c`。** 字段访问现在是 AST 里的 NODE_FIELD_ACCESS 链（names.c 改写），
+// 类型由 compute_expression_full_type 的字段分支算，比这里按字符串拆点号精确得多 ——
+// 至少它拿得到「接收者是几步解引用」的信息。返回的节点归调用方所有。
 static VarTypeNode *named_value_type(CodeGenContext *context, const char *name) {
     Symbol *symbol = find_symbol(context, name);
     if (symbol) {
@@ -1006,59 +875,15 @@ static VarTypeNode *named_value_type(CodeGenContext *context, const char *name) 
     VarDeclNode *constant = find_global_constant(context, name);
     if (constant && constant->type) return tap_type_clone(constant->type);
 
-    char *base_name = NULL;
-    const char *field_name = NULL;
-    if (!tap_split_qualified_name(name, &base_name, &field_name)) return NULL;
-
-    VarTypeNode *base_type = named_value_type(context, base_name);
-    free(base_name);
-    if (!base_type) return NULL;
-
-    StructNode *struct_node = base_type->struct_name
-        ? tap_find_struct(context->program, base_type->struct_name)
-        : NULL;
-    StructFieldNode *field = struct_node
-        ? tap_find_struct_field(struct_node, field_name, NULL)
-        : NULL;
-    VarTypeNode *result = field ? tap_type_clone(field->field_type) : NULL;
-    free_ast((ASTNode *)base_type);
-    return result;
+    return NULL;
 }
 
-// 按名字取可寻址值的地址：局部变量、单层字段（`a.b`）、多级字段（`a.b.c`）。
-// `node` 只用于空指针守卫的运行时消息定位。
+// 按名字取可寻址值的地址：只认局部变量（字段链走 expression_address）。
 static LLVMValueRef named_value_address(CodeGenContext *context, const char *name,
                                         const ASTNode *node) {
     Symbol *symbol = find_symbol(context, name);
     if (symbol) return symbol->value;
-
-    StructFieldNode *field = NULL;
-    LLVMValueRef address =
-        generate_field_address(context, name, &field, NULL, node);
-    if (address) return address;
-
-    char *base_name = NULL;
-    const char *field_name = NULL;
-    if (!tap_split_qualified_name(name, &base_name, &field_name)) return NULL;
-
-    LLVMValueRef base_address = named_value_address(context, base_name, node);
-    VarTypeNode *base_type = named_value_type(context, base_name);
-    free(base_name);
-    if (!base_address || !base_type || !base_type->struct_name) {
-        free_ast((ASTNode *)base_type);
-        return NULL;
-    }
-    StructNode *struct_node = tap_find_struct(context->program, base_type->struct_name);
-    free_ast((ASTNode *)base_type);
-    if (!struct_node) return NULL;
-    unsigned index = 0;
-    StructFieldNode *struct_field =
-        tap_find_struct_field(struct_node, field_name, &index);
-    if (!struct_field) return NULL;
-    LLVMTypeRef struct_type =
-        get_llvm_struct_type_by_name(context, struct_node->name);
-    return LLVMBuildStructGEP2(context->builder, struct_type, base_address,
-                               index, "nested_field_ptr");
+    return NULL;
 }
 
 // 取函数名最后一段，模块函数内部名如 __tap_module_0.push 会得到 push。
@@ -1241,8 +1066,6 @@ static int reference_assignable_to(
                    element_type->type == symbol->type;
         }
 
-        StructFieldNode *field = field_access_info(context, name, NULL, NULL, NULL, NULL);
-        return field && tap_type_equal(field->field_type, pointer_type->element_type);
     }
 
     if (reference->target->type == NODE_INDEX_EXPRESSION) {
@@ -1349,12 +1172,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
         if (expression && expression->type == NODE_IDENTIFIER) {
             const char *name = ((IdentifierNode *)expression)->name;
             Symbol *symbol = find_symbol(context, name);
-            if (symbol && symbol->declared_type) {
-                return pointer_assignable(symbol->declared_type, target_type);
-            }
-            StructFieldNode *field =
-                field_access_info(context, name, NULL, NULL, NULL, NULL);
-            return field && pointer_assignable(field->field_type, target_type);
+            return symbol && symbol->declared_type &&
+                   pointer_assignable(symbol->declared_type, target_type);
         }
         if (expression && expression->type == NODE_INDEX_EXPRESSION) {
             const VarTypeNode *element_type =
@@ -1380,14 +1199,9 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                 return target_enum && strcmp(target_enum->name, bare_enum->name) == 0;
             }
             Symbol *symbol = find_symbol(context, identifier->name);
-            if (symbol && symbol->declared_type && symbol->declared_type->struct_name) {
-                return strcmp(symbol->declared_type->struct_name,
-                              target_type->struct_name) == 0;
-            }
-            StructFieldNode *field =
-                field_access_info(context, identifier->name, NULL, NULL, NULL, NULL);
-            return field && field->field_type->struct_name &&
-                   strcmp(field->field_type->struct_name, target_type->struct_name) == 0;
+            return symbol && symbol->declared_type && symbol->declared_type->struct_name &&
+                   strcmp(symbol->declared_type->struct_name,
+                          target_type->struct_name) == 0;
         }
         if (expression && expression->type == NODE_FUNCTION_CALL) {
             // 载荷枚举的构造表达式产生该枚举（同名结构体）类型的值。
@@ -1460,27 +1274,8 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
         const char *name = ((IdentifierNode *)expression)->name;
         Symbol *symbol = find_symbol(context, name);
         if (!symbol) {
-            // 字段访问（`vec.data`）：泛型结构体的字段类型要按实例实参替换，
-            // 否则拿到的是模板的 `*T`。返回的是替换结果的子节点，外壳有意不回收
-            // —— 类型推断本来就大量按借用语义传递，进程生命周期内不回收这些节点。
-            VarTypeNode *specialized = NULL;
-            StructFieldNode *field = field_access_info(
-                context, name, NULL, NULL, NULL, &specialized);
-            if (field && specialized) {
-                // 注意这里返回**容器类型**而不是元素类型，和下面的变量分支不同。
-                //
-                // 变量分支返回的是「索引一次之后」的类型（`arr` → `i32`），因为
-                // `arr[i]` 会再走 INDEX_EXPRESSION 分支取一层。但字段访问（`vec.data`）
-                // 本身已经是 `**i32`，如果这里也返回元素，`vec.data[i]` 就会被取两层，
-                // 得到 `i32` 而不是 `*i32` —— `Vec<*T>.get()` 的 return 就是栽在这。
-                if (specialized->is_pointer || specialized->is_array) {
-                    return specialized;
-                }
-            }
-            // 兜底：没有替换结果时同样返回容器类型（理由见上）。
-            if (field && (field->field_type->is_pointer || field->field_type->is_array)) {
-                return field->field_type;
-            }
+            // `vec.data[i]` 里的 `vec.data` 是 NODE_FIELD_ACCESS，走下面的分支；
+            // 走到这里说明名字根本不存在。
             report_undefined_name(context, name, expression);
         }
         if (symbol->declared_type && symbol->declared_type->is_pointer) {
@@ -1518,14 +1313,19 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
     }
 
     if (expression && expression->type == NODE_FIELD_ACCESS) {
-        // `holder.ptr[i]` 的元素类型：字段自身的数组/指针元素。这里同样先把类型
-        // 缓存进节点，再取非拥有的那份（调用方按惯例不释放 indexed_value_type 的结果）。
+        // `holder.ptr[i]` / `vec.data[i]` 的容器类型。先把类型缓存进节点，再取非拥有
+        // 的那份（调用方按惯例不释放 indexed_value_type 的结果）。
         free_ast((ASTNode *)expression_full_type(context, expression));
         const VarTypeNode *field_type = expression->resolved_type;
         if (!field_type) return NULL;
-        if (field_type->is_pointer) return field_type->element_type;
-        if (!field_type->is_array) return field_type;
-        return field_type->element_type;
+        // 返回**容器**类型，元素由 INDEX_EXPRESSION 那一层取 —— 和上面 IDENTIFIER 的
+        // 字段分支保持一致。这里曾经直接返回 element_type，于是 `vec.data[i]`
+        // （`data: *T` 且 T 自己也是指针，如 `Vec<*Symbol>`）被取了两层，元素类型退化成
+        // `Symbol`，`get<T>()` 的 `return` 就报 type mismatch —— 和当初 IDENTIFIER
+        // 分支栽的是同一个坑，只是换了个入口。
+        if (field_type->is_pointer || field_type->is_array) return field_type;
+        report_error((const ASTNode *)expression, "field is not an array or pointer"); // 中文：字段不是数组或指针
+        return field_type;
     }
 
     report_error((const ASTNode *)expression, "invalid array or pointer index target"); // 中文：数组或指针索引目标无效
@@ -1562,15 +1362,9 @@ static VarTypeNode *infer_reference_type(
                 target_type = inferred_scalar;
             }
         } else {
-            StructFieldNode *field =
-                field_access_info(context, name, NULL, NULL, NULL, NULL);
-            if (field) {
-                target_type = field->field_type;
-            } else {
-                // `&some_function`：取函数地址，类型是函数指针而不是 `*T`。
-                FunctionNode *function = find_function(context, name);
-                if (function) return function_pointer_type_of(function);
-            }
+            // `&some_function`：取函数地址，类型是函数指针而不是 `*T`。
+            FunctionNode *function = find_function(context, name);
+            if (function) return function_pointer_type_of(function);
         }
     } else if (target && target->type == NODE_INDEX_EXPRESSION) {
         target_type = indexed_value_type(context, target);
@@ -1784,9 +1578,6 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
             if (!symbol) {
                 uint64_t enum_value = 0;
                 if (enum_variant_value(context, name, &enum_value)) return LITERAL_I32;
-                StructFieldNode *field =
-                    field_access_info(context, name, NULL, NULL, NULL, NULL);
-                if (field) return field->field_type->type;
                 VarDeclNode *constant = find_global_constant(context, name);
                 return constant && constant->type
                     ? constant->type->type
@@ -2260,15 +2051,9 @@ static LLVMValueRef generate_expression_for_type(
                 return generate_variant_value(context, target_type->struct_name,
                     bare_enum, bare, NULL, NULL, 0, 0);
             }
-            StructFieldNode *field = NULL;
-            LLVMValueRef field_address =
-                generate_field_address(context, identifier->name, &field, NULL, expression);
-            if (field_address) {
-                return LLVMBuildLoad2(
-                    context->builder, get_llvm_var_type(context, field->field_type),
-                    field_address, "struct_field_value");
-            }
         }
+        // 剩下的都交给不带目标类型的路径：字段访问已经是 NODE_FIELD_ACCESS 链，
+        // 由 expression_address + GEP 处理，不再有「拆带点名字」这一支。
         return generate_expression(context, expression);
     }
     return generate_expression_as(context, expression, target_type->type);
@@ -2289,22 +2074,10 @@ static LLVMValueRef generate_index_address(
         const char *name = ((IdentifierNode *)index_expression->array)->name;
         Symbol *symbol = find_symbol(context, name);
         if (!symbol) {
-            StructFieldNode *field = NULL;
-            LLVMValueRef field_address =
-                generate_field_address(context, name, &field, NULL, (const ASTNode *)index_expression);
-            if (field_address && field->field_type->is_pointer) {
-                array_type = field->field_type;
-                pointer_value = LLVMBuildLoad2(
-                    context->builder, get_llvm_var_type(context, array_type),
-                    field_address, "loaded_field_pointer");
-                is_pointer_index = 1;
-            } else if (field_address && field->field_type->is_array) {
-                array_address = field_address;
-                array_type = field->field_type;
-            } else {
-                report_undefined_name(context, name,
-                                      (const ASTNode *)index_expression);
-            }
+            // `vec.data[i]` 里的 `vec.data` 已经是 NODE_FIELD_ACCESS，走下面
+            // 「基是任意表达式」的分支；走到这里说明这个符号根本不存在。
+            report_undefined_name(context, name,
+                                  (const ASTNode *)index_expression);
         } else if (symbol->declared_type && symbol->declared_type->is_pointer) {
             // `&[T; N]`：引用承诺「恰好一个数组」，下标要按**数组元素**算 —— 先把
             // 指针值当成数组地址再走数组路径，这样才有边界检查。当成 `*T` 做指针算术
@@ -2561,18 +2334,6 @@ static LLVMValueRef generate_reference(
                         name); // 中文：不能取得常量的可写引用
             }
             return symbol->value;
-        }
-
-        StructFieldNode *field = NULL;
-        Symbol *base_symbol = NULL;
-        LLVMValueRef address = generate_field_address(
-            context, name, &field, &base_symbol, (const ASTNode *)reference);
-        if (address) {
-            if (base_symbol->is_const) {
-                report_error((const ASTNode *)reference, "cannot take mutable reference to constant '%s'",
-                        base_symbol->name); // 中文：不能取得常量字段的可写引用
-            }
-            return address;
         }
 
         // `&some_function`：LLVM 里函数名本身就是地址，直接拿来当函数指针用。
@@ -3839,32 +3600,6 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                         identifier->name); // 中文：载荷枚举成员必须用于期望枚举类型的场合
                     exit(1);
                 }
-                StructFieldNode *field = NULL;
-                LLVMValueRef field_address =
-                    generate_field_address(context, identifier->name, &field, NULL, expression);
-                if (field_address) {
-                    return LLVMBuildLoad2(
-                        context->builder, get_llvm_var_type(context, field->field_type),
-                        field_address, "loaded_struct_field");
-                }
-                // 多级字段访问（`a.b.c`）：parse_primary 把整串点拼成了一个名字，
-                // generate_field_address 只认单层，这里补上递归版本。
-                if (!field) {
-                    LLVMValueRef nested_address =
-                        named_value_address(context, identifier->name, expression);
-                    VarTypeNode *nested_type = nested_address
-                        ? named_value_type(context, identifier->name)
-                        : NULL;
-                    if (nested_type) {
-                        LLVMValueRef value = LLVMBuildLoad2(
-                            context->builder,
-                            get_llvm_var_type(context, nested_type),
-                            nested_address, "loaded_nested_field");
-                        free_ast((ASTNode *)nested_type);
-                        return value;
-                    }
-                    free_ast((ASTNode *)nested_type);
-                }
                 VarDeclNode *constant = find_global_constant(context, identifier->name);
                 LLVMValueRef global = LLVMGetNamedGlobal(context->module, identifier->name);
                 if (!constant || !constant->type || !global) {
@@ -4129,24 +3864,9 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
     }
     Symbol *symbol = find_symbol(context, assignment->name);
     if (!symbol) {
-        StructFieldNode *field = NULL;
-        Symbol *base_symbol = NULL;
-        LLVMValueRef field_address =
-            generate_field_address(context, assignment->name, &field, &base_symbol, (const ASTNode *)assignment);
-        if (field_address) {
-            if (base_symbol->is_const) {
-                report_error((const ASTNode *)assignment, "cannot assign to field of constant '%s'",
-                        base_symbol->name); // 中文：不能修改常量结构体字段
-            }
-            if (!expression_assignable_to(context, assignment->expression, field->field_type)) {
-                report_error((const ASTNode *)assignment->expression, "assignment type mismatch for '%s'",
-                        assignment->name); // 中文：赋值类型不匹配
-            }
-            LLVMValueRef value = generate_expression_for_type(
-                context, assignment->expression, field->field_type);
-            LLVMBuildStore(context->builder, value, field_address);
-            return;
-        }
+        // 带点的名字在这里已经不可能出现：names.c 把 `p.x = v` 改写成了
+        // FIELD_ASSIGNMENT（见 generate_field_assignment）。这条兜底只剩「名字根本不是
+        // 变量」的情况 —— 命名空间成员（`math.PI = 3`）和拼错的名字。
         report_undefined_name(context, assignment->name,
                               (const ASTNode *)assignment);
     }
@@ -4171,6 +3891,77 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
 static int array_element_type_compatible(
     enum LiteralType expected, enum LiteralType actual) {
     return scalar_types_compatible(expected, actual);
+}
+
+// 字段赋值：`p.x = v`、`p.inner.value = v`、`make().x = v`。
+//
+// 和 IndexAssignmentNode 同构，所以这里只有三步：求地址、算值、store。以前这条语句是
+// 一个带点的名字，得靠 `generate_field_address` 再拆一遍点号 —— 那条路径不认「接收者
+// 是任意表达式」，也不认多级字段，于是 `&mut a.b.c` 长期报 `pointer expression
+// type mismatch`。改写节点之后，读和写共用同一套 `expression_address`。
+static void generate_field_assignment(CodeGenContext *context,
+                                      FieldAssignmentNode *assignment) {
+    if (expression_is_void_call(context, assignment->expression)) {
+        report_error((const ASTNode *)assignment->expression,
+                     "function '%s' returns no value and cannot be used in an expression", // 中文：无返回值函数不能当表达式用
+                     ((FunctionCallNode *)assignment->expression)->name);
+    }
+
+    // 常量的字段不能写。根节点必须是普通标识符 —— names.c 只在「根是局部变量」时改写，
+    // 所以这里不会碰到模块成员。
+    FieldAccessNode *outermost = assignment->target;
+    ASTNode *root = outermost->object;
+    while (root && root->type == NODE_FIELD_ACCESS) {
+        root = ((FieldAccessNode *)root)->object;
+    }
+    if (root && root->type == NODE_FUNCTION_CALL) {
+        // `make().x = 1`：接收者是右值，地址落在 expression_address 开的临时槽里，
+        // store 完就丢了 —— 不报的话是个静默无效语句，比报错难查得多。
+        // 指针返回值不受影响：`make_ptr()[0].x = 1` 的根是下标表达式，写的是指向的对象。
+        report_error((const ASTNode *)assignment,
+                     "cannot assign to a field of a temporary value"); // 中文：不能给临时值的字段赋值
+        return;
+    }
+
+    if (root && root->type == NODE_IDENTIFIER) {
+        const char *root_name = ((IdentifierNode *)root)->name;
+        Symbol *root_symbol = find_symbol(context, root_name);
+        VarDeclNode *constant = root_symbol ? NULL : find_global_constant(context, root_name);
+        if ((root_symbol && root_symbol->is_const) ||
+            (constant && constant->is_const)) {
+            report_error((const ASTNode *)assignment,
+                         "cannot assign to field of constant '%s'", root_name); // 中文：不能修改常量结构体字段
+            return;
+        }
+    }
+
+    VarTypeNode *field_type =
+        expression_full_type(context, (ASTNode *)assignment->target);
+    if (!field_type) {
+        report_error((const ASTNode *)assignment, "cannot assign to this field"); // 中文：不能给这个字段赋值
+        return;
+    }
+
+    LLVMValueRef address =
+        expression_address(context, (ASTNode *)assignment->target);
+    if (!address) {
+        report_error((const ASTNode *)assignment,
+                     "field assignment target is not addressable"); // 中文：字段赋值的目标不可寻址
+        free_ast((ASTNode *)field_type);
+        return;
+    }
+
+    if (!expression_assignable_to(context, assignment->expression, field_type)) {
+        report_error((const ASTNode *)assignment->expression,
+                     "assignment type mismatch for '%s'", outermost->field); // 中文：赋值类型不匹配
+        free_ast((ASTNode *)field_type);
+        return;
+    }
+
+    LLVMValueRef value = generate_expression_for_type(
+        context, assignment->expression, field_type);
+    free_ast((ASTNode *)field_type);
+    LLVMBuildStore(context->builder, value, address);
 }
 
 // 递归校验嵌套数组字面量，并把每个标量叶子写入数组存储。
@@ -5203,6 +4994,9 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
             }
             case NODE_ASSIGNMENT:
                 generate_assignment(context, (AssignmentNode *)statement);
+                break;
+            case NODE_FIELD_ASSIGNMENT:
+                generate_field_assignment(context, (FieldAssignmentNode *)statement);
                 break;
             case NODE_INDEX_ASSIGNMENT:
                 generate_index_assignment(context, (IndexAssignmentNode *)statement);

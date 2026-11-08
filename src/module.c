@@ -1602,6 +1602,18 @@ static int rewrite_statement_list(
                         current_module, bindings);
                 }
                 break;
+            case NODE_FIELD_ASSIGNMENT:
+                result = rewrite_expression(
+                    program,
+                    (ASTNode *)((FieldAssignmentNode *)statement)->target,
+                    current_module, bindings);
+                if (result == 0) {
+                    result = rewrite_expression(
+                        program,
+                        ((FieldAssignmentNode *)statement)->expression,
+                        current_module, bindings);
+                }
+                break;
             case NODE_RETURN:
                 result = rewrite_expression(
                     program, ((ReturnNode *)statement)->expression,

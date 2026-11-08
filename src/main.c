@@ -319,17 +319,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 名字归一：把「根是局部变量」的点号标识符改写成字段访问链。
+    // 名字归一：把「根是局部变量」的点号标识符改写成字段访问链（读和写都改）。
     //
     // 必须在模块装载之后 —— import 可以写在文件末尾，模块别名这时才齐全。单态化
     // 出来的实例也在 program->functions 里，一并处理，所以模板和实例都不会漏。
-    // 这一步只改「确定是字段链」的部分，模块/类型成员保持原样。
     //
-    // TAP_NO_NAMES=1 跳过，用来确认某个现象是新路径还是旧的「带点标识符」路径引起的。
-    const char *skip_names = getenv("TAP_NO_NAMES");
-    if (!(skip_names && skip_names[0])) {
-        normalize_qualified_names(program);
-    }
+    // 这一步之后，下游不再需要「按字符串拆点号找字段」的那套实现（codegen 和 borrow
+    // 里的旧分支已经删掉），所以它没有开关：跳过它编译不过字段访问。
+    // TAP_TRACE_NAMES=1 打印每一处改写。
+    normalize_qualified_names(program);
 
     // 借用检查紧跟在 Sema 之后：它只看 AST 和类型标注，不依赖 Codegen 的推断结果，
     // 所以放在生成任何 IR 之前就能给出诊断。TAP_NO_BORROW=1 可以跳过，

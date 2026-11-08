@@ -1,0 +1,18 @@
+// 常量结构体的字段不能写。改写成字段赋值节点之后，这项检查从「按字符串找字段」的旧路径
+// 挪到了 generate_field_assignment 里 —— 直接沿字段链找根符号的 is_const。
+struct Point { left: i32, inner: Inner }
+struct Inner { value: i32 }
+
+fn main(): i32 {
+    const point: Point = Point { left: 1, inner: Inner { value: 2 } };
+    point.left = 9;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot assign to field of constant 'point'
+--> tests/compile-fail/types/assign_to_constant_field.tp:8:5
+- .exit
+1
+-- */

@@ -343,6 +343,14 @@ static void dump_stmt(ASTNode *n, int depth) {
         dump_expr(assignment->expression, depth + 2);
         break;
     }
+    case NODE_FIELD_ASSIGNMENT: {
+        FieldAssignmentNode *assignment = (FieldAssignmentNode *)n;
+        print_indent(depth);
+        printf("FieldAssign\n");
+        dump_expr((ASTNode *)assignment->target, depth + 2);
+        dump_expr(assignment->expression, depth + 2);
+        break;
+    }
     case NODE_RETURN:
         print_indent(depth);
         printf("Return\n");
@@ -1256,6 +1264,20 @@ IndexAssignmentNode *create_index_assignment(
     return assignment;
 }
 
+FieldAssignmentNode *create_field_assignment(
+    FieldAccessNode *target, ASTNode *expression) {
+    FieldAssignmentNode *assignment =
+        (FieldAssignmentNode *)calloc(1, sizeof(FieldAssignmentNode));
+    if (!assignment) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    assignment->base.type = NODE_FIELD_ASSIGNMENT;
+    assignment->target = target;
+    assignment->expression = expression;
+    return assignment;
+}
+
 FunctionCallNode *create_function_call(const char *name) {
     FunctionCallNode *function_call = (FunctionCallNode *)calloc(1, sizeof(FunctionCallNode));
     if (!function_call) {
@@ -1941,6 +1963,12 @@ void free_ast(ASTNode *node) {
         }
         case NODE_INDEX_ASSIGNMENT: {
             IndexAssignmentNode *assignment = (IndexAssignmentNode *)node;
+            free_ast((ASTNode *)assignment->target);
+            free_ast(assignment->expression);
+            break;
+        }
+        case NODE_FIELD_ASSIGNMENT: {
+            FieldAssignmentNode *assignment = (FieldAssignmentNode *)node;
             free_ast((ASTNode *)assignment->target);
             free_ast(assignment->expression);
             break;

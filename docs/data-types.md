@@ -256,10 +256,14 @@ let number: Box<i32> = Box<i32> { value: 42 };
 
 - 结构体字面量使用 `TypeName { field: value, ... }`。
 - 初始化时必须提供所有字段，字段名不能重复，也不能写不存在的字段。
-- 可对非 `const` 结构体变量的字段赋值，例如 `point.x = 10;`。
-- 字段访问的接收者可以是任意表达式：变量、索引（`points[0].x`）、函数返回值（`make().x`），
+- 可对非 `const` 结构体的字段赋值，例如 `point.x = 10;`、`point.inner.v = 1;`。目标的接收者
+  可以是任意可寻址表达式：变量、引用参数（`point.x = 1` 里的 `&mut Point`）、`&mut self`、
+  数组元素（`points[0].x = 1`）、指针解引用（`ptr[0].x = 1`）。写和读共用同一套地址计算，
+  所以多级字段和单层字段的行为一致。
+- 字段访问的接收者同样可以是任意表达式：变量、索引（`points[0].x`）、函数返回值（`make().x`），
   也可以连续取（`outer.inner.v`）。在表达式结果上**调用方法**还不支持（`make().shift(1)` 报
-  `calling a method on an expression result is not supported`），要先绑到变量。
+  `calling a method on an expression result is not supported`），要先绑到变量；字段访问没有
+  这个限制，`make().x` 可以直接读。
 - 泛型结构体的类型实参能从字段值反推（`Box { value: 42 }` 就是 `Box<i32>`），也可以显式写出；
   编译器按实际使用的类型组合生成具体结构体。
 - 当前不支持结构体内声明方法和默认字段值。模块级函数可以用结构体作为首个参数，之后通过

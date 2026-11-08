@@ -1143,6 +1143,13 @@ static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
         consume(parser, TOKEN_ASSIGN);
         statement = (ASTNode *)create_index_assignment(
             (IndexExpressionNode *)expression, parse_expression(parser));
+    } else if (expression && expression->type == NODE_FIELD_ACCESS &&
+               parser->current_token->type == TOKEN_ASSIGN) {
+        // `expr.field = v`：接收者不是标识符（`make().x`、`arr[0].x`、`p.inner.value`）。
+        // 标识符接收者的写法 `p.x = v` 在解析期只是一串带点的名字，由 names.c 改写。
+        consume(parser, TOKEN_ASSIGN);
+        statement = (ASTNode *)create_field_assignment(
+            (FieldAccessNode *)expression, parse_expression(parser));
     } else if (expression && expression->type == NODE_DEREFERENCE &&
                parser->current_token->type == TOKEN_ASSIGN) {
         // `*p = v` 是「写 p 指向的那个对象」，语义上就是 `p[0] = v`。

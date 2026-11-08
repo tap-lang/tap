@@ -1,0 +1,79 @@
+// 字段赋值和字段读取走同一套地址计算。
+//
+// 以前 `p.x = v` 在 AST 里只是一串带点的名字（`AssignmentNode.name`），Codegen 得靠
+// `generate_field_address` 再拆一遍点号。那条路径既不认「接收者是任意表达式」，也不认
+// 多级字段，于是 `p.inner.value = v` 和 `make().x = v` 只能各写一份特例。
+// 现在写路径是 NODE_FIELD_ASSIGNMENT（target 是一条 FIELD_ACCESS 链），读和写共用
+// expression_address。
+
+struct Inner { value: i32 }
+struct Point { left: i32, inner: Inner }
+
+trait Bump {
+    fn bump(&mut self);
+}
+
+impl Bump for Point {
+    // `&mut self` 里写字段：self 是引用，地址要先 load 再 GEP。
+    fn bump(&mut self) {
+        self.left = self.left + 1;
+        self.inner.value = self.inner.value + 10;
+    }
+}
+
+fn set_param(point: &mut Point) {
+    point.left = 100;
+    point.inner.value = 200;
+}
+
+fn make(): Point {
+    return Point { left: 1, inner: Inner { value: 2 } };
+}
+
+fn main(): i32 {
+    let point: Point = Point { left: 1, inner: Inner { value: 2 } };
+
+    // 单层、多级。
+    point.left = 10;
+    point.inner.value = 20;
+    print("%d %d\n", point.left, point.inner.value);
+
+    // 接收者是 &mut 引用参数。
+    set_param(&mut point);
+    print("%d %d\n", point.left, point.inner.value);
+
+    // 接收者是 &mut self。
+    point.bump();
+    print("%d %d\n", point.left, point.inner.value);
+
+    // 接收者是数组元素。
+    let points: [Point; 2] = [make(), make()];
+    points[0].left = 42;
+    points[1].inner.value = 43;
+    print("%d %d\n", points[0].left, points[1].inner.value);
+
+    // 接收者是解引用之后的指针（`*T` 用下标写法解引用）。
+    let storage: Point = Point { left: 0, inner: Inner { value: 0 } };
+    let target: *Point = &storage;
+    target[0].left = 7;
+    target[0].inner.value = 8;
+    print("%d %d\n", storage.left, storage.inner.value);
+
+    // 链式：字段里的指针字段再取字段。
+    target[0].inner = Inner { value: 99 };
+    print("%d\n", storage.inner.value);
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+10 20
+100 200
+101 210
+42 43
+7 8
+99
+- .exit
+0
+-- */

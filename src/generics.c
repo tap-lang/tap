@@ -492,6 +492,13 @@ static ASTNode *clone_statement(ASTNode *source, FunctionNode *template,
                     (ASTNode *)assignment->target, template, bindings),
                 clone_expression(assignment->expression, template, bindings));
         }
+        case NODE_FIELD_ASSIGNMENT: {
+            FieldAssignmentNode *assignment = (FieldAssignmentNode *)source;
+            return (ASTNode *)create_field_assignment(
+                (FieldAccessNode *)clone_expression(
+                    (ASTNode *)assignment->target, template, bindings),
+                clone_expression(assignment->expression, template, bindings));
+        }
         case NODE_RETURN:
             return (ASTNode *)create_return(clone_expression(
                 ((ReturnNode *)source)->expression, template, bindings));
@@ -777,6 +784,12 @@ static void materialize_statements(GenericContext *context, ASTNode *statement) 
                 break;
             case NODE_INDEX_ASSIGNMENT: {
                 IndexAssignmentNode *assignment = (IndexAssignmentNode *)statement;
+                materialize_expression(context, (ASTNode *)assignment->target);
+                materialize_expression(context, assignment->expression);
+                break;
+            }
+            case NODE_FIELD_ASSIGNMENT: {
+                FieldAssignmentNode *assignment = (FieldAssignmentNode *)statement;
                 materialize_expression(context, (ASTNode *)assignment->target);
                 materialize_expression(context, assignment->expression);
                 break;
@@ -2016,6 +2029,17 @@ static void process_statements(GenericContext *context, ASTNode *statement,
                     context, assignment->expression, element);
                 free_ast((ASTNode *)ignored);
                 free_ast((ASTNode *)element);
+                break;
+            }
+            case NODE_FIELD_ASSIGNMENT: {
+                // 目标先走一遍：字段的类型要推断出来，右值才知道按什么类型转换。
+                FieldAssignmentNode *assignment = (FieldAssignmentNode *)statement;
+                VarTypeNode *field_type = process_expression(
+                    context, (ASTNode *)assignment->target, NULL);
+                VarTypeNode *ignored = process_expression(
+                    context, assignment->expression, field_type);
+                free_ast((ASTNode *)ignored);
+                free_ast((ASTNode *)field_type);
                 break;
             }
             case NODE_RETURN: {

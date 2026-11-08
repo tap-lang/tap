@@ -23,9 +23,13 @@
 //
 // 改写之后：
 //   - 读：`p.inner.value` → FIELD_ACCESS(FIELD_ACCESS(p, inner), value)；
-//   - 写：`p.x = v` 仍然是 AssignmentNode 的字符串形式（它要一个新节点，
-//     和这一步分开做，见 docs/todo/language.md）；
+//   - 写：`p.x = v` → FIELD_ASSIGNMENT(FIELD_ACCESS(p, x), v)；
 //   - 模块/类型成员（`math.PI`、`Color.Red`）不动 —— 它们本来就不是字段链。
+//
+// 写路径必须一起改写：只要 `p.x = v` 还是「带点名字的 AssignmentNode」，Codegen 就得
+// 再拆一遍点号（`generate_field_address`），那条分支和 FIELD_ACCESS 的读路径是两套实现，
+// 多级字段、指针接收者、常量子字段这些规则都要各写一遍。改写成同一种表示之后，
+// 写只是「先求地址再 store」，读只是「先求地址再 load」。
 
 typedef struct {
     const char **items;
@@ -35,7 +39,7 @@ typedef struct {
 
 typedef struct {
     NameSet locals;       // 当前函数的局部名字：参数、let/const、match 绑定
-    NameSet namespaces;   // 模块别名 / 类型名 / 顶层函数与常量：这些绝不当字段链
+    int trace;            // TAP_TRACE_NAMES=1：打印每一处改写
 } NameContext;
 
 static void name_set_add(NameSet *set, const char *name) {
@@ -75,13 +79,12 @@ static void name_set_free(NameSet *set) {
 
 // 把 `a.b.c` 拆成 IdentifierNode(a) + 两层 FIELD_ACCESS。
 //
-// 段太长（>255）时放弃改写，返回原节点：正常代码里不会有这种名字，真出现了也
-// 不应该因为「太长」而崩掉编译。**不释放旧节点** —— 调用方负责在摘掉链表后继之后
-// 释放它（free_ast 会递归释放 next，先摘再放才不会连带释放整条链）。
+// 不适用（没有点、段太长）时返回 NULL，调用方保持原节点。**不释放旧节点** —— 调用方
+// 负责在摘掉链表后继之后释放它（free_ast 会递归释放 next，先摘再放才不会连带释放整条链）。
 static ASTNode *build_field_chain(ASTNode *source, const char *name,
                                   size_t root_length) {
     char buffer[256];
-    if (root_length >= sizeof(buffer)) return source;
+    if (root_length >= sizeof(buffer)) return NULL;
     memcpy(buffer, name, root_length);
     buffer[root_length] = '\0';
 
@@ -94,13 +97,18 @@ static ASTNode *build_field_chain(ASTNode *source, const char *name,
         size_t length = dot ? (size_t)(dot - rest) : strlen(rest);
         if (length == 0 || length >= sizeof(buffer)) {
             // 段名不合法：整条链作废，保持原样，交给旧路径报错。
+            chain->next = NULL;
             free_ast(chain);
-            return source;
+            return NULL;
         }
         memcpy(buffer, rest, length);
         buffer[length] = '\0';
         FieldAccessNode *access = create_field_access(chain, buffer);
         access->base.loc = source->loc;
+        // 空指针守卫和诊断要用；names 造出来的链和 parser 造的一样带上位置。
+        access->filename = source->loc.file ? strdup(source->loc.file) : NULL;
+        access->line = (int)source->loc.line;
+        access->column = (int)source->loc.column;
         chain = (ASTNode *)access;
         rest = dot ? dot + 1 : NULL;
     }
@@ -108,8 +116,31 @@ static ASTNode *build_field_chain(ASTNode *source, const char *name,
     return chain;
 }
 
+// `name` 的点号链是否该当字段访问处理：根必须是**当前函数的局部变量**。
+//
+// 不需要额外排除「和模块别名 / 类型名同名」的情况：局部名遮蔽别名是合法的
+// （`import std.vec as vec;` 之后 `let vec: i32 = 1;` 能编译），所以只要根是局部变量，
+// `vec.data` 里的 `vec` 就一定是那个变量，不可能是模块。早先这里有一道按全局别名表
+// 的否决，把 std 里所有 `vec.data` / `builder.buffer` 全挡在门外（它们恰好和调用方的
+// import 别名同名），白白让几百处字段访问继续走字符串路径。
+static int qualified_name_is_field(const NameContext *context, const char *name,
+                                   size_t *root_length) {
+    const char *dot = name ? strchr(name, '.') : NULL;
+    if (!dot || dot == name) return 0;
+    size_t length = (size_t)(dot - name);
+    if (!name_set_contains(&context->locals, name, length)) return 0;
+    *root_length = length;
+    return 1;
+}
+
 static ASTNode *rewrite_expression(NameContext *context, ASTNode *expression);
-static void rewrite_statements(NameContext *context, ASTNode *statements);
+static void rewrite_statements(NameContext *context, ASTNode **head);
+
+static void trace_rewrite(const NameContext *context, const char *name) {
+    if (context->trace) {
+        fprintf(stderr, "names: %s -> field chain\n", name);
+    }
+}
 
 // 改写一个子节点槽位：需要替换时把旧节点的 next 摘给新节点、再单独释放旧节点。
 static void rewrite_slot(NameContext *context, ASTNode **slot) {
@@ -140,7 +171,7 @@ static void rewrite_match(NameContext *context, MatchStatementNode *match_node) 
         for (ASTNode *binding = arm->bindings; binding; binding = binding->next) {
             name_set_add(&context->locals, ((IdentifierNode *)binding)->name);
         }
-        rewrite_statements(context, arm->body);
+        rewrite_statements(context, &arm->body);
         rewrite_slot(context, &arm->value);
     }
 }
@@ -151,16 +182,13 @@ static ASTNode *rewrite_expression(NameContext *context, ASTNode *expression) {
     switch (expression->type) {
         case NODE_IDENTIFIER: {
             const char *name = ((IdentifierNode *)expression)->name;
-            const char *dot = name ? strchr(name, '.') : NULL;
-            if (!dot || dot == name) return expression;
-            size_t root_length = (size_t)(dot - name);
-            if (!name_set_contains(&context->locals, name, root_length)) {
-                return expression; // 根不是局部变量：模块/类型成员，保持字符串
+            size_t root_length = 0;
+            if (!qualified_name_is_field(context, name, &root_length)) {
+                return expression;
             }
-            if (name_set_contains(&context->namespaces, name, root_length)) {
-                return expression; // 和模块别名/类型名同名：不敢当字段，保持原样
-            }
-            return build_field_chain(expression, name, root_length);
+            ASTNode *chain = build_field_chain(expression, name, root_length);
+            if (chain) trace_rewrite(context, name);
+            return chain ? chain : expression;
         }
         case NODE_BINARY_OP: {
             BinaryOpNode *binary = (BinaryOpNode *)expression;
@@ -225,8 +253,11 @@ static ASTNode *rewrite_expression(NameContext *context, ASTNode *expression) {
     }
 }
 
-static void rewrite_statements(NameContext *context, ASTNode *statements) {
-    for (ASTNode *statement = statements; statement; statement = statement->next) {
+// 语句列表按**槽位**遍历：`p.x = v` 要整条换成 FIELD_ASSIGNMENT，光改字段不够。
+static void rewrite_statements(NameContext *context, ASTNode **head) {
+    ASTNode **slot = head;
+    while (*slot) {
+        ASTNode *statement = *slot;
         switch (statement->type) {
             case NODE_VAR_DECL: {
                 VarDeclNode *declaration = (VarDeclNode *)statement;
@@ -237,6 +268,36 @@ static void rewrite_statements(NameContext *context, ASTNode *statements) {
             }
             case NODE_ASSIGNMENT: {
                 AssignmentNode *assignment = (AssignmentNode *)statement;
+                rewrite_slot(context, &assignment->expression);
+
+                size_t root_length = 0;
+                if (!qualified_name_is_field(context, assignment->name,
+                                             &root_length)) {
+                    break; // 根不是局部变量：模块/类型成员，交给旧路径
+                }
+                ASTNode *chain = build_field_chain(
+                    statement, assignment->name, root_length);
+                if (!chain || chain->type != NODE_FIELD_ACCESS) {
+                    if (chain) free_ast(chain);
+                    break;
+                }
+
+                trace_rewrite(context, assignment->name);
+                FieldAssignmentNode *replacement = create_field_assignment(
+                    (FieldAccessNode *)chain, assignment->expression);
+                replacement->base.loc = statement->loc;
+                // 所有权转移：expression 归新节点，链表后继接过去，旧节点清空后释放。
+                assignment->expression = NULL;
+                replacement->base.next = statement->next;
+                statement->next = NULL;
+                free_ast(statement);
+                *slot = (ASTNode *)replacement;
+                statement = *slot;
+                break;
+            }
+            case NODE_FIELD_ASSIGNMENT: {
+                FieldAssignmentNode *assignment = (FieldAssignmentNode *)statement;
+                rewrite_slot(context, &assignment->target->object);
                 rewrite_slot(context, &assignment->expression);
                 break;
             }
@@ -255,51 +316,28 @@ static void rewrite_statements(NameContext *context, ASTNode *statements) {
             case NODE_IF_STATEMENT: {
                 IfStatementNode *if_node = (IfStatementNode *)statement;
                 rewrite_slot(context, &if_node->condition);
-                rewrite_statements(context, if_node->consequence);
-                rewrite_statements(context, if_node->alternative);
+                rewrite_statements(context, &if_node->consequence);
+                rewrite_statements(context, &if_node->alternative);
                 break;
             }
             case NODE_FOR_STATEMENT: {
                 ForStatementNode *for_node = (ForStatementNode *)statement;
-                rewrite_statements(context, for_node->initializer);
+                rewrite_statements(context, &for_node->initializer);
                 rewrite_slot(context, &for_node->condition);
-                rewrite_statements(context, for_node->update);
-                rewrite_statements(context, for_node->body);
+                rewrite_statements(context, &for_node->update);
+                rewrite_statements(context, &for_node->body);
                 break;
             }
             case NODE_MATCH_STATEMENT:
                 rewrite_match(context, (MatchStatementNode *)statement);
                 break;
             case NODE_FUNCTION_CALL:
-                rewrite_expression(context, statement);
+                rewrite_slot(context, slot);
                 break;
             default:
                 break;
         }
-    }
-}
-
-// 顶层声明里的名字：模块别名、类型名、函数名、常量名。出现在这些位置上的点号
-// 一律不是字段访问，所以整体登记进 namespaces 集合，用于「宁可少改」的否决判断。
-static void collect_namespaces(ProgramNode *program, NameSet *namespaces) {
-    for (ASTNode *node = program->imports; node; node = node->next) {
-        ImportNode *import_node = (ImportNode *)node;
-        name_set_add(namespaces, import_node->alias);
-    }
-    for (ASTNode *node = program->structs; node; node = node->next) {
-        name_set_add(namespaces, ((StructNode *)node)->name);
-    }
-    for (ASTNode *node = program->enums; node; node = node->next) {
-        name_set_add(namespaces, ((EnumNode *)node)->name);
-    }
-    for (ASTNode *node = program->constants; node; node = node->next) {
-        name_set_add(namespaces, ((VarDeclNode *)node)->name);
-    }
-    for (ASTNode *node = program->functions; node; node = node->next) {
-        name_set_add(namespaces, ((FunctionNode *)node)->name);
-    }
-    for (ASTNode *node = program->traits; node; node = node->next) {
-        name_set_add(namespaces, ((TraitNode *)node)->name);
+        slot = &(*slot)->next;
     }
 }
 
@@ -309,7 +347,7 @@ static void rewrite_function(NameContext *context, FunctionNode *function) {
     for (ASTNode *param = function->params; param; param = param->next) {
         name_set_add(&context->locals, ((IdentifierNode *)param)->name);
     }
-    rewrite_statements(context, function->body);
+    rewrite_statements(context, &function->body);
 }
 
 void normalize_qualified_names(ProgramNode *program) {
@@ -317,12 +355,12 @@ void normalize_qualified_names(ProgramNode *program) {
 
     NameContext context;
     memset(&context, 0, sizeof(context));
-    collect_namespaces(program, &context.namespaces);
+    const char *trace = getenv("TAP_TRACE_NAMES");
+    context.trace = trace && trace[0];
 
     for (ASTNode *node = program->functions; node; node = node->next) {
         rewrite_function(&context, (FunctionNode *)node);
     }
 
     name_set_free(&context.locals);
-    name_set_free(&context.namespaces);
 }

@@ -25,6 +25,7 @@ enum NodeType {
     NODE_ARRAY_LITERAL,             // 数组字面量节点
     NODE_INDEX_EXPRESSION,          // 数组索引表达式节点
     NODE_INDEX_ASSIGNMENT,          // 数组索引赋值节点
+    NODE_FIELD_ASSIGNMENT,          // 字段赋值节点（`target 字段 = 表达式`）
     NODE_ENUM,                      // 枚举声明节点
     NODE_ENUM_VARIANT,              // 枚举成员声明节点
     NODE_STRUCT,                    // 结构体声明节点
@@ -364,9 +365,10 @@ typedef struct {
 
 // 字段访问表达式：`接收者.字段名`，接收者是任意表达式。
 //
-// 标识符接收者且只有一层（`a.b`）仍然走 IdentifierNode 的名字拼接老路；这个节点表示
-// 「接收者不是标识符」或「多于一层」的情况，例如 `arr[0].x`、`make().x`、`a.b.c`。
-// 它只用于**读取**字段；`表达式.方法()` 形式的调用还不支持。
+// 两种来源：parser 对「接收者不是标识符」的写法直接产出（`arr[0].x`、`make().x`），
+// names.c 把「根是局部变量」的带点标识符改写成链（`a.b.c` → 两层 FIELD_ACCESS）。
+// 改写之后，字段访问在 AST 里只有这一种表示，读和写（FieldAssignmentNode）共用同一套
+// 地址计算。`表达式.方法()` 形式的调用还不支持。
 typedef struct {
     ASTNode base;
     ASTNode *object;       // 接收者表达式
@@ -381,6 +383,18 @@ typedef struct {
     IndexExpressionNode *target;
     ASTNode *expression;
 } IndexAssignmentNode;
+
+// 字段赋值：`p.x = v`、`p.inner.value = v`、`make().x = v`。
+//
+// 和 IndexAssignmentNode 同形：target 是一个**可寻址的字段访问链**，expression 是新值。
+// 在 `names.c` 把 `p.x = v` 从 AssignmentNode 的字符串形式改写成这个节点之前，写路径
+// 必须靠 `strchr(name, '.')` 再拆一遍点号，和读路径的 FIELD_ACCESS 是两套实现
+// （`&mut a.b.c` 报 `pointer expression type mismatch` 就是这么来的）。
+typedef struct {
+    ASTNode base;
+    FieldAccessNode *target;
+    ASTNode *expression;
+} FieldAssignmentNode;
 
 
 // 函数调用节点
@@ -538,6 +552,9 @@ IndexExpressionNode *create_index_expression(ASTNode *array, ASTNode *index);
 FieldAccessNode *create_field_access(ASTNode *object, const char *field);
 IndexAssignmentNode *create_index_assignment(
     IndexExpressionNode *target, ASTNode *expression);
+// 字段赋值接管 target 和 expression 的所有权。
+FieldAssignmentNode *create_field_assignment(
+    FieldAccessNode *target, ASTNode *expression);
 FunctionCallNode *create_function_call(const char *name);
 
 // 添加子节点的函数

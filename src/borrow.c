@@ -300,31 +300,6 @@ static int paths_overlap(const char *left, const char *right) {
     return path_is_prefix(left, right) || path_is_prefix(right, left);
 }
 
-// 把 `a.b.c` 的第一个点前面的部分取出来。成功返回 1。
-static int split_dotted(const char *name, char *buffer, size_t size,
-                        const char **rest) {
-    const char *dot = strchr(name, '.');
-    if (!dot || dot == name) return 0;
-    size_t length = (size_t)(dot - name);
-    if (length >= size) return 0;
-    memcpy(buffer, name, length);
-    buffer[length] = '\0';
-    *rest = dot + 1;
-    return 1;
-}
-
-// 取下一段字段名，并把 rest 前移。没有下一段时返回 0。
-static int next_segment(const char **rest, char *buffer, size_t size) {
-    if (!*rest || !**rest) return 0;
-    const char *dot = strchr(*rest, '.');
-    size_t length = dot ? (size_t)(dot - *rest) : strlen(*rest);
-    if (length == 0 || length >= size) return 0;
-    memcpy(buffer, *rest, length);
-    buffer[length] = '\0';
-    *rest = dot ? dot + 1 : NULL;
-    return 1;
-}
-
 static void reset_lvalue(LValueInfo *info) {
     info->base = NULL;
     info->root = NULL;
@@ -337,37 +312,18 @@ static void reset_lvalue(LValueInfo *info) {
     info->path_overflow = 0;
 }
 
-// 名字 → 左值。`point.x` 这种只有字段链的写法在 AST 里是一个带点的标识符，
-// 所以路径要从名字里拆。
+// 名字 → 左值。只认**变量**：字段链已经是 NODE_FIELD_ACCESS（names.c 改写），由
+// resolve_lvalue 的字段分支逐层走。带点的名字（模块成员、枚举成员）在这里查不到符号，
+// 于是 base 为空 —— 它们本来就不归借用检查管。
 static void resolve_identifier(BorrowContext *context, const char *name,
                                LValueInfo *info) {
     reset_lvalue(info);
     BorrowSymbol *symbol = find_symbol(context, name);
-    if (symbol) {
-        info->base = symbol;
-        info->root = symbol;
-        info->rank = symbol->storage_rank;
-        info->type = symbol->type;
-        return;
-    }
-
-    char base_name[256];
-    const char *rest = NULL;
-    if (!split_dotted(name, base_name, sizeof(base_name), &rest)) return;
-    symbol = find_symbol(context, base_name);
-    if (!symbol) return; // 模块名、常量、枚举成员等，不归借用检查管
-
-    // 取的是变量本身的地址，所以起点还在栈帧里；字段链后面可能穿指针。
+    if (!symbol) return;
     info->base = symbol;
     info->root = symbol;
     info->rank = symbol->storage_rank;
     info->type = symbol->type;
-
-    char field[256];
-    while (next_segment(&rest, field, sizeof(field))) {
-        apply_field(context, info, field);
-        path_push(info, field);
-    }
 }
 
 static void resolve_lvalue(BorrowContext *context, ASTNode *expression,
@@ -1095,6 +1051,17 @@ static void prescan_statement(NllScan *scan, ASTNode *statement) {
             break;
         }
 
+        case NODE_FIELD_ASSIGNMENT: {
+            FieldAssignmentNode *assignment = (FieldAssignmentNode *)statement;
+            // `r.x = 5` 里 r 确实被用了：正式遍历只走 resolve_lvalue（不读左值），
+            // 这里不补的话 r 会被当成「从未使用」，借用一直活到作用域结束。
+            // 写入不是把指针交出去，所以 leaks 留 0。
+            prescan_expression(scan, assignment->target->object, 0);
+            // 右值赋给字段等于把指针交出去，按逃逸算（保守方向）。
+            prescan_expression(scan, assignment->expression, 1);
+            break;
+        }
+
         case NODE_INDEX_ASSIGNMENT: {
             IndexAssignmentNode *assignment = (IndexAssignmentNode *)statement;
             // 基对象在正式遍历里走的是 resolve_lvalue（不走 walk_expression），
@@ -1550,6 +1517,21 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
                 // NLL：新借的这条 lifetime 也收到「变量最后一次使用」为止。
                 apply_borrow_lifetime(context, borrow_mark, target->name);
             }
+            break;
+        }
+
+        case NODE_FIELD_ASSIGNMENT: {
+            FieldAssignmentNode *assignment = (FieldAssignmentNode *)statement;
+            LValueInfo info;
+            resolve_lvalue(context, (ASTNode *)assignment->target, &info);
+            check_write_target(context, &info, statement);
+            // 目标不归本帧跟踪（根是函数返回值等）时，至少把接收者当表达式走一遍，
+            // 否则 `make().x = 1` 里 make() 的实参整个跳过检查。能被 resolve_lvalue
+            // 跟踪的那部分已经查过了，再走一遍会对同一个错误报两条。
+            if (!lvalue_borrow_base(&info)) {
+                walk_expression(context, assignment->target->object);
+            }
+            walk_expression(context, assignment->expression);
             break;
         }
 

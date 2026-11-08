@@ -6,7 +6,7 @@
 //
 // 数组下标也算一段路径：常量下标互不相干，非常量下标按重叠处理。
 //
-// 注意 `&mut a.b.c`（多级字段取地址）是 Codegen 侧的独立缺口，和借用检查无关。
+// 路径按字段/下标逐段累积，写和读走同一套（`p.x = v` 现在也是字段访问节点）。
 
 struct Inner { value: i32 }
 struct Point { left: i32, right: i32, inner: Inner }
