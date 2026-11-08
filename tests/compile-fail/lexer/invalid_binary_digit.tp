@@ -1,0 +1,12 @@
+fn main(): int {
+    let flags: i32 = 0b102;
+    return flags;
+}
+
+/** -- test
+- .stderr
+error: invalid digit '2' in binary literal
+invalid_binary_digit.tp:2:26
+- .exit
+1
+-- */

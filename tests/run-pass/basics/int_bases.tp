@@ -1,0 +1,42 @@
+// 整数字面量的非十进制写法：0x 十六进制、0o 八进制、0b 二进制。
+const HEX_FLAG: i32 = 0x10;
+
+fn main(): int {
+    let hex: i32 = 0x1F;
+    let octal: i32 = 0o17;
+    let binary: i32 = 0b1010;
+    // 前缀字母大小写都认
+    let upper: i32 = 0XFF + 0O7 + 0B1;
+    print("%d %d %d %d\n", hex, octal, binary, upper);
+
+    // 位运算最常见的用法：掩码、置位、取反
+    let mask: i32 = 0b11110000;
+    print("%d %d %d\n", 0xFF & mask, 0x0F | 0b10000000, ~0b1010);
+
+    // 0 在三种进制下都能写
+    print("%d %d %d\n", 0x0, 0o0, 0b0);
+
+    // 宽整数：十六进制写满 64 位，以及超过 64 位的 u128（十进制归一化不能丢精度）
+    let wide: u64 = 0xFFFFFFFFFFFFFFFF;
+    let huge: u128 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+    let same: u128 = 340282366920938463463374607431768211455;
+    print("%lu %d\n", wide, huge == same);
+
+    // 数组长度、重复初始化、const 里同样能用
+    let table: [i32; 0x3] = [0x1, 0o2, 0b11];
+    let repeated: [u8; 2] = [0xFF; 0b10];
+    print("%d %d %d %d\n", table[0] + table[1] + table[2], repeated[1],
+          HEX_FLAG, 0x2 + 0o2 + 0b10);
+    return 0;
+}
+
+/** -- test
+- .stdout
+31 15 10 263
+240 143 -11
+0 0 0
+18446744073709551615 1
+6 255 16 6
+- .exit
+0
+-- */

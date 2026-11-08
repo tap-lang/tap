@@ -336,12 +336,75 @@ static Token *identifier(Lexer *lexer) {
     return token;
 }
 
+// 数字字符在指定进制下的值；不是该进制的合法数字时返回 -1。
+static int digit_value(char c, int base) {
+    int value;
+    if (c >= '0' && c <= '9') {
+        value = c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+        value = c - 'a' + 10;
+    } else if (c >= 'A' && c <= 'F') {
+        value = c - 'A' + 10;
+    } else {
+        return -1;
+    }
+    return value < base ? value : -1;
+}
+
+// 解析带进制前缀的整数字面量（0x/0X 十六进制、0o/0O 八进制、0b/0B 二进制）。
+// 进入时 current 指向前缀的 '0'。
+static Token *based_number(Lexer *lexer, int base) {
+    const char *start = lexer->current;
+    const char *base_name = base == 16 ? "hexadecimal"
+                          : base == 8  ? "octal"
+                                       : "binary";
+
+    advance(lexer); // 跳过 '0'
+    advance(lexer); // 跳过 x / o / b
+    const char *digits = lexer->current;
+    while (digit_value(peek(lexer), base) >= 0) {
+        advance(lexer);
+    }
+
+    if (lexer->current == digits) {
+        print_diagnostic(stderr, "error", lexer->filename, lexer->line,
+                         lexer->column,
+                         "%s literal needs at least one digit", base_name);
+        exit(1);
+    }
+
+    // 前缀后面不能再跟字母/数字/下划线：0b102、0o18、0x1G 这类必须当场报错，
+    // 否则会退化成「字面量 + 标识符」，一路飘到语法分析才炸，位置离现场很远。
+    char trailing = peek(lexer);
+    if (isalnum((unsigned char)trailing) || trailing == '_') {
+        print_diagnostic(stderr, "error", lexer->filename, lexer->line,
+                         lexer->column,
+                         "invalid digit '%c' in %s literal", trailing, base_name);
+        exit(1);
+    }
+
+    Token *token = create_token(lexer, TOKEN_I32, start, lexer->current);
+    // 原文带前缀，所以从第一位数字开始按对应进制解析。
+    token->value.int_value = strtoull(digits, NULL, base);
+    return token;
+}
+
 // 解析数字
 static Token *number(Lexer *lexer) {
     const char *start = lexer->current;
     int has_dot = 0;
     int has_exponent = 0;
-    
+
+    // 进制前缀只认「0 + 前缀字母」，因此 0.5、0e3 这类仍然走下面的十进制路径。
+    if (peek(lexer) == '0') {
+        switch (peek_next(lexer)) {
+            case 'x': case 'X': return based_number(lexer, 16);
+            case 'o': case 'O': return based_number(lexer, 8);
+            case 'b': case 'B': return based_number(lexer, 2);
+            default: break;
+        }
+    }
+
     while (isdigit(peek(lexer))) {
         advance(lexer);
     }

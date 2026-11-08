@@ -273,7 +273,7 @@ typedef struct {
 typedef struct {
     ASTNode base;
     enum LiteralType literal_type;
-    char *integer_text;       // 十进制整数原文，用于构造 i128/u128 常量
+    char *integer_text;       // 十进制整数文本（0x/0o/0b 原文已归一化），用于构造 i128/u128 常量
     union {
         uint64_t int_value;
         uint32_t char_value;

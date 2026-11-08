@@ -780,9 +780,77 @@ LiteralNode *create_int_literal(uint64_t value) {
     return literal;
 }
 
+// 数字字符在指定进制下的值；不是该进制的合法数字时返回 -1。
+static int literal_digit_value(char c, int base) {
+    int value;
+    if (c >= '0' && c <= '9') {
+        value = c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+        value = c - 'a' + 10;
+    } else if (c >= 'A' && c <= 'F') {
+        value = c - 'A' + 10;
+    } else {
+        return -1;
+    }
+    return value < base ? value : -1;
+}
+
+// 把 base 进制的数字串转成十进制字符串（malloc，调用方接管所有权）。
+//
+// 这里手写「乘 base 加一位」的十进制累加，而不是走 strtoull：十六进制的 u128 常量有
+// 32 位数字，远超 64 位，strtoull 会静默截断成 ULLONG_MAX。而 integer_text 存在的
+// 意义正是给 i128/u128 常量按十进制交给 LLVM。
+static char *base_digits_to_decimal(const char *digits, int base) {
+    size_t length = strlen(digits);
+    // 每位最多贡献 2 个十进制位（二进制位太少、十六进制约 1.21 位），留足余量。
+    char *buffer = (char *)calloc(length * 4 + 2, 1);
+    if (!buffer) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+
+    // 低位在 buffer[0]，最后统一反转。
+    size_t used = 1;
+    buffer[0] = '0';
+    for (size_t i = 0; i < length; i++) {
+        int carry = literal_digit_value(digits[i], base);
+        for (size_t j = 0; j < used; j++) {
+            int current = (buffer[j] - '0') * base + carry;
+            buffer[j] = (char)('0' + current % 10);
+            carry = current / 10;
+        }
+        while (carry > 0) {
+            buffer[used++] = (char)('0' + carry % 10);
+            carry /= 10;
+        }
+    }
+
+    for (size_t i = 0; i < used / 2; i++) {
+        char swap = buffer[i];
+        buffer[i] = buffer[used - 1 - i];
+        buffer[used - 1 - i] = swap;
+    }
+    buffer[used] = '\0';
+    return buffer;
+}
+
 LiteralNode *create_int_literal_text(const char *value) {
-    LiteralNode *literal = create_int_literal(strtoull(value, NULL, 10));
-    literal->integer_text = strdup(value);
+    // 0x / 0o / 0b 前缀要归一化成十进制：integer_text 在 codegen 里是按十进制交给
+    // LLVMConstIntOfStringAndSize 的，带前缀的原文喂进去只会得到 0。
+    int base = 10;
+    const char *digits = value;
+    if (value[0] == '0' && value[1] != '\0') {
+        switch (value[1]) {
+            case 'x': case 'X': base = 16; digits = value + 2; break;
+            case 'o': case 'O': base = 8;  digits = value + 2; break;
+            case 'b': case 'B': base = 2;  digits = value + 2; break;
+            default: break;
+        }
+    }
+
+    char *text = base == 10 ? strdup(value) : base_digits_to_decimal(digits, base);
+    LiteralNode *literal = create_int_literal(strtoull(text, NULL, 10));
+    literal->integer_text = text;
     return literal;
 }
 

@@ -1,0 +1,12 @@
+fn main(): int {
+    let empty: i32 = 0x;
+    return empty;
+}
+
+/** -- test
+- .stderr
+error: hexadecimal literal needs at least one digit
+missing_base_digits.tp:2:24
+- .exit
+1
+-- */

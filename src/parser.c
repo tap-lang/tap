@@ -405,7 +405,7 @@ static VarTypeNode *parse_type(Parser *parser) {
             free_ast((ASTNode *)element_type);
             parser_error(parser, "array length must be a positive integer literal"); // 中文：数组长度必须是正整数字面量
         }
-        uint64_t length = strtoull(parser->current_token->lexeme, NULL, 10);
+        uint64_t length = parser->current_token->value.int_value;
         if (length == 0 || length > INT64_MAX) {
             free_ast((ASTNode *)element_type);
             parser_error(parser, "array length must be between 1 and INT64_MAX"); // 中文：数组长度必须在 1 到 INT64_MAX 之间
@@ -1229,7 +1229,8 @@ static ASTNode *parse_array_literal(Parser *parser) {
                 free_ast((ASTNode *)array);
                 parser_error(parser, "array repeat initializer length must be a positive integer literal"); // 中文：数组重复初始化长度必须是正整数数字面量
             }
-            uint64_t repeat_count = strtoull(parser->current_token->lexeme, NULL, 10);
+            // 长度直接取词法阶段算好的值，这样 0x10 这类非十进制写法也能用。
+            uint64_t repeat_count = parser->current_token->value.int_value;
             if (repeat_count == 0 || repeat_count > INT64_MAX) {
                 free_ast((ASTNode *)array);
                 parser_error(parser, "array repeat initializer length must be between 1 and INT64_MAX"); // 中文：数组重复初始化长度必须在 1 到 INT64_MAX 之间

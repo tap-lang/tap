@@ -256,8 +256,11 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 和 `*T`，数组额外记录 `array_length`。具名类型的 `type_arguments` 保存 `Vec<i32>` 中的
 `i32` 等泛型实参。
 
-十进制整数字面量默认创建为 `LITERAL_I32`，同时在 `integer_text` 中保留原文，使 Codegen
-可以直接构造超过 64 位的 `i128/u128` 常量。浮点字面量（`1.5` 和 `1e10` 两种写法）创建为
+十进制整数字面量默认创建为 `LITERAL_I32`，同时在 `integer_text` 中保留文本，使 Codegen
+可以直接构造超过 64 位的 `i128/u128` 常量。`0x`/`0o`/`0b` 前缀的字面量在词法阶段就算出
+`Token.value.int_value`，`create_int_literal_text()` 再把原文归一化成十进制写进
+`integer_text`（超过 64 位的十六进制也走手写的十进制累加，不用 `strtoull`）。
+浮点字面量（`1.5` 和 `1e10` 两种写法）创建为
 `LITERAL_F32`，布尔字面量 `true` / `false` 创建为 `LITERAL_BOOL`。
 
 ## 链表关系
