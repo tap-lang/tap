@@ -381,6 +381,21 @@ static VarTypeNode *parse_function_pointer_type(Parser *parser) {
 }
 
 static VarTypeNode *parse_type(Parser *parser) {
+    // `&&T`：词法层把两个 `&` 合并成 `&&`（表达式里它是逻辑与），所以类型位置要自己
+    // 拆开。等价于 `&(&T)` —— 外层固定是共享借用，`mut` 属于内层。
+    //
+    // `& &T`（带空格）走下面的普通 `&` 分支，本来就能解析；这里只是让紧凑写法也通。
+    if (parser->current_token->type == TOKEN_AND) {
+        consume(parser, TOKEN_AND);
+        int inner_mutable = 0;
+        if (parser->current_token->type == TOKEN_MUT) {
+            consume(parser, TOKEN_MUT);
+            inner_mutable = 1;
+        }
+        VarTypeNode *inner = create_reference_type(parse_type(parser), inner_mutable);
+        return create_reference_type(inner, 0);
+    }
+
     // 借用类型：`&T` 共享、`&mut T` 独占。
     //
     // 类型位置的 `&` 没有歧义（二元按位与不会出现在类型里），所以直接吃掉即可。

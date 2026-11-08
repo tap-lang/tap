@@ -1059,6 +1059,17 @@ static int reference_assignable_to(
         return result;
     }
 
+    if (reference->target->type == NODE_DEREFERENCE) {
+        // `&*p`：把裸指针重新包成借用。这是「升级」，只查类型对不对得上 ——
+        // 寿命没有任何承诺，和 `*T → &T` 的契约一致（见 borrow.md 规则 2）。
+        VarTypeNode *pointer = expression_full_type(
+            context, ((DereferenceNode *)reference->target)->operand);
+        int result = pointer && pointer->is_pointer && pointer->element_type &&
+                     tap_type_equal(pointer->element_type, pointer_type->element_type);
+        free_ast((ASTNode *)pointer);
+        return result;
+    }
+
     return 0;
 }
 
@@ -2328,6 +2339,18 @@ static LLVMValueRef generate_reference(
         // 这些细节，直接复用，别再写一份。
         LLVMValueRef address = expression_address(context, target);
         if (address) return address;
+    }
+
+    if (target && target->type == NODE_DEREFERENCE) {
+        // `&*p`：机器码上「解引用再取地址」就是恒等，直接把 p 拿来用。
+        // 空指针检查仍然生成 —— `&*null` 和 `*null` 一样是未定义行为，
+        // 只是这里不求值、只取地址，容易让人以为「不会碰内存所以安全」。
+        DereferenceNode *dereference = (DereferenceNode *)target;
+        LLVMValueRef pointer = generate_expression(context, dereference->operand);
+        if (pointer) {
+            emit_null_guard(context, pointer, (const ASTNode *)reference);
+        }
+        return pointer;
     }
 
     report_error((const ASTNode *)reference, "reference target is not addressable"); // 中文：引用目标不可寻址
