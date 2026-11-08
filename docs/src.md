@@ -3,7 +3,8 @@
 tap 当前采用手写前端和 LLVM 后端，主要编译流程如下：
 
 ```text
-源文件 -> Lexer -> Token -> Parser -> AST -> LLVM Codegen -> IR / 可执行文件
+源文件 -> Lexer -> Token -> Parser -> AST -> [模块装载 -> 名字归一 -> 泛型单态化
+        -> Sema -> 借用检查] -> LLVM Codegen -> IR / 可执行文件
 ```
 
 ## 核心模块
@@ -20,12 +21,38 @@ tap 当前采用手写前端和 LLVM 后端，主要编译流程如下：
 | [`ast.c`](../src/ast.c) / [`ast.h`](../src/ast.h) | AST 节点定义、构造、打印和释放；详见 [AST 文档](ast.md) |
 | [`types.c`](../src/types.c) / [`types.h`](../src/types.h) | 完整类型的深拷贝与等价判断、按名字查声明、限定名切分；单态化和 Codegen 共用 |
 | [`generics.c`](../src/generics.c) / [`generics.h`](../src/generics.h) | 泛型单态化：推断类型实参、克隆实例、校验 trait impl 签名 |
+| [`names.c`](../src/names.c) / [`names.h`](../src/names.h) | 名字归一：把「根是局部变量」的点号标识符改写成字段访问链（见下面「点号的两条路径」） |
 | [`sema.c`](../src/sema.c) / [`sema.h`](../src/sema.h) | 语义分析：在生成 IR 之前推断表达式类型并写入 `resolved_type` |
 | [`borrow.c`](../src/borrow.c) / [`borrow.h`](../src/borrow.h) | 借用检查：`&T` / `&mut T` 的逃逸、寿命和别名规则；详见[借用文档](borrow.md) |
 | [`codegen.c`](../src/codegen.c) / [`codegen.h`](../src/codegen.h) | 遍历 AST、生成 LLVM IR，并将 IR 编译链接为可执行文件 |
 | [`run.c`](../src/run.c) / [`run.h`](../src/run.h) | 本地可执行文件与 `lli` 的运行、退出码和临时产物清理 |
 | [`runtime/src/runtime.c`](../runtime/src/runtime.c) | 终端、休眠和随机数等跨平台 C Runtime 实现 |
 | [`version.c`](../src/version.c) / [`version.h`](../src/version.h) | 版本信息实现和生成结果 |
+
+## 点号的两条路径
+
+`.` 在 tap 里同时是**字段访问**、**模块成员**和**类型成员**（`Color.Red`）的分隔符，
+而 parser 看到 `a.b` 时无法判断 `a` 是什么：
+
+- 类型可以先用后声明（`fn f(): Point` 写在 `struct Point` 之前合法）；
+- `import` 可以写在文件末尾；
+- 变量可以和模块别名重名（`import std.vec as vec;` 之后 `let vec: i32` 合法）。
+
+所以 parser 把整串拼成一个 `IdentifierNode` 的 `name`，由后面能拿到符号表/模块表的阶段
+再判断。`names.c` 就是那一趟：解析完成、模块装载之后，用「当前函数已知的局部名字」做
+**正向判定**，只把「根确定是局部变量」的链改写成 `NODE_FIELD_ACCESS`；模块成员、类型成员
+以及所有拿不准的情况一律保持原样（`TAP_NO_NAMES=1` 可以整趟跳过，用来对比）。
+
+结果是两条路径并存：
+
+| 形态 | 谁产生 | 谁处理 |
+|---|---|---|
+| `NODE_FIELD_ACCESS` 链 | `names.c` 改写后的局部字段链；parser 对非标识符接收者的字段访问 | 借用检查、Sema、Codegen 的字段访问分支 |
+| 带点的 `IdentifierNode` | 模块成员（`math.PI`）、类型成员（`Color.Red`）、`names.c` 拿不准时保留的写法 | 各阶段自己的「带点名字」解析（`strchr('.')`） |
+
+**新增代码时优先走第一条**：字段访问只有一种表示，才能保证「借用粒度到字段路径」
+「空指针检查」「指针自动解引用」这些规则只实现一遍。第二条是给命名空间用的，
+它的「点」不是字段访问，不要往里加新的语义。
 
 ## 模块依赖
 

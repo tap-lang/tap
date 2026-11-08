@@ -1,0 +1,50 @@
+// 多级字段取地址：`&p.inner.value`、`&mut p.inner.value`。
+//
+// 以前这条会报 `pointer expression type mismatch`：parser 把 `p.inner.value` 拼成一个
+// 标识符字符串，取地址走的是「按名字找字段」的老路，多级链在那里只算到一层。
+// 名字归一（names.c）之后字段链是 NODE_FIELD_ACCESS，`generate_reference` 直接用
+// `expression_address` 逐层求地址，多级和一级走同一条路。
+struct Inner {
+    value: i32,
+}
+
+struct Point {
+    left: i32,
+    inner: Inner,
+}
+
+fn bump(part: &mut i32) {
+    part[0] = part[0] + 1;
+}
+
+fn main(): i32 {
+    let point: Point = Point { left: 1, inner: Inner { value: 3 } };
+
+    // 读：多级链取地址后解引用
+    let read: &i32 = &point.inner.value;
+    print("read: %d\n", read[0]);
+
+    // 写：通过多级链的独占借用改原值
+    let write: &mut i32 = &mut point.inner.value;
+    write[0] = 7;
+    print("write: %d\n", point.inner.value);
+
+    // 当实参传给 `&mut T` 参数
+    bump(&mut point.inner.value);
+    print("bump: %d\n", point.inner.value);
+
+    // 单层和多级混用，地址必须一致
+    let whole: &mut Inner = &mut point.inner;
+    print("whole: %d\n", whole[0].value);
+    return 0;
+}
+
+/** -- test
+- .stdout
+read: 3
+write: 7
+bump: 8
+whole: 8
+- .exit
+0
+-- */

@@ -220,9 +220,8 @@ let whole: &mut Inner = &mut point.inner;
 let part: &mut i32 = &mut point.inner.value;   // error: 父路径已借出
 ```
 
-写法上要注意 `&mut a.b.c`（多级字段取地址）是 **Codegen 侧**的独立缺口，会报
-`pointer expression type mismatch` —— 借用检查本身认得这条路径，是取地址那一步没
-打通，和这一节无关。
+多级字段取地址（`&mut point.inner.value`）走的是同一套路径：`names.c` 把字段链变成
+`NODE_FIELD_ACCESS` 之后，`generate_reference` 逐层求地址，层数不影响语义。
 
 通过共享引用写也是禁止的 —— 那是 `&T` 唯一的承诺：
 

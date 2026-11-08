@@ -1,0 +1,65 @@
+// 点号的三重身份必须分得清：字段链、模块成员、枚举成员。
+//
+// `names.c` 只改「根确定是本帧局部变量」的链，其余一律原样留给模块/类型解析。
+// 这个用例盯着那个边界：同一个文件里三种点号同时出现，谁也不能被认错。
+//
+// 以前 parser 把所有点号都拼成一个字符串，靠下游各自 strchr 猜；现在字段链是
+// NODE_FIELD_ACCESS，猜错了这里就会编译失败或算错值。
+import std.math as math;
+
+enum Color {
+    Red,
+    Green,
+}
+
+struct Box {
+    value: i32,
+    color: Color,
+    label: Name,
+}
+
+struct Name {
+    value: i32,
+}
+
+fn describe(box: &Box): i32 {
+    // 引用参数上的多级字段链：根是参数，仍属「局部名字」。
+    if (box.color == Color.Red) {
+        return box.label.value + box.value;
+    }
+    return box.value;
+}
+
+fn main(): i32 {
+    let box: Box = Box {
+        value: 3,
+        color: Color.Red,
+        label: Name { value: 2 },
+    };
+
+    // 字段链
+    print("value: %d\n", box.value);
+    print("nested: %d\n", box.label.value);
+
+    // 模块成员：函数和常量
+    print("abs: %d\n", math.abs(-7));
+    print("pi: %d\n", math.PI > 3.0);
+
+    // 枚举成员和字段链在同一行里
+    print("red: %d\n", box.color == Color.Red);
+
+    print("describe: %d\n", describe(&box));
+    return 0;
+}
+
+/** -- test
+- .stdout
+value: 3
+nested: 2
+abs: 7
+pi: 1
+red: 1
+describe: 5
+- .exit
+0
+-- */

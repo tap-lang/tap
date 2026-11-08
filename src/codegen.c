@@ -811,6 +811,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                                     const VarTypeNode *target_type);
 // 表达式的完整类型（标量也给）；见下面的定义。
 static VarTypeNode *expression_full_type(CodeGenContext *context, ASTNode *expression);
+// 可寻址表达式的地址；下标生成里「字段本身就是数组/指针」那条要用。
+static LLVMValueRef expression_address(CodeGenContext *context, ASTNode *expression);
 // 完整类型的深拷贝和等价判断统一在 types.c（单态化与 codegen 共用）。
 static LLVMValueRef generate_expression_for_type(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *target_type);
@@ -1249,6 +1251,17 @@ static int reference_assignable_to(
         return element_type && tap_type_equal(element_type, pointer_type->element_type);
     }
 
+    if (reference->target->type == NODE_FIELD_ACCESS) {
+        // `&p.x`：字段本身的类型要和借用的元素类型对上。常量检查在
+        // generate_reference 里做（要沿着字段链找根）。
+        VarTypeNode *field_type =
+            expression_full_type(context, reference->target);
+        int result = field_type &&
+                     tap_type_equal(field_type, pointer_type->element_type);
+        free_ast((ASTNode *)field_type);
+        return result;
+    }
+
     return 0;
 }
 
@@ -1504,6 +1517,17 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
         return return_type;
     }
 
+    if (expression && expression->type == NODE_FIELD_ACCESS) {
+        // `holder.ptr[i]` 的元素类型：字段自身的数组/指针元素。这里同样先把类型
+        // 缓存进节点，再取非拥有的那份（调用方按惯例不释放 indexed_value_type 的结果）。
+        free_ast((ASTNode *)expression_full_type(context, expression));
+        const VarTypeNode *field_type = expression->resolved_type;
+        if (!field_type) return NULL;
+        if (field_type->is_pointer) return field_type->element_type;
+        if (!field_type->is_array) return field_type;
+        return field_type->element_type;
+    }
+
     report_error((const ASTNode *)expression, "invalid array or pointer index target"); // 中文：数组或指针索引目标无效
 }
 
@@ -1550,6 +1574,11 @@ static VarTypeNode *infer_reference_type(
         }
     } else if (target && target->type == NODE_INDEX_EXPRESSION) {
         target_type = indexed_value_type(context, target);
+    } else if (target && target->type == NODE_FIELD_ACCESS) {
+        // `&p.x`：取字段本身的类型。parser 不再把 `p.x` 拼成字符串之后，这条是
+        // 字段借用的主路径；以前它走的是「带点标识符」那条分支。
+        inferred_scalar = expression_full_type(context, target);
+        target_type = inferred_scalar;
     }
 
     if (!target_type) {
@@ -2329,6 +2358,27 @@ static LLVMValueRef generate_index_address(
         } else {
             report_error((const ASTNode *)index_expression, "function '%s' does not return an array or pointer", call->name); // 中文：函数不返回数组或指针
         }
+    } else if (index_expression->array &&
+               index_expression->array->type == NODE_FIELD_ACCESS) {
+        // `holder.ptr[i]`、`vec.data[vec.len]`：字段本身就是数组或指针。
+        //
+        // 先把 `expression_full_type` 跑一遍（它会把结果缓存进节点的 resolved_type），
+        // 然后直接用缓存：那个指针归 AST 所有，这里不能释放；函数返回的克隆要释放。
+        ASTNode *base = index_expression->array;
+        array_address = expression_address(context, base);
+        free_ast((ASTNode *)expression_full_type(context, base));
+        array_type = base->resolved_type;
+        if (array_type && array_type->is_pointer) {
+            if (array_address) {
+                pointer_value = LLVMBuildLoad2(
+                    context->builder, get_llvm_var_type(context, array_type),
+                    array_address, "loaded_field_pointer");
+                is_pointer_index = 1;
+            }
+        } else if (array_type && !array_type->is_array) {
+            report_error((const ASTNode *)index_expression,
+                         "index target is not an array or pointer"); // 中文：索引目标不是数组或指针
+        }
     } else {
         report_error((const ASTNode *)index_expression, "invalid array or pointer index target"); // 中文：数组或指针索引目标无效
     }
@@ -2543,6 +2593,27 @@ static LLVMValueRef generate_reference(
         }
         return generate_index_address(
             context, (IndexExpressionNode *)target, NULL);
+    }
+
+    if (target && target->type == NODE_FIELD_ACCESS) {
+        // 字段链：`&p.x`、`&self.inner.value`。常量检查要看链的根 ——
+        // `&CONST.name` 拿的是常量的地址，和 `&CONST` 一样不允许。
+        ASTNode *root = target;
+        while (root && root->type == NODE_FIELD_ACCESS) {
+            root = ((FieldAccessNode *)root)->object;
+        }
+        if (root && root->type == NODE_IDENTIFIER) {
+            Symbol *symbol = find_symbol(context, ((IdentifierNode *)root)->name);
+            if (symbol && symbol->is_const) {
+                report_error((const ASTNode *)reference,
+                             "cannot take mutable reference to constant '%s'",
+                             symbol->name); // 中文：不能取得常量字段的可写引用
+            }
+        }
+        // expression_address 已经处理了「接收者是指针要先 load」「裸指针空指针检查」
+        // 这些细节，直接复用，别再写一份。
+        LLVMValueRef address = expression_address(context, target);
+        if (address) return address;
     }
 
     report_error((const ASTNode *)reference, "reference target is not addressable"); // 中文：引用目标不可寻址

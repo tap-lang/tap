@@ -218,10 +218,9 @@ print("%d\n", value);      // error: 'value' is mutably borrowed and cannot be u
 > 2. **方法返回借用的登记仍然是整个接收者**（路径为空）。方法签名里没有「返回的
 >    引用指向哪个字段」的信息，`let r = p.peek()` 之后 `p.right = x` 照样报。
 >
-> 顺带发现一个**独立的 Codegen 缺口**：`&mut a.b.c`（多级字段取地址，`a` 是结构体
-> 值或 `&mut` 引用）会报 `pointer expression type mismatch`。借用检查这一侧认得这条
-> 路径（`/inner/value` 这种记录是正常的），纯粹是取地址那一步没打通。要修得动
-> `codegen.c` 的字段地址生成，没在这一项里做。
+> 顺带发现的 Codegen 缺口（`&mut a.b.c` 多级字段取地址报 `pointer expression type
+> mismatch`）后来在**名字归一**那次一起修掉了：字段链变成 `NODE_FIELD_ACCESS` 之后，
+> `generate_reference` 直接走 `expression_address`，多级和一级是同一条路。
 
 ### 当初什么表现
 

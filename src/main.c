@@ -12,6 +12,7 @@
 #include "prelude.h"
 #include "tagged.h"
 #include "generics.h"
+#include "names.h"
 #include "sema.h"
 #include "borrow.h"
 #include "codegen.h"
@@ -316,6 +317,18 @@ int main(int argc, char *argv[]) {
         free_parser(parser);
         free_lexer(lexer);
         return 1;
+    }
+
+    // 名字归一：把「根是局部变量」的点号标识符改写成字段访问链。
+    //
+    // 必须在模块装载之后 —— import 可以写在文件末尾，模块别名这时才齐全。单态化
+    // 出来的实例也在 program->functions 里，一并处理，所以模板和实例都不会漏。
+    // 这一步只改「确定是字段链」的部分，模块/类型成员保持原样。
+    //
+    // TAP_NO_NAMES=1 跳过，用来确认某个现象是新路径还是旧的「带点标识符」路径引起的。
+    const char *skip_names = getenv("TAP_NO_NAMES");
+    if (!(skip_names && skip_names[0])) {
+        normalize_qualified_names(program);
     }
 
     // 借用检查紧跟在 Sema 之后：它只看 AST 和类型标注，不依赖 Codegen 的推断结果，
