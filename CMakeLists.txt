@@ -77,6 +77,7 @@ add_executable(tap
     src/types.c
     src/parser.c
     src/module.c
+	src/names.c
     src/generics.c
     src/sema.c
     src/borrow.c
