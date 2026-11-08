@@ -514,6 +514,18 @@ now`），免得一个系统性错误刷屏。
   再返回（`let h = Holder { src: &local }; return h;`）、存进 `Vec`、跨函数传递。
   要做对需要生命周期参数（L2），代价是单态化的 key 从「类型」变成「类型 + 区域」。
   在那之前，**别让结构体长期持有借用**，需要带出函数时用 `*T` 并自己管寿命。
+- **容器里的引用元素只保证「存得进去」，寿命仍不跟踪。** `Vec<&i32>` / `Vec<&mut T>`
+  现在能正常构造和读取（`refs.push(&a)`、`refs.get(0)[0]`），但元素借的是谁、容器活多久，
+  类型里没有信息 —— 和上一条是同一个洞：
+
+  ```text
+  let a: i32 = 1;
+  let refs: Vec<&i32> = vec.new();
+  refs.push(&a);
+  a = 5;                    // 不报错，容器里那个引用照样指向 a
+  ```
+
+  想做对同样要等生命周期参数。用在局部、确保源比容器活得久是调用方的责任。
 - **接收者只能是 `&self` / `&mut self` 这一层。** `&&self`、按值 + 借用的组合都不支持；
   方法签名里也不能出现生命周期标注。
 - **借用只在「引用变量最后一次使用」之前有效（NLL）**，但遇到「指针可能逃出这条语句」
@@ -549,6 +561,9 @@ now`），免得一个系统性错误刷屏。
   泛型约束下的 `&self` 调用、引用接收者、方法互相调用。
 - [`borrow_field_granularity.tp`](../tests/run-pass/types/borrow_field_granularity.tp)：
   借用粒度到字段 —— 借一个字段时写/借兄弟字段、常量下标互不相干。
+- [`vec_reference_element.tp`](../tests/run-pass/types/vec_reference_element.tp)：
+  容器装引用 —— `Vec<&i32>` 的 `push` / `get` / 传 `&Vec<&T>`、`Vec<&mut i32>` 原地写回、
+  `&mut` 收窄成 `&`、以及与 `Vec<*i32>` 的实例隔离。
 - `tests/compile-fail/borrow/` 和 `tests/compile-fail/traits/` 下每条规则一个用例；
   [`multiple_errors.tp`](../tests/compile-fail/borrow/multiple_errors.tp) 断言三处错误
   一次全报，[`error_limit.tp`](../tests/compile-fail/borrow/error_limit.tp) 断言第 10 条

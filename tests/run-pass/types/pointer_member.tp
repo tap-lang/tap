@@ -16,6 +16,10 @@ struct Holder {
     ptr: *i32,
 }
 
+fn pick(item: *Outer): *Outer {
+    return item;
+}
+
 fn main(): i32 {
     // 多级字段读（指针 → 结构体 → 结构体 → 标量）
     let p: Outer = Outer { inner: Inner { v: 3 } };
@@ -37,6 +41,11 @@ fn main(): i32 {
     let sp: *Inner = &s;
     sp.v = sp.v + 41;
     print("self: %d\n", s.v);
+
+    // 调用结果直接取字段（返回的是 `*Outer`）。expression_address 会先给调用结果
+    // 开一个临时槽 —— 槽里存的是**指针**，GEP 之前必须把它 load 出来，否则算的是
+    // 「指针变量所在的栈地址 + 字段偏移」，又是一个「能编译、值全错」。
+    print("call: %d\n", pick(&p).inner.v);
     return 0;
 }
 
@@ -46,6 +55,7 @@ nested: 3
 write: 8
 ptrfield: 11
 self: 42
+call: 8
 - .exit
 0
 -- */

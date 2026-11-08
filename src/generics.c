@@ -104,13 +104,42 @@ static int scalar_types_unifiable(const VarTypeNode *left,
     return (left_integer && right_integer) || (left_float && right_float);
 }
 
+// 判断两个类型是否只差「引用 vs 裸指针」这一层。
+//
+// `&T` 在泛型推断里的实际来源很不统一：声明里写的是真引用（`Vec<&i32>`），
+// 而 `&x` 这种表达式在 `process_expression` 里只能给出 `*T` —— 取地址的结果在
+// 机器码层面就是指针。两边其实是同一块存储的两种写法，绑到同一个类型参数上时
+// 应当视作一致，否则 `Vec<&i32>` 的 `push(&a)` 会因为 `&i32` ≠ `*i32` 而失败。
+//
+// 调用点仍然会按引用规则检查一次（`reference_assignable_to`），所以放宽的只是
+// 「能不能绑到同一个 T」，不是「能不能传」—— 裸指针升级成引用依旧被拦住。
+static int reference_pointer_same_shape(const VarTypeNode *left,
+                                        const VarTypeNode *right) {
+    if (!left || !right) return 0;
+    if (!left->is_pointer || !right->is_pointer) return 0;
+    if (left->is_reference == right->is_reference) return 0;
+    if (left->is_array || right->is_array) return 0;
+    if (!left->element_type || !right->element_type) return 0;
+    return tap_type_equal(left->element_type, right->element_type);
+}
+
 // 添加泛型类型绑定，并拒绝同一参数推断为不兼容类型。
 static int bind_type(TypeBinding **bindings, const char *name,
                      const VarTypeNode *type) {
     TypeBinding *binding = find_binding(*bindings, name);
     if (binding) {
-        return tap_type_equal(binding->type, type) ||
-               scalar_types_unifiable(binding->type, type);
+        if (tap_type_equal(binding->type, type) ||
+            scalar_types_unifiable(binding->type, type)) {
+            return 1;
+        }
+        if (!reference_pointer_same_shape(binding->type, type)) return 0;
+        // 保留引用那一侧：引用比裸指针多一层「借自哪、能不能写」的信息，
+        // 换成裸指针之后，实例化出来的签名会退化成不受检查的版本。
+        if (type->is_reference && !binding->type->is_reference) {
+            free_ast((ASTNode *)binding->type);
+            binding->type = tap_type_clone(type);
+        }
+        return 1;
     }
 
     binding = (TypeBinding *)calloc(1, sizeof(TypeBinding));
@@ -520,6 +549,21 @@ static char *type_key(const VarTypeNode *type) {
         "i64", "u64", "i128", "u128", "float", "f32", "f64",
         "String", "c_string", "bool", "char"
     };
+    // 引用和裸指针在机器码里是同一个指针，但类型系统把两者分得很清楚
+    // （`tap_type_equal` 要求显式 `as` 才能互转）。单态化键必须跟着分开，否则
+    // `Vec<&i32>` 和 `Vec<*i32>` 会撞进同一个实例，后者的布局和语义被前者覆盖。
+    if (type->is_reference) {
+        char *element = type_key(type->element_type);
+        size_t size = strlen(element) + 5;
+        char *key = (char *)malloc(size);
+        if (!key) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+        snprintf(key, size, type->reference_mutable ? "rm_%s" : "r_%s", element);
+        free(element);
+        return key;
+    }
     if (type->is_pointer) {
         char *element = type_key(type->element_type);
         size_t size = strlen(element) + 3;

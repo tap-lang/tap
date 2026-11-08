@@ -1,0 +1,21 @@
+// `Vec<&mut T>` 的元素是独占借用：`&T` 不能升级成 `&mut T`。
+//
+// 泛型推断现在把「只差引用/裸指针一层」的两种类型视作同族，但那只放宽了
+// **绑定到同一个类型参数**；实参能不能传仍然走引用规则（reference_assignable_to），
+// 所以这条必须在这里被拦住，而不是悄悄放行。
+import std.vec as vec;
+
+fn main(): i32 {
+    let value: i32 = 1;
+    let exclusive: Vec<&mut i32> = vec.new();
+    exclusive.push(&value);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: method 'push' argument 1 type mismatch
+--> tests/compile-fail/types/reference_element_mutability.tp:11:5
+- .exit
+1
+-- */

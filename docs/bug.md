@@ -10,11 +10,15 @@
 | [B3](#b3-bool-参与隐式整数转换) | `bool` 参与隐式整数转换，违反文档承诺 | 中 | ✅ 已修 |
 | [B4](#b4-match-绑定泛型载荷后无法调用方法) | `match` 绑定泛型载荷后无法调用方法 | 中 | ✅ 已修 |
 | [B5](#b5-通配分支和模块来的载荷类型让编译器段错误) | 通配分支 + 模块来的载荷类型 → 编译器段错误 | **严重** | ✅ 已修 |
+| [B6](#b6-调用结果直接取字段读的是栈上垃圾) | 调用结果直接取字段读的是栈上垃圾 | **严重** | ✅ 已修 |
+| [B7](#b7-方法调用结果不能直接加下标) | 方法调用结果不能直接加下标 | 中 | ✅ 已修 |
 | [D1](#d1-整数除零是未定义行为) | 整数除零是未定义行为，跨架构不一致 | 设计缺口 | ✅ 已修 |
 | [D2](#d2-移位量超过位宽是未定义行为) | 移位量 ≥ 位宽是未定义行为 | 设计缺口 | ✅ 已修 |
 | [D3](#d3-有符号和无符号混算) | 有符号 / 无符号混算静默按无符号 | 设计缺口 | ✅ 已修 |
 
 B1~B5、D1~D3 于 2026-10-17 修复，回归从 191 涨到 **206 个用例**，fast + native 全绿。
+B6、B7 是 2026-11-08 做 `Vec<&T>` 类型推断时顺带发现的（都跟「表达式的值直接往下用」
+有关：一个是调用结果取字段，一个是调用结果加下标），当天修复。
 
 - **B5 是扫 B1~B4 时顺带发现的**，而且是 2026-10-15「pub 类型加模块前缀」那次改动引入的
   **回归**——说明那次的测试没覆盖到「通配分支 + 模块来的载荷类型」这个组合。
@@ -380,6 +384,66 @@ if (!name) return NULL;
 
 用例：`tests/run-pass/types/match_wildcard_payload.tp`（在 HEAD 上复现 139，现在通过）。
 **教训**：改「名字查找」这类函数时，先把所有调用点的实参可能为 NULL 的情况过一遍。
+
+---
+
+## B6. 调用结果直接取字段读的是栈上垃圾
+
+**严重程度：严重。** 不报错、不警告，值全错。
+
+```tap
+import std.memory as memory;
+
+struct Symbol { name: String, value: i32 }
+
+fn pick(item: *Symbol): *Symbol { return item; }
+
+fn main(): i32 {
+    let s: *Symbol = memory.malloc<Symbol>(sizeof(Symbol));
+    s.value = 9;
+    print("via var: %d\n", s.value);        // 9
+    print("direct:  %d\n", pick(s).value);  // 修前 1972573605（栈上垃圾），修后 9
+    return 0;
+}
+```
+
+**原因**：`expression_address` 给「函数调用结果」开的临时槽存的是**返回值本身**。
+如果调用返回 `*Symbol`，槽里就是那 8 字节指针；但字段访问接着拿槽地址去
+`LLVMBuildStructGEP2`，等于算「指向指针的指针 + 字段偏移」—— 类型上不报错
+（`create_pointer_type` 会把元素名复制到指针节点上，字段查找照样命中），
+读出来的却是相邻栈字节。和 [`pointer_member.tp`](../tests/run-pass/types/pointer_member.tp)
+开头记的那次（指针变量的成员访问）是同一类错误，只是入口换成了「调用返回值」。
+
+**修法**（2026-11-08）：`expression_address` 的 `NODE_FIELD_ACCESS` 分支先看接收者类型，
+是指针（含引用）就先把指针值 load 出来再 GEP，裸指针顺带补一道空指针检查。
+用例：`tests/run-pass/types/pointer_member.tp` 的 `call:` 一行。
+
+## B7. 方法调用结果不能直接加下标
+
+**严重程度：中。** 报一条假错误，绕一下（先绑变量）就好，但很反直觉。
+
+```tap
+import std.vec as vec;
+
+fn main(): i32 {
+    let n: i32 = 5;
+    let ptrs: Vec<*i32> = vec.new();
+    ptrs.push(&n);
+    print("%d\n", ptrs.get(0)[0]);   // error: function 'ptrs.get' does not return an array or pointer
+    return 0;
+}
+```
+
+**原因**：下标生成里有三处 `find_function(context, call->name)`。泛型方法实例化之后，
+调用名已经换成 `get$p_i32` 这种完整名，而 `ptrs.get` 这种还没解析的形状查不到 ——
+`function_return_var_type(NULL)` 返回 NULL，于是走了「不返回指针」的分支。
+同样的问题在 `expression_full_type` 里也有一份，只是那里有 `resolve_method_call`
+兜底，两处漏了。
+
+**修法**（2026-11-08）：抽 `resolve_call_function()`（先 `find_function`，查不到再走
+`resolve_method_call`），三处调用点统一用它。顺带把方法实参类型不匹配的诊断从
+`function_base_name(function->name)` 换成 `function_display_name(function)`，
+不再把 `push$rm_i32` 这种单态化名泄漏给用户。
 
 ---
 

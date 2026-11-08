@@ -1,0 +1,67 @@
+// Vec 的引用元素：`Vec<&T>` / `Vec<&mut T>`。
+//
+// 以前 `refs.push(&a)` 报 `cannot infer compatible generic arguments for 'push'`，
+// 根因是 `&x` 表达式在泛型推断里只能给出 `*T`（取地址的结果在机器码层面就是指针），
+// 而容器声明的是 `Vec<&T>`，两边在 `bind_type` 里被当成两种不同的类型。
+// 现在「只差引用/裸指针一层」的两种类型视作同族，绑定优先保留引用那一侧；
+// 单态化键也跟着分开（`r_i32` / `rm_i32` / `p_i32`），
+// 否则 `Vec<&i32>` 和 `Vec<*i32>` 会撞进同一个实例。
+import std.vec as vec;
+
+fn sum(refs: &Vec<&i32>): i32 {
+    let total: i32 = 0;
+    let i: uint = 0;
+    while (i < refs.len()) {
+        total = total + refs.get(i)[0];
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main(): i32 {
+    let first: i32 = 10;
+    let second: i32 = 32;
+
+    // 共享引用元素
+    let refs: Vec<&i32> = vec.new();
+    refs.push(&first);
+    refs.push(&second);
+    print("len: %llu\n", refs.len());
+    print("get: %d\n", refs.get(0)[0]);
+    print("index: %d\n", refs.get(1)[0]);
+    print("sum: %d\n", sum(&refs));
+
+    // `&mut T` 收窄成 `&T` 存进去（能力收窄，方向允许）
+    let mutable: i32 = 7;
+    refs.push(&mut mutable);
+    print("narrowed: %d\n", refs.get(2)[0]);
+
+    // 独占引用元素：取出来就能写回
+    let exclusive: Vec<&mut i32> = vec.new();
+    exclusive.push(&mut mutable);
+    let slot: &mut i32 = exclusive.get(0);
+    slot[0] = slot[0] + 1;
+    print("mutated: %d\n", mutable);
+
+    // 引用元素和裸指针元素是两个独立的实例，不能互相覆盖
+    let raw: *i32 = &mutable;
+    let raw_refs: Vec<*i32> = vec.new();
+    raw_refs.push(raw);
+    print("raw: %d\n", raw_refs.get(0)[0]);
+    print("still: %d\n", refs.get(0)[0]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+len: 2
+get: 10
+index: 32
+sum: 42
+narrowed: 7
+mutated: 8
+raw: 8
+still: 10
+- .exit
+0
+-- */

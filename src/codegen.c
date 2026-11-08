@@ -1179,6 +1179,23 @@ static FunctionNode *resolve_method_call(
     return function;
 }
 
+// 解析一次调用真正落到哪个函数上。
+//
+// 调用名有两种形态：泛型实例化之后已经换成完整的单态化名（`push$r_i32`），
+// 或者还是原始的 `receiver.method`。后者的查找必须走方法解析（它会按接收者
+// 类型找到对应的特化版本）。以前只有部分调用点做了这层兜底，于是
+// `vec.get(0)[0]` 这种「直接给方法调用结果加下标」的写法会报「函数不返回指针」，
+// 而先绑一个变量再取下标就正常 —— 差别只在这里。
+static FunctionNode *resolve_call_function(CodeGenContext *context,
+                                           const FunctionCallNode *call) {
+    if (!call) return NULL;
+    FunctionNode *function = find_function(context, call->name);
+    if (!function) {
+        function = resolve_method_call(context, call, NULL, NULL, NULL);
+    }
+    return function;
+}
+
 // 判断调用是否返回使用 LLVM opaque pointer 的底层内存地址。
 static int is_runtime_memory_pointer_result(const FunctionCallNode *call) {
     return call &&
@@ -1476,7 +1493,7 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
 
     if (expression && expression->type == NODE_FUNCTION_CALL) {
         FunctionCallNode *call = (FunctionCallNode *)expression;
-        FunctionNode *function = find_function(context, call->name);
+        FunctionNode *function = resolve_call_function(context, call);
         const VarTypeNode *return_type = function_return_var_type(function);
         if (return_type && return_type->is_pointer) {
             return return_type->element_type;
@@ -2300,7 +2317,7 @@ static LLVMValueRef generate_index_address(
     } else if (index_expression->array &&
                index_expression->array->type == NODE_FUNCTION_CALL) {
         FunctionCallNode *call = (FunctionCallNode *)index_expression->array;
-        FunctionNode *function = find_function(context, call->name);
+        FunctionNode *function = resolve_call_function(context, call);
         array_type = function_return_var_type(function);
         if (array_type && array_type->is_pointer) {
             pointer_value = generate_function_call(context, call);
@@ -2428,16 +2445,37 @@ static LLVMValueRef expression_address(
                 object_type && object_type->struct_name
                     ? tap_find_struct(context->program, object_type->struct_name)
                     : NULL;
-            free_ast((ASTNode *)object_type);
-            if (!struct_node) return NULL;
+            if (!struct_node) {
+                free_ast((ASTNode *)object_type);
+                return NULL;
+            }
             unsigned index = 0;
             StructFieldNode *field =
                 tap_find_struct_field(struct_node, access->field, &index);
-            if (!field) return NULL;
+            if (!field) {
+                free_ast((ASTNode *)object_type);
+                return NULL;
+            }
             LLVMTypeRef struct_type =
                 get_llvm_struct_type_by_name(context, struct_node->name);
+
+            // 接收者是 `*T` / `&T` 时，object_address 指向的是**存指针的那个槽**，
+            // 必须先 load 出指针值再 GEP。少了这一步会拿栈上相邻的垃圾当结构体
+            // 本体去算字段偏移 —— 编译通过、运行不崩、值全错。
+            // （`make().x` 里 make 返回 `*P` 就是这条路径。）
+            LLVMValueRef base = object_address;
+            if (object_type->is_pointer) {
+                base = LLVMBuildLoad2(context->builder,
+                                      LLVMPointerType(struct_type, 0),
+                                      object_address, "field_access_base");
+                // 裸指针可能是 null；引用构造上非空，且借用体系承诺零运行时开销。
+                if (!object_type->is_reference) {
+                    emit_null_guard(context, base, (const ASTNode *)expression);
+                }
+            }
+            free_ast((ASTNode *)object_type);
             return LLVMBuildStructGEP2(context->builder, struct_type,
-                                       object_address, index, "field_access_ptr");
+                                       base, index, "field_access_ptr");
         }
         case NODE_FUNCTION_CALL: {
             // 调用结果是右值：先存进临时槽，后续的字段访问才有地址可用。
@@ -3346,7 +3384,7 @@ static LLVMValueRef generate_method_call(
             !expression_assignable_to(context, argument, param_type)) {
             report_error_at(call->filename, call->line, call->column,
                             "method '%s' argument %u type mismatch",
-                            function_base_name(function->name), i); // 中文：方法参数类型不匹配
+                            function_display_name(function), i); // 中文：方法参数类型不匹配
         }
         arguments[i] = param_type
             ? generate_expression_for_type(context, argument, param_type)
@@ -4164,7 +4202,7 @@ static LLVMValueRef generate_array_value(
 
     if (expression && expression->type == NODE_FUNCTION_CALL) {
         FunctionCallNode *call = (FunctionCallNode *)expression;
-        FunctionNode *function = find_function(context, call->name);
+        FunctionNode *function = resolve_call_function(context, call);
         const VarTypeNode *return_type = function_return_var_type(function);
         if (!return_type || !return_type->is_array ||
             !tap_type_equal(return_type, expected_type)) {
