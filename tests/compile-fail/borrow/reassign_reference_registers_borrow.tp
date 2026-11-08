@@ -1,0 +1,23 @@
+// 引用变量重新赋值之后，新借的那一边要登记成持久借用 —— 否则 `r = &mut y;` 之后
+// 写 `y` 会一路畅通，而 r 明明还指着它。
+//
+// 原来只有 `let r = &mut x;` 会登记，赋值语句走的是另一条分支（只更新 pointee_rank，
+// 不建记录）。方法返回的借用（`held = b.peek();`）反而有登记，两边不一致。
+
+fn main(): i32 {
+    let x: i32 = 1;
+    let y: i32 = 2;
+    let r: &mut i32 = &mut x;
+    r[0] = 10;
+    r = &mut y;
+    y = 5;
+    return r[0];
+}
+
+/** -- test
+- .stderr
+error: 'y' is mutably borrowed and cannot be assigned here
+reassign_reference_registers_borrow.tp:13:5
+- .exit
+1
+-- */

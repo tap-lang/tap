@@ -1,0 +1,44 @@
+// 两件事：
+//
+// 1. 方法调用作为「最后一次使用」时，借用要能结束 —— `held.len()` 是 `Vec` /
+//    `StringBuilder` 最常见的收尾写法，之前它被当成「指针逃逸」，借用一直不解封。
+//    tap 没有全局状态，`&self` / `&mut self` 方法没地方把接收者存到调用之后。
+// 2. 引用参数上的字段借用按「同一个根」比路径：借了 `p.x` 只挡 `p.x`，`p.y` 是
+//    兄弟字段，照常能写。反方向见
+//    compile-fail/borrow/write_borrowed_field_through_reference.tp。
+
+import std.vec as vec;
+
+struct Point { x: i32, y: i32 }
+
+fn sibling_field(p: &mut Point): i32 {
+    let left: &mut i32 = &mut p.x;
+    left[0] = 5;
+    p.y = 6;
+    return left[0] + p.y;
+}
+
+fn receiver_last_use(): i32 {
+    let values: Vec<i32> = vec.new();
+    values.push(1);
+    let held: &Vec<i32> = &values;
+    print("%llu\n", held.len());
+    // held 最后一次使用就是上面那句，借用已经还回去了。
+    values.push(2);
+    return 0;
+}
+
+fn main(): i32 {
+    let point: Point = Point { x: 1, y: 2 };
+    print("%d\n", sibling_field(&mut point));
+    receiver_last_use();
+    return 0;
+}
+
+/** -- test
+- .stdout
+11
+1
+- .exit
+0
+-- */

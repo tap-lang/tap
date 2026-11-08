@@ -1,0 +1,22 @@
+// NLL 只把借用区间缩到「最后一次使用」，不会缩到「当前这个块」。
+//
+// `r` 在内层块里还被用过，之后整段代码里 `r` 都算活着 —— 外层再写 `value`
+// 必须报错。这条用例守着放宽之后不能越界的那一侧。
+
+fn main(): i32 {
+    let value: i32 = 1;
+    let flag: bool = true;
+    let r: &mut i32 = &mut value;
+    if (flag) {
+        print("%d\n", r[0]);
+    }
+    value = 2;
+    return r[0];
+}
+
+/** -- test
+- .stderr
+error: 'value' is mutably borrowed and cannot be assigned here
+- .exit
+1
+-- */

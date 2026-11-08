@@ -1,0 +1,52 @@
+// NLL 的补充场景（主用例见 borrow_last_use.tp，这里只放它没覆盖到的两条）。
+//
+// 1. 引用死了之后，**整个结构体**可以按值传走 —— 字段粒度的借用结束之后，
+//    连「整个对象被拿走」都不再冲突。
+// 2. 死亡点跟着使用走，不跟着花括号走：写在 if 块里的使用算数，块退出之后引用
+//    没再被用到，借用就结束了。
+//
+// 反方向由 compile-fail/borrow/borrow_live_across_block.tp 守着：引用在块里用过、
+// 后面还要用，源对象就动不了。
+
+struct Point { x: i32, y: i32 }
+
+fn take(point: Point): i32 {
+    return point.x + point.y;
+}
+
+fn field_then_whole(): i32 {
+    let p: Point = Point { x: 1, y: 2 };
+    let left: &mut i32 = &mut p.x;
+    left[0] = 9;
+    let seen: i32 = left[0];
+    // left 之后不再使用，p 上那条 /x 的借用已经失效，整个 p 可以传值。
+    let total: i32 = take(p);
+    return seen + total;
+}
+
+fn nested_use(): i32 {
+    let value: i32 = 3;
+    let flag: bool = true;
+    let r: &mut i32 = &mut value;
+    if (flag) {
+        print("inner=%d\n", r[0]);
+    }
+    // r 的最后一次使用在 if 里面，这里已经还回去了。
+    value = 4;
+    return value;
+}
+
+fn main(): i32 {
+    print("%d\n", field_then_whole());
+    print("%d\n", nested_use());
+    return 0;
+}
+
+/** -- test
+- .stdout
+20
+inner=3
+4
+- .exit
+0
+-- */

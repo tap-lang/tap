@@ -1,0 +1,37 @@
+// 引用参数（含 `&mut self`）上的字段借用，之前完全不查：`base` 一穿过引用就被清空，
+// 两边都不登记记录，`let a = &mut self.x;` 之后直接写回 `self.x` 一路畅通。
+//
+// 现在按「同一个根」比路径：`self.x` 和 `self.x` 重叠 → 报；`self.y` 是兄弟字段 →
+// 不报。两个**不同**的引用参数仍然不互相比较（它们可能在运行时指向同一块内存，
+// 静态判断不了，和以前一样）。
+//
+// 修在 `apply_indirection` / `lvalue_borrow_base`：穿过引用时记下 alias_root，
+// 只清 `base`（表示「存储不在本帧」），不清「该跟谁比」。
+
+struct Point { x: i32, y: i32 }
+
+trait Touch {
+    fn touch(&mut self): i32;
+}
+
+impl Touch for Point {
+    fn touch(&mut self): i32 {
+        let left: &mut i32 = &mut self.x;
+        left[0] = 7;
+        self.x = 8;
+        return left[0] + self.x;
+    }
+}
+
+fn main(): i32 {
+    let p: Point = Point { x: 1, y: 2 };
+    return p.touch();
+}
+
+/** -- test
+- .stderr
+error: 'self' is mutably borrowed and cannot be assigned here
+write_borrowed_field_through_reference.tp:21:9
+- .exit
+1
+-- */

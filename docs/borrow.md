@@ -197,8 +197,21 @@ items[i] = 7;                           // error：i 不是常量，只能按重
 ```
 
 下标不是常量（或不是字面量）时统一记成通配段 —— 判断不了是不是同一个元素，保守
-按冲突处理。路径一旦穿过引用或指针，目标就不归本帧管，这类记录根本不参与判定，
-和以前一样。
+按冲突处理。
+
+路径穿过**引用**时（`p` 是 `&mut Point`，写 `p.x`）目标不在本帧，但**同一个引用变量
+上的两次访问仍然会互相比较**：`let a = &mut p.x;` 之后写 `p.x` 会报错，写 `p.y` 不会。
+
+```text
+fn touch(p: &mut Point) {
+    let left: &mut i32 = &mut p.x;
+    p.x = 8;                          // error: p 上的 /x 已借出
+    p.y = 9;                          // 合法：兄弟字段
+}
+```
+
+穿过**裸指针**（`*T`）就不比了 —— 那是「遗忘借用」的出口，本来就不查。两个**不同**的
+引用参数之间也不比：它们可能在运行时指向同一块内存，静态判断不了，和以前一样。
 
 只放宽「互不相交的兄弟路径」这一侧，另一侧照旧：
 
@@ -341,6 +354,16 @@ exclusive[0] = 1;          // 这句还要用 exclusive
 - 作为返回值；
 - 赋给别的变量。
 
+**方法调用的接收者不算逃逸**：`&self` / `&mut self` 只在调用期间借用，tap 没有全局
+状态，方法没地方把接收者存到调用之后。所以 `held.len()` / `held.to_string()` 可以
+作为借用的收尾：
+
+```text
+let held: &Vec<i32> = &values;
+print("%llu\n", held.len());
+values.push(2);            // 合法：held 最后一次使用就是上一句
+```
+
 ```text
 let r: &i32 = &p;
 consume(r);                // 传出去了，之后 p 仍算被借用
@@ -362,6 +385,23 @@ s[0] = 9;
 - 一次都没用过的引用（`let r = &mut x;` 之后完全不提 r）仍然独占 `x` 到作用域结束 ——
   没找到使用点就不敢断定它真的不再使用；
 - 预扫描遇到它不认识的语法节点时，**整个函数**退回词法语义。
+
+### 一个已知的近似：分支按书写顺序编号
+
+语句号是**线性**的，`if` 的两个分支按书写顺序排队，所以互斥的两条路径会被算成
+先后发生：
+
+```text
+if (flag) {
+    value = 2;             // 编号在前
+} else {
+    r[0] = 3;              // 编号在后 → r 被当成「活到这一句」
+}
+```
+
+这两句永远不会同时执行，严格说不冲突，但检查器会报 `value` 被独占借用。方向是
+**多报**：不会放过真正的悬垂，只是偶尔需要把借用收进更小的块。循环同理 —— 每个
+循环体只按一遍编号，不模拟多次迭代。
 
 `TAP_BORROW_LEXICAL=1` 强制退回词法语义（借用一律活到作用域结束），用来对比行为、
 排查误报。
@@ -478,6 +518,9 @@ now`），免得一个系统性错误刷屏。
   方法签名里也不能出现生命周期标注。
 - **借用只在「引用变量最后一次使用」之前有效（NLL）**，但遇到「指针可能逃出这条语句」
   的位置就退回作用域语义。见上一节。
+- **两个不同的引用参数之间不互相比较。** `fn f(a: &mut Point, b: &mut Point)` 里
+  `a.x` 和 `b.x` 可能在运行时是同一块存储，静态判断不了，所以按「不同根」处理。
+  同一个引用参数上的不同路径（`p.x` / `p.y`）照常区分。
 - **不做自动 drop。** 借用检查只保证「引用不会悬垂」，不负责释放。`Vec` 仍然手工
   `free()`，字符串仍然由 Runtime 统一在进程退出时释放。
 
@@ -490,6 +533,8 @@ now`），免得一个系统性错误刷屏。
   之后可以重新借用。
 - [`borrow_last_use.tp`](../tests/run-pass/types/borrow_last_use.tp)：NLL —— 独占/共享
   借用都在最后一次使用之后失效（读源对象、写源对象、字段粒度、方法返回的借用、循环体内）。
+- [`borrow_through_reference.tp`](../tests/run-pass/types/borrow_through_reference.tp)：
+  引用参数上的字段借用按同根比路径（借 `p.x` 不挡 `p.y`），方法调用可以作借用收尾。
 - [`borrow_return.tp`](../tests/run-pass/types/borrow_return.tp)：返回借用的函数
   （`fn first(v: &Vec<T>): &T`）、借用穿过函数调用、`&param.field`。
 - [`reference_narrowing.tp`](../tests/run-pass/types/reference_narrowing.tp)：
@@ -518,6 +563,10 @@ now`），免得一个系统性错误刷屏。
   （`let s = r;` 的别名把活跃期并过去）、
   [`argument_leak_keeps_borrow_alive.tp`](../tests/compile-fail/borrow/argument_leak_keeps_borrow_alive.tp)
   （引用作为实参传出去就不放宽寿命）。
+  [`write_borrowed_field_through_reference.tp`](../tests/compile-fail/borrow/write_borrowed_field_through_reference.tp)
+  断言引用参数上的字段借用也拦得住「绕过借用直接写」，
+  [`reassign_reference_registers_borrow.tp`](../tests/compile-fail/borrow/reassign_reference_registers_borrow.tp)
+  断言 `r = &mut y;` 之后新借的那边同样登记成持久借用。
 
 只跑借用相关的用例：
 
