@@ -1514,7 +1514,7 @@ static VarTypeNode *infer_reference_type(
     }
 
     if (!target_type) {
-        report_error(NULL, "reference target is not addressable"); // 中文：引用目标不可寻址
+        report_error((const ASTNode *)target, "reference target is not addressable"); // 中文：引用目标不可寻址
     }
 
     VarTypeNode *element_type = tap_type_clone(target_type);
@@ -1729,7 +1729,7 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
         case NODE_INDEX_EXPRESSION: {
             const VarTypeNode *type = indexed_value_type(context, expression);
             if (type->is_array) {
-                report_error(NULL, "multidimensional arrays must be indexed to a scalar element"); // 中文：多维数组必须索引到标量元素
+                report_error((const ASTNode *)expression, "multidimensional arrays must be indexed to a scalar element"); // 中文：多维数组必须索引到标量元素
             }
             return type->type;
         }
@@ -1941,17 +1941,17 @@ static void validate_struct_literal_fields(
         StructInitFieldNode *init = (StructInitFieldNode *)init_node;
         StructFieldNode *field = tap_find_struct_field(struct_node, init->name, NULL);
         if (!field) {
-            report_error(NULL, "struct '%s' has no field '%s'",
+            report_error((const ASTNode *)init_node, "struct '%s' has no field '%s'",
                     struct_node->name, init->name); // 中文：结构体没有该字段
         }
         // 初始化值必须和字段类型匹配。不查的话宽度不符的值会按错误布局写进去，**静默冲掉
         // 相邻字段**：`struct P { x: i32, y: i32 }` 写 `P { x: "hello", y: 7 }`，
         // 8 字节的指针塞进 4 字节的 x，把 y 从 7 变成 1。
-        // `StructInitFieldNode` / `StructLiteralNode` 都没有行列信息，所以这条诊断和
-        // 上面几条一样不带位置。
+        // 位置报在字段名上（parse_struct_literal 会给 StructInitFieldNode 盖章），
+        // 比指到值那边更清楚是哪个字段出的问题。
         if (field->field_type && !is_generic_type_parameter(struct_node, field->field_type) &&
             !expression_assignable_to(context, init->expression, field->field_type)) {
-            report_error(NULL, "struct '%s' field '%s' type mismatch",
+            report_error((const ASTNode *)init_node, "struct '%s' field '%s' type mismatch",
                     struct_node->name, init->name); // 中文：结构体字段类型不匹配
         }
         for (ASTNode *other = init_node->next; other; other = other->next) {
@@ -1965,7 +1965,7 @@ static void validate_struct_literal_fields(
     for (ASTNode *field_node = struct_node->fields; field_node; field_node = field_node->next) {
         StructFieldNode *field = (StructFieldNode *)field_node;
         if (!find_struct_init_field(literal, field->name)) {
-            report_error(NULL, "missing initializer for field '%s.%s'",
+            report_error((const ASTNode *)literal, "missing initializer for field '%s.%s'",
                     struct_node->name, field->name); // 中文：缺少结构体字段初始化
         }
         validate_var_type(context, field->field_type);
@@ -2671,7 +2671,7 @@ static LLVMValueRef generate_integer_binary(CodeGenContext *context, BinaryOpNod
                 is_unsigned_type(operand_type) ? LLVMIntUGE : LLVMIntSGE,
                 left, right, "ge_result");
         default:
-            report_error(NULL, "unsupported binary operator"); // 中文：不支持的二元操作符
+            report_error((const ASTNode *)binary, "unsupported binary operator"); // 中文：不支持的二元操作符
     }
 }
 
@@ -2700,7 +2700,7 @@ static LLVMValueRef generate_float_binary(CodeGenContext *context, BinaryOpNode 
         case OP_GREATER_THAN_OR_EQUAL:
             return LLVMBuildFCmp(context->builder, LLVMRealOGE, left, right, "fge_result");
         default:
-            report_error(NULL, "unsupported binary operator"); // 中文：不支持的二元操作符
+            report_error((const ASTNode *)binary, "unsupported binary operator"); // 中文：不支持的二元操作符
     }
 }
 
@@ -3062,7 +3062,7 @@ static LLVMValueRef generate_string_comparison(
         case OP_LESS_THAN_OR_EQUAL: predicate = LLVMIntSLE; break;
         case OP_GREATER_THAN_OR_EQUAL: predicate = LLVMIntSGE; break;
         default:
-            report_error(NULL, "String values only support comparison operators");
+            report_error((const ASTNode *)binary, "String values only support comparison operators");
     }
     return LLVMBuildICmp(
         context->builder, predicate, result, zero, "string_compare_result");
@@ -3681,14 +3681,14 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                                           (const ASTNode *)identifier);
                 }
                 if (constant->type->is_array) {
-                    report_error(NULL, "array constant '%s' must be accessed with an index", identifier->name); // 中文：数组常量必须通过下标访问
+                    report_error((const ASTNode *)identifier, "array constant '%s' must be accessed with an index", identifier->name); // 中文：数组常量必须通过下标访问
                 }
                 return LLVMBuildLoad2(
                     context->builder, get_llvm_type(context, constant->type->type),
                     global, "loaded_global_const");
             }
             if (symbol->array_type) {
-                report_error(NULL, "array '%s' must be accessed with an index", identifier->name); // 中文：数组必须通过下标访问
+                report_error((const ASTNode *)identifier, "array '%s' must be accessed with an index", identifier->name); // 中文：数组必须通过下标访问
             }
             LLVMTypeRef llvm_type = symbol->declared_type
                 ? get_llvm_var_type(context, symbol->declared_type)
@@ -3701,7 +3701,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             LLVMValueRef address = generate_index_address(
                 context, (IndexExpressionNode *)expression, &element_type);
             if (element_type->is_array) {
-                report_error(NULL, "multidimensional arrays must be indexed to a scalar element"); // 中文：多维数组必须索引到标量元素
+                report_error((const ASTNode *)expression, "multidimensional arrays must be indexed to a scalar element"); // 中文：多维数组必须索引到标量元素
             }
             return LLVMBuildLoad2(context->builder, get_llvm_var_type(context, element_type),
                                   address, "array_element");
@@ -3737,9 +3737,9 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
         case NODE_CAST:
             return generate_cast_expression(context, (CastNode *)expression);
         case NODE_ARRAY_LITERAL:
-            report_error(NULL, "array literals can only be used to initialize array variables"); // 中文：数组字面量只能用于数组变量初始化
+            report_error((const ASTNode *)expression, "array literals can only be used to initialize array variables"); // 中文：数组字面量只能用于数组变量初始化
         case NODE_STRUCT_LITERAL:
-            report_error(NULL, "struct literals must be used with a struct target type"); // 中文：结构体字面量必须用于结构体目标类型
+            report_error((const ASTNode *)expression, "struct literals must be used with a struct target type"); // 中文：结构体字面量必须用于结构体目标类型
         case NODE_FUNCTION_CALL:
             {
                 FunctionCallNode *call = (FunctionCallNode *)expression;
@@ -3759,7 +3759,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 FunctionNode *function = find_function(context, call->name);
                 const VarTypeNode *return_type = function_return_var_type(function);
                 if (return_type && return_type->is_array) {
-                    report_error(NULL, "array-returning function '%s' must be used as an array value",
+                    report_error((const ASTNode *)call, "array-returning function '%s' must be used as an array value",
                             call->name); // 中文：返回数组的函数必须作为数组值使用
                 }
             }
@@ -3779,7 +3779,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             enum LiteralType right_type = expression_type(context, binary->right);
             if (left_type == LITERAL_STRING || right_type == LITERAL_STRING) {
                 if (left_type != LITERAL_STRING || right_type != LITERAL_STRING) {
-                    report_error(NULL, "String operations require two String values");
+                    report_error((const ASTNode *)binary, "String operations require two String values");
                 }
                 if (binary->op_type == OP_ADD) {
                     return generate_string_concat(context, binary);
@@ -3808,7 +3808,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             break;
     }
 
-    report_error(NULL, "unsupported expression type"); // 中文：不支持的表达式类型
+    report_error((const ASTNode *)expression, "unsupported expression type"); // 中文：不支持的表达式类型
 }
 
 // 把可变参数实参提升到 C 的默认实参提升规则要求的宽度：
@@ -3944,11 +3944,11 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
             generate_field_address(context, assignment->name, &field, &base_symbol);
         if (field_address) {
             if (base_symbol->is_const) {
-                report_error(NULL, "cannot assign to field of constant '%s'",
+                report_error((const ASTNode *)assignment, "cannot assign to field of constant '%s'",
                         base_symbol->name); // 中文：不能修改常量结构体字段
             }
             if (!expression_assignable_to(context, assignment->expression, field->field_type)) {
-                report_error(NULL, "assignment type mismatch for '%s'",
+                report_error((const ASTNode *)assignment->expression, "assignment type mismatch for '%s'",
                         assignment->name); // 中文：赋值类型不匹配
             }
             LLVMValueRef value = generate_expression_for_type(
@@ -3960,14 +3960,14 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
                               (const ASTNode *)assignment);
     }
     if (symbol->is_const) {
-        report_error(NULL, "cannot assign to constant '%s'", assignment->name); // 中文：不能给常量赋值
+        report_error((const ASTNode *)assignment, "cannot assign to constant '%s'", assignment->name); // 中文：不能给常量赋值
     }
     if (symbol->array_type) {
-        report_error(NULL, "assigning an entire array is not supported yet"); // 中文：第一版数组暂不支持整个数组赋值
+        report_error((const ASTNode *)assignment, "assigning an entire array is not supported yet"); // 中文：第一版数组暂不支持整个数组赋值
     }
     if (symbol->declared_type &&
         !expression_assignable_to(context, assignment->expression, symbol->declared_type)) {
-        report_error(NULL, "assignment type mismatch for '%s'",
+        report_error((const ASTNode *)assignment->expression, "assignment type mismatch for '%s'",
                 assignment->name); // 中文：赋值类型不匹配
     }
     LLVMValueRef value = symbol->declared_type
@@ -4012,7 +4012,7 @@ static void generate_array_initializer(
 
         if (element_type->is_array) {
             if (!current_element || current_element->type != NODE_ARRAY_LITERAL) {
-                report_error(NULL, "multidimensional array initialization requires nested array literals"); // 中文：多维数组初始化需要嵌套数组字面量
+                report_error((const ASTNode *)literal, "multidimensional array initialization requires nested array literals"); // 中文：多维数组初始化需要嵌套数组字面量
             }
             generate_array_initializer(
                 context, element_address, element_type, (ArrayLiteralNode *)current_element);
@@ -4021,11 +4021,11 @@ static void generate_array_initializer(
         }
 
         if (!current_element || current_element->type == NODE_ARRAY_LITERAL) {
-            report_error(NULL, "array element type mismatch"); // 中文：数组元素类型不匹配
+            report_error((const ASTNode *)current_element, "array element type mismatch"); // 中文：数组元素类型不匹配
         }
         if (element_type->is_pointer) {
             if (!expression_assignable_to(context, current_element, element_type)) {
-                report_error(NULL, "array element type mismatch"); // 中文：数组元素类型不匹配
+                report_error((const ASTNode *)current_element, "array element type mismatch"); // 中文：数组元素类型不匹配
             }
             LLVMValueRef value = generate_expression_for_type(
                 context, current_element, element_type);
@@ -4037,7 +4037,7 @@ static void generate_array_initializer(
         // 当成标量处理，报出「struct literals must be used with a struct target type」。
         if (element_type->struct_name || element_type->enum_name) {
             if (!expression_assignable_to(context, current_element, element_type)) {
-                report_error(NULL, "array element type mismatch"); // 中文：数组元素类型不匹配
+                report_error((const ASTNode *)current_element, "array element type mismatch"); // 中文：数组元素类型不匹配
             }
             LLVMValueRef value = generate_expression_for_type(
                 context, current_element, element_type);
@@ -4049,7 +4049,7 @@ static void generate_array_initializer(
         if (element_type->enum_name
                 ? !expression_assignable_to(context, current_element, element_type)
                 : !array_element_type_compatible(element_type->type, actual_type)) {
-            report_error(NULL, "array element type mismatch"); // 中文：数组元素类型不匹配
+            report_error((const ASTNode *)current_element, "array element type mismatch"); // 中文：数组元素类型不匹配
         }
         LLVMValueRef value = generate_expression_as(
             context, current_element, element_type->type);
@@ -4062,7 +4062,7 @@ static void generate_array_initializer(
 static LLVMValueRef generate_array_value(
     CodeGenContext *context, ASTNode *expression, const VarTypeNode *expected_type) {
     if (!expected_type || !expected_type->is_array) {
-        report_error(NULL, "expected array type"); // 中文：期望数组类型
+        report_error((const ASTNode *)expression, "expected array type"); // 中文：期望数组类型
     }
 
     LLVMTypeRef llvm_array_type = get_llvm_var_type(context, expected_type);
@@ -4074,7 +4074,7 @@ static LLVMValueRef generate_array_value(
                                   (const ASTNode *)expression);
         }
         if (!symbol->array_type || !tap_type_equal(symbol->array_type, expected_type)) {
-            report_error(NULL, "array type mismatch"); // 中文：数组类型不匹配
+            report_error((const ASTNode *)expression, "array type mismatch"); // 中文：数组类型不匹配
         }
         return LLVMBuildLoad2(context->builder, llvm_array_type,
                               symbol->value, "array_value");
@@ -4086,7 +4086,7 @@ static LLVMValueRef generate_array_value(
         const VarTypeNode *return_type = function_return_var_type(function);
         if (!return_type || !return_type->is_array ||
             !tap_type_equal(return_type, expected_type)) {
-            report_error(NULL, "array return type mismatch"); // 中文：数组返回类型不匹配
+            report_error((const ASTNode *)call, "array return type mismatch"); // 中文：数组返回类型不匹配
         }
         return generate_function_call(context, call);
     }
@@ -4097,13 +4097,13 @@ static LLVMValueRef generate_array_value(
             context, (IndexExpressionNode *)expression, &element_type);
         if (!element_type || !element_type->is_array ||
             !tap_type_equal(element_type, expected_type)) {
-            report_error(NULL, "array type mismatch"); // 中文：数组类型不匹配
+            report_error((const ASTNode *)expression, "array type mismatch"); // 中文：数组类型不匹配
         }
         return LLVMBuildLoad2(context->builder, llvm_array_type,
                               address, "array_slice_value");
     }
 
-    report_error(NULL, "expression does not produce an array value"); // 中文：表达式不产生数组值
+    report_error((const ASTNode *)expression, "expression does not produce an array value"); // 中文：表达式不产生数组值
 }
 
 
@@ -5129,7 +5129,7 @@ static LLVMTypeRef function_tap_param_type(
 static LLVMTypeRef create_function_type(CodeGenContext *context, FunctionNode *function) {
     for (ASTNode *type = function->param_types; type; type = type->next) {
         if (((VarTypeNode *)type)->is_array) {
-            report_error(NULL, "arrays are not supported as function parameters yet"); // 中文：第一版数组暂不支持作为函数参数
+            report_error((const ASTNode *)function, "arrays are not supported as function parameters yet"); // 中文：第一版数组暂不支持作为函数参数
         }
     }
     unsigned count = function_param_count(function);

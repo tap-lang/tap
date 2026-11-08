@@ -4,7 +4,7 @@
 // 布局写进去，**静默冲掉相邻字段**——`P { x: "hello", y: 7 }` 把 8 字节的指针塞进 4 字节
 // 的 x，y 从 7 变成 1。
 //
-// `StructInitFieldNode` 没有行列信息，所以这条诊断不带位置。
+// 诊断位置报在**字段名**上（parse_struct_literal 会给 StructInitFieldNode 盖章）。
 struct P {
     x: i32,
     y: i32,
@@ -18,6 +18,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: struct 'P' field 'x' type mismatch
+struct_literal_field_type.tp:14:20
 - .exit
 1
 -- */

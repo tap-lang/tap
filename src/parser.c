@@ -171,6 +171,17 @@ static void stamp_location(ASTNode *node, SourceLoc loc) {
     node->loc = loc;
 }
 
+// 建一个二元节点，位置取**左操作数**的起点。
+//
+// 二元表达式只在最外层经过 parse_expression 的 stamp，内层的 `b * c`（`a + b * c`
+// 里那个）从来盖不到位置，诊断报到它头上就只能打一句没有 `-->` 的错误。左操作数
+// 一定已经被盖过（它是因子或更内层的二元节点），拿它的起点比拿整条表达式的起点更准。
+static ASTNode *binary_node(enum BinaryOpType op, ASTNode *left, ASTNode *right) {
+    BinaryOpNode *node = create_binary_op(op, left, right);
+    if (left && left->loc.file) stamp_location((ASTNode *)node, left->loc);
+    return (ASTNode *)node;
+}
+
 // 前置声明
 static ASTNode *parse_expression(Parser *parser); // 解析表达式（逻辑或、逻辑与、比较、加减、乘除取模）
 static ASTNode *parse_logical_or(Parser *parser); // 解析逻辑或 ||
@@ -1138,7 +1149,7 @@ static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
             : OP_SUBTRACT;
         consume(parser, parser->current_token->type);
         ASTNode *one = (ASTNode *)create_int_literal(1);
-        ASTNode *updated = (ASTNode *)create_binary_op(operation, expression, one);
+        ASTNode *updated = binary_node(operation, expression, one);
         statement = (ASTNode *)create_assignment(name, updated);
     } else if (!expression || expression->type != NODE_FUNCTION_CALL) {
         parser_error(parser, "expected assignment, increment, decrement, or function call"); // 中文：期望赋值、自增、自减或函数调用
@@ -1268,12 +1279,15 @@ static ASTNode *parse_struct_literal(Parser *parser, const char *struct_name) {
                 free_ast((ASTNode *)literal);
                 parser_error(parser, "expected struct initializer field name"); // 中文：期望结构体初始化字段名
             }
+            SourceLoc field_loc = current_location(parser);
             char *field_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
             consume(parser, TOKEN_COLON);
             ASTNode *expression = parse_expression(parser);
             StructInitFieldNode *field =
                 create_struct_init_field(field_name, expression);
+            // 位置取字段名。字段没写 / 类型不对这类诊断报在这里才指得准。
+            stamp_location((ASTNode *)field, field_loc);
             free(field_name);
             add_struct_init_field(literal, field);
 
@@ -1411,7 +1425,7 @@ static ASTNode *parse_primary(Parser *parser) {
     return NULL;
 }
 
-static ASTNode *parse_factor(Parser *parser) {
+static ASTNode *parse_factor_inner(Parser *parser) {
     // match 出现在表达式位置时按「表达式形式」解析：每个分支是一个值。
     if (parser->current_token->type == TOKEN_MATCH) {
         return parse_match(parser, 1);
@@ -1578,6 +1592,19 @@ static ASTNode *parse_factor(Parser *parser) {
     return expression;
 }
 
+// 因子入口：给结果节点盖上起始 token 的位置。
+//
+// 二元表达式的操作数不走 parse_expression（只有括号内、实参这些才走），所以它们
+// 以前从来没有位置 —— `if (value == 1)` 里借用检查报到 value 头上时只能打一句
+// 没有 `--> 文件:行:列` 的错误。递归进内层时内层先盖，外层看到已有位置就跳过，
+// 和 parse_expression 是同一套规则。
+static ASTNode *parse_factor(Parser *parser) {
+    SourceLoc start = current_location(parser);
+    ASTNode *node = parse_factor_inner(parser);
+    stamp_location(node, start);
+    return node;
+}
+
 // 解析项（乘除取模）
 static ASTNode *parse_term(Parser *parser) {
     ASTNode *left = parse_factor(parser);
@@ -1588,13 +1615,13 @@ static ASTNode *parse_term(Parser *parser) {
         Token *token = parser->current_token;
         if (token->type == TOKEN_MULTIPLY) {
             consume(parser, TOKEN_MULTIPLY);
-            left = (ASTNode *)create_binary_op(OP_MULTIPLY, left, parse_factor(parser));
+            left = binary_node(OP_MULTIPLY, left, parse_factor(parser));
         } else if (token->type == TOKEN_DIVIDE) {
             consume(parser, TOKEN_DIVIDE);
-            left = (ASTNode *)create_binary_op(OP_DIVIDE, left, parse_factor(parser));
+            left = binary_node(OP_DIVIDE, left, parse_factor(parser));
         } else {
             consume(parser, TOKEN_MODULO);
-            left = (ASTNode *)create_binary_op(OP_MODULO, left, parse_factor(parser));
+            left = binary_node(OP_MODULO, left, parse_factor(parser));
         }
     }
     
@@ -1639,7 +1666,7 @@ static ASTNode *parse_comparison(Parser *parser) {
         }
         
         consume(parser, token->type);
-        left = (ASTNode *)create_binary_op(op_type, left, parse_shift(parser));
+        left = binary_node(op_type, left, parse_shift(parser));
     }
     
     return left;
@@ -1653,10 +1680,10 @@ static ASTNode *parse_addition(Parser *parser) {
         Token *token = parser->current_token;
         if (token->type == TOKEN_PLUS) {
             consume(parser, TOKEN_PLUS);
-            left = (ASTNode *)create_binary_op(OP_ADD, left, parse_term(parser));
+            left = binary_node(OP_ADD, left, parse_term(parser));
         } else if (token->type == TOKEN_MINUS) {
             consume(parser, TOKEN_MINUS);
-            left = (ASTNode *)create_binary_op(OP_SUBTRACT, left, parse_term(parser));
+            left = binary_node(OP_SUBTRACT, left, parse_term(parser));
         }
     }
     
@@ -1675,7 +1702,7 @@ static ASTNode *parse_shift(Parser *parser) {
 
         consume(parser, operator_type);
         consume(parser, operator_type);
-        left = (ASTNode *)create_binary_op(
+        left = binary_node(
             operator_type == TOKEN_LESS_THAN ? OP_SHIFT_LEFT : OP_SHIFT_RIGHT,
             left, parse_addition(parser));
     }
@@ -1690,7 +1717,7 @@ static ASTNode *parse_bitwise_and(Parser *parser) {
 
     while (parser->current_token->type == TOKEN_REFERENCE) {
         consume(parser, TOKEN_REFERENCE);
-        left = (ASTNode *)create_binary_op(
+        left = binary_node(
             OP_BITWISE_AND, left, parse_comparison(parser));
     }
 
@@ -1703,7 +1730,7 @@ static ASTNode *parse_bitwise_xor(Parser *parser) {
 
     while (parser->current_token->type == TOKEN_BITWISE_XOR) {
         consume(parser, TOKEN_BITWISE_XOR);
-        left = (ASTNode *)create_binary_op(
+        left = binary_node(
             OP_BITWISE_XOR, left, parse_bitwise_and(parser));
     }
 
@@ -1716,7 +1743,7 @@ static ASTNode *parse_bitwise_or(Parser *parser) {
 
     while (parser->current_token->type == TOKEN_BITWISE_OR) {
         consume(parser, TOKEN_BITWISE_OR);
-        left = (ASTNode *)create_binary_op(
+        left = binary_node(
             OP_BITWISE_OR, left, parse_bitwise_xor(parser));
     }
 
@@ -1729,7 +1756,7 @@ static ASTNode *parse_logical_and(Parser *parser) {
 
     while (parser->current_token->type == TOKEN_AND) {
         consume(parser, TOKEN_AND);
-        left = (ASTNode *)create_binary_op(OP_AND, left, parse_bitwise_or(parser));
+        left = binary_node(OP_AND, left, parse_bitwise_or(parser));
     }
 
     return left;
@@ -1741,7 +1768,7 @@ static ASTNode *parse_logical_or(Parser *parser) {
 
     while (parser->current_token->type == TOKEN_OR) {
         consume(parser, TOKEN_OR);
-        left = (ASTNode *)create_binary_op(OP_OR, left, parse_logical_and(parser));
+        left = binary_node(OP_OR, left, parse_logical_and(parser));
     }
 
     return left;

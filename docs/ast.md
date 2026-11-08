@@ -52,13 +52,23 @@ typedef struct ASTNode {
 位置放在 `ASTNode` 里而不是每个节点各存一份三字段，诊断代码因此不必先知道具体节点类型：
 `print_node_diagnostic(stderr, "error", (ASTNode *)node, "...")` 直接取 `node->loc`。
 
-位置的填充只有两个入口：
+位置的填充有三个入口：
 
 - `parse_statement()` —— 所有语句
-- `parse_expression()` —— 所有表达式（含递归进入的内层表达式）
+- `parse_expression()` —— 一条表达式的**顶层**
+- `parse_factor()` —— 因子（标识符、字面量、调用、下标、字段访问、一元运算）
 
-两者在分发**之前**记下当前 token 的位置，返回时调 `stamp_location()`。`stamp_location()`
+三者都在分发**之前**记下当前 token 的位置，返回时调 `stamp_location()`。`stamp_location()`
 只填 `file` 为空的节点，所以内层（更精确）的位置优先，外层不会覆盖。
+
+为什么还要 `parse_factor()`：二元表达式的操作数**不走** `parse_expression`（`a + b` 里
+整条表达式只经过一次 `parse_expression`），所以以前 `a`、`b` 这些操作数节点从来没有位置，
+借用检查报到它们头上时只能打一句没有 `--> 文件:行:列` 的错误。`parse_factor()` 补上这
+一层，每个操作数拿到的是自己起始 token 的位置；二元节点本身由 `binary_node()` 按**左
+操作数**的位置盖章，所以内层的 `b * c` 也有位置。
+
+结构体字面量的字段初始化节点（`StructInitFieldNode`）在 `parse_struct_literal()` 里单独
+盖章，位置取**字段名** —— 「字段类型不匹配」「结构体没有这个字段」报在那里才指得准。
 
 `SourceLoc.file` 指向 `intern_source_file()` 的返回值，**不归节点所有，`free_ast` 不释放**。
 之所以要 intern：`module.c` / `prelude.c` 解析完就把模块路径 `free` 掉，而 Lexer 的
@@ -394,7 +404,9 @@ Parser 把 `fn identity<T>(...)` 中的 `T` 保存到 `FunctionNode.type_params`
 1. 在 `NodeType` 中增加节点类型。
 2. 定义以 `ASTNode base` 开头的具体结构体。
 3. 添加构造函数并初始化全部字段。用 `calloc` 分配，`base.loc` 留全 0 —— 语句和表达式
-   的位置由 Parser 在 `parse_statement()` / `parse_expression()` 里统一填充。
+   的位置由 Parser 在 `parse_statement()` / `parse_expression()` / `parse_factor()` 里
+   统一填充；如果新节点不是从这三个入口产生的（例如结构体字段初始化），要自己
+   `stamp_location()`。
 4. 在 Parser 中创建并连接节点。**新增语句只需要接入 `parse_statement()` 一处**：`parse_block`
    和函数体都走它，不要再写第二份语句分派。
 5. 在 `print_ast()` 中添加可读输出。

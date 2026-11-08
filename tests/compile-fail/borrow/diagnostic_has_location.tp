@@ -1,0 +1,19 @@
+// 诊断必须带位置。二元表达式的操作数（`value == 1` 里的 value）以前没有 loc，
+// 错误只能打一行没有 `--> 文件:行:列` 的消息，看不出是哪儿出的问题。
+fn main(): int {
+    let value: i32 = 1;
+    let r: &mut i32 = &mut value;
+    if (value == 1) {
+        print("%d\n", 2);
+    }
+    r[0] = 1;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: 'value' is mutably borrowed and cannot be used here
+diagnostic_has_location.tp:6:9
+- .exit
+1
+-- */
