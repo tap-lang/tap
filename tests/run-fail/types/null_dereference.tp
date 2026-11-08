@@ -9,7 +9,11 @@ fn main(): i32 {
 
 /** -- test
 - .stdout
-Null pointer dereference
+Null pointer dereference at tests/run-fail/types/null_dereference.tp:5:18
 - .exit
 1
 -- */
+
+// 消息带源码位置（`文件:行:列`，路径就是命令行传给编译器的那串），否则用户只知道
+// 「崩了」、不知道该改哪一行。期望里的路径是相对仓库根目录的 —— 两个测试运行器都
+// 从仓库根目录传相对路径。这条注释放在测试块**之后**，免得把代码行号推下去。

@@ -144,6 +144,12 @@ main () at crash.tp:3
 3	    p[0] = 42;
 ```
 
+> **2026-11-08 更新**：`*p` / `p[i]` / `p.field` 现在都插了空指针守卫，上面这条
+> 会打印 `Null pointer dereference at crash.tp:3:5` 后以状态 1 退出，**不再产生段错误**
+> —— 而且消息自带行号列号，不用调试器也能定位到那一行。验证行号表要换一个真的非法
+> 地址 —— 例如拿一个合法指针写远偏移：`let p: *i32 = &x; p[100000000] = 42;`
+> （实测仍然 SIGSEGV；整数 `as *i32` 不支持，报 `pointer expression type mismatch`）。
+
 落地细节见 [`tooling-plan.md`](tooling-plan.md) 的 P2 完成记录。
 
 下面保留当初的分析。

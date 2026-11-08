@@ -947,9 +947,14 @@ static StructFieldNode *field_access_info(
 }
 
 // 生成结构体字段地址，用于字段读取和字段赋值。
+// 空指针守卫。定义在后面的「数值守卫」一节，字段访问 / 下标 / 解引用都要用。
+// `node` 只用来给运行时消息带上源码位置，可以传 NULL。
+static void emit_null_guard(CodeGenContext *context, LLVMValueRef pointer,
+                            const ASTNode *node);
+
 static LLVMValueRef generate_field_address(
     CodeGenContext *context, const char *name, StructFieldNode **field_out,
-    Symbol **symbol_out) {
+    Symbol **symbol_out, const ASTNode *node) {
     Symbol *symbol = NULL;
     StructNode *struct_node = NULL;
     unsigned index = 0;
@@ -971,6 +976,11 @@ static LLVMValueRef generate_field_address(
         base = LLVMBuildLoad2(context->builder,
                               LLVMPointerType(struct_type, 0),
                               symbol->value, "pointer_value");
+        // 指针可能是 null（`*T` 没有非空保证），GEP 之前先挡一道。
+        // 引用跳过：构造上不可能为空，而且借用体系承诺零运行时开销。
+        if (!symbol->declared_type->is_reference) {
+            emit_null_guard(context, base, node);
+        }
     }
 
     if (field_out) *field_out = field;
@@ -1014,19 +1024,22 @@ static VarTypeNode *named_value_type(CodeGenContext *context, const char *name) 
 }
 
 // 按名字取可寻址值的地址：局部变量、单层字段（`a.b`）、多级字段（`a.b.c`）。
-static LLVMValueRef named_value_address(CodeGenContext *context, const char *name) {
+// `node` 只用于空指针守卫的运行时消息定位。
+static LLVMValueRef named_value_address(CodeGenContext *context, const char *name,
+                                        const ASTNode *node) {
     Symbol *symbol = find_symbol(context, name);
     if (symbol) return symbol->value;
 
     StructFieldNode *field = NULL;
-    LLVMValueRef address = generate_field_address(context, name, &field, NULL);
+    LLVMValueRef address =
+        generate_field_address(context, name, &field, NULL, node);
     if (address) return address;
 
     char *base_name = NULL;
     const char *field_name = NULL;
     if (!tap_split_qualified_name(name, &base_name, &field_name)) return NULL;
 
-    LLVMValueRef base_address = named_value_address(context, base_name);
+    LLVMValueRef base_address = named_value_address(context, base_name, node);
     VarTypeNode *base_type = named_value_type(context, base_name);
     free(base_name);
     if (!base_address || !base_type || !base_type->struct_name) {
@@ -2203,7 +2216,7 @@ static LLVMValueRef generate_expression_for_type(
             }
             StructFieldNode *field = NULL;
             LLVMValueRef field_address =
-                generate_field_address(context, identifier->name, &field, NULL);
+                generate_field_address(context, identifier->name, &field, NULL, expression);
             if (field_address) {
                 return LLVMBuildLoad2(
                     context->builder, get_llvm_var_type(context, field->field_type),
@@ -2232,7 +2245,7 @@ static LLVMValueRef generate_index_address(
         if (!symbol) {
             StructFieldNode *field = NULL;
             LLVMValueRef field_address =
-                generate_field_address(context, name, &field, NULL);
+                generate_field_address(context, name, &field, NULL, (const ASTNode *)index_expression);
             if (field_address && field->field_type->is_pointer) {
                 array_type = field->field_type;
                 pointer_value = LLVMBuildLoad2(
@@ -2301,6 +2314,15 @@ static LLVMValueRef generate_index_address(
         }
     } else {
         report_error((const ASTNode *)index_expression, "invalid array or pointer index target"); // 中文：数组或指针索引目标无效
+    }
+
+    // 解引用之前先挡空指针。放在这里（而不是 GEP 前）是为了让检查发生在**下标求值
+    // 之前** —— `p[f()]` 里基指针是 null 时不该先跑 f()。
+    //
+    // 引用（`&T` / `&mut T`）跳过：它们只能由 `&x` 产生，构造上不可能为空，而
+    // borrow.md 承诺「借用检查不产生运行时开销」。裸指针 `*T` 才需要挡。
+    if (is_pointer_index && !array_type->is_reference) {
+        emit_null_guard(context, pointer_value, (const ASTNode *)index_expression);
     }
 
     // `&T` / `&mut T`（T 不是数组）承诺「恰好一个 T」，所以下标只能是 0。
@@ -2393,7 +2415,7 @@ static LLVMValueRef expression_address(
         case NODE_IDENTIFIER:
             // 局部变量、单层字段、多级字段都在这里面。
             return named_value_address(
-                context, ((IdentifierNode *)expression)->name);
+                context, ((IdentifierNode *)expression)->name, expression);
         case NODE_INDEX_EXPRESSION:
             return generate_index_address(
                 context, (IndexExpressionNode *)expression, NULL);
@@ -2456,7 +2478,7 @@ static LLVMValueRef generate_reference(
         StructFieldNode *field = NULL;
         Symbol *base_symbol = NULL;
         LLVMValueRef address = generate_field_address(
-            context, name, &field, &base_symbol);
+            context, name, &field, &base_symbol, (const ASTNode *)reference);
         if (address) {
             if (base_symbol->is_const) {
                 report_error((const ASTNode *)reference, "cannot take mutable reference to constant '%s'",
@@ -2495,8 +2517,7 @@ static void emit_integer_guard(CodeGenContext *context, LLVMValueRef condition,
 
 // 生成 `*p`：先求出指针值，再按元素类型 load。
 //
-// 只支持**取值**。`*p = x` 这种左值写法还没实现（赋值语句的左值目前只认标识符），
-// 写操作请用 `p[0] = x`。
+// 只有取值走这里；`*p = x` 在 parser 里脱糖成 `p[0] = x`，走下标赋值的路径。
 static LLVMValueRef generate_dereference(
     CodeGenContext *context, DereferenceNode *dereference) {
     VarTypeNode *pointer_type = expression_full_type(context, dereference->operand);
@@ -2510,11 +2531,7 @@ static LLVMValueRef generate_dereference(
 
     // 解引用 null 在 C 里是未定义行为（通常直接段错误）。这里生成运行时检查，
     // 和除零、数组越界同一风格：明确报错退出，而不是崩在 SIGSEGV。
-    LLVMValueRef non_null = LLVMBuildICmp(
-        context->builder, LLVMIntNE, pointer,
-        LLVMConstNull(LLVMTypeOf(pointer)), "pointer_non_null");
-    emit_integer_guard(context, non_null,
-                       "Null pointer dereference\n", NULL, 0); // 中文：解引用空指针
+    emit_null_guard(context, pointer, (const ASTNode *)dereference);
 
     LLVMTypeRef element_type = get_llvm_var_type(context, pointer_type->element_type);
     free_ast((ASTNode *)pointer_type);
@@ -2588,6 +2605,33 @@ static void emit_integer_guard(
     LLVMBuildUnreachable(context->builder);
 
     LLVMPositionBuilderAtEnd(context->builder, pass_block);
+}
+
+// 解引用一个指针值之前检查非空。
+//
+// C 里解引用 null 是未定义行为（通常直接段错误）。这里和除零、数组越界同一风格：
+// 明确报错退出，而不是崩在 SIGSEGV。
+//
+// 三条解引用路径都要过这里：`*p` 读、`p[i]`（含 `*p = v`，它在 parser 里脱糖成
+// `p[0] = v`）、`p.field`。
+//
+// 消息带 `文件:行:列` —— 运行时报错没有编译期的 `-->` 上下文，不带位置的话用户只
+// 知道「崩了」，不知道该改哪一行。节点没有位置信息时退回只打一句话。
+static void emit_null_guard(CodeGenContext *context, LLVMValueRef pointer,
+                            const ASTNode *node) {
+    LLVMValueRef non_null =
+        LLVMBuildICmp(context->builder, LLVMIntNE, pointer,
+                      LLVMConstNull(LLVMTypeOf(pointer)), "pointer_non_null");
+
+    char message[1024];
+    if (node && node->loc.file) {
+        snprintf(message, sizeof(message),
+                 "Null pointer dereference at %s:%u:%u\n", node->loc.file,
+                 (unsigned)node->loc.line, (unsigned)node->loc.column);
+    } else {
+        snprintf(message, sizeof(message), "Null pointer dereference\n");
+    }
+    emit_integer_guard(context, non_null, message, NULL, 0); // 中文：解引用空指针
 }
 
 // 除法和取模的守卫：除数不能是 0；有符号还要挡住 MIN / -1（同样 UB，x86 上 SIGFPE、
@@ -3688,7 +3732,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 }
                 StructFieldNode *field = NULL;
                 LLVMValueRef field_address =
-                    generate_field_address(context, identifier->name, &field, NULL);
+                    generate_field_address(context, identifier->name, &field, NULL, expression);
                 if (field_address) {
                     return LLVMBuildLoad2(
                         context->builder, get_llvm_var_type(context, field->field_type),
@@ -3698,7 +3742,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                 // generate_field_address 只认单层，这里补上递归版本。
                 if (!field) {
                     LLVMValueRef nested_address =
-                        named_value_address(context, identifier->name);
+                        named_value_address(context, identifier->name, expression);
                     VarTypeNode *nested_type = nested_address
                         ? named_value_type(context, identifier->name)
                         : NULL;
@@ -3979,7 +4023,7 @@ static void generate_assignment(CodeGenContext *context, AssignmentNode *assignm
         StructFieldNode *field = NULL;
         Symbol *base_symbol = NULL;
         LLVMValueRef field_address =
-            generate_field_address(context, assignment->name, &field, &base_symbol);
+            generate_field_address(context, assignment->name, &field, &base_symbol, (const ASTNode *)assignment);
         if (field_address) {
             if (base_symbol->is_const) {
                 report_error((const ASTNode *)assignment, "cannot assign to field of constant '%s'",

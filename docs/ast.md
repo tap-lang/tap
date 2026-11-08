@@ -260,7 +260,9 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 - 其余没有目标类型的位置一律报 `null needs a target type`，不猜。
 
 解引用时插入运行时检查（和除零、数组越界同一套 `emit_integer_guard`），所以
-`let y = *p` 在 `p` 是 null 时输出 `Null pointer dereference` 并退出，而不是段错误。
+`let y = *p` 在 `p` 是 null 时输出 `Null pointer dereference at 文件:行:列` 并退出，
+而不是段错误。位置取自被解引用节点的 `loc`（`emit_null_guard` 里拼进消息串），
+`p[i]` / `p.field` 走同一套。
 
 `VarTypeNode` 当前也复用 `LiteralType` 表示声明类型。需要区分：`LiteralNode.literal_type`
 描述表达式中的值，`VarTypeNode.type` 描述变量、参数或函数返回值的类型注解。

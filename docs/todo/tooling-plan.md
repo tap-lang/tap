@@ -230,6 +230,8 @@ gdb prog.exe
 
 - `gdb` 里 `info line main` 能给出 `prog.tp:行号`
 - 故意 `null[0]` 触发段错误，`bt` 里能看到 tap 源码行
+  （2026-11-08 起空指针解引用有运行时守卫，会打印 `Null pointer dereference at 文件:行:列`
+  后退出；验收改用合法指针写远偏移：`let p: *i32 = &x; p[100000000] = 42;`）
 - 不带 `-g` 时产物**逐字节不变**（用 `cmp` 比对同一份 IR）
 
 ### 风险
@@ -286,7 +288,8 @@ Thread 1 hit Breakpoint 1, add () at prog.tp:2
 ```
 
 段错误这条也验了（`let p: *i32 = null; p[0] = 42;`，`p[0] = 42;` 在第 3 行）——这正是
-加 `-g` 的初衷：
+加 `-g` 的初衷（**注意**：这是 2026-11-08 加空指针守卫**之前**的验证；现在同一条会打印
+`Null pointer dereference` 并退出，要复现得换成写远偏移）：
 
 ```text
 Thread 1 received signal SIGSEGV, Segmentation fault.

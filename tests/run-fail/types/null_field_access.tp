@@ -1,0 +1,16 @@
+// 通过空指针访问字段（`p.x`）同样要拦。字段地址是对指针值做 GEP 算出来的，
+// 空指针时那个地址根本不存在。
+struct Point { x: i32, y: i32 }
+
+fn main(): i32 {
+    let p: *Point = null;
+    print("%d\n", p.x);
+    return 0;
+}
+
+/** -- test
+- .stdout
+Null pointer dereference at tests/run-fail/types/null_field_access.tp:7:19
+- .exit
+1
+-- */
