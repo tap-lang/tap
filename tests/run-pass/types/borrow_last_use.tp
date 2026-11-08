@@ -63,6 +63,12 @@ fn main(): int {
         cell[0] = cell[0] + 1;
     }
     print("%d\n", counted);
+
+    // 7. 赋值目标是字段也算一次使用（`r.left = 20` 之后 r 就死了）
+    let other_pair: Pair = Pair { left: 1, right: 2 };
+    let field_ref: &mut Pair = &mut other_pair;
+    field_ref.left = 20;
+    print("%d %d\n", other_pair.left, other_pair.right);
     return 0;
 }
 
@@ -78,6 +84,7 @@ fn main(): int {
 5
 7
 3
+20 2
 - .exit
 0
 -- */

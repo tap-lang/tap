@@ -1,0 +1,18 @@
+// `&T` / `&mut T` 指向**单个**对象，下标只能是 [0]。
+//
+// 指针下标是指针算术、没有边界检查，所以 `r[1]` 会静默写到对象后面 4 字节。
+// 引用既然承诺「恰好一个 T」，任何非零下标都是越界访问，编译期直接拦。
+fn main(): int {
+    let value: i32 = 1;
+    let r: &mut i32 = &mut value;
+    r[1] = 5;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: a reference to a single value can only be indexed with [0]; dereference it with '*' instead
+reference_index_nonzero.tp:8:5
+- .exit
+1
+-- */

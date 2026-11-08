@@ -169,6 +169,15 @@ static int is_null_literal(ASTNode *expression) {
            ((LiteralNode *)expression)->literal_type == LITERAL_NULL;
 }
 
+// 下标是不是字面量 0。`&T`（T 不是数组）只允许写 0，见 generate_index_address。
+static int is_literal_zero(ASTNode *expression) {
+    if (!expression || expression->type != NODE_LITERAL) return 0;
+    LiteralNode *literal = (LiteralNode *)expression;
+    return literal->literal_type >= LITERAL_INT &&
+           literal->literal_type <= LITERAL_U128 &&
+           literal->value.int_value == 0;
+}
+
 static const char *literal_type_name(enum LiteralType type) {
     switch (type) {
         case LITERAL_INT: return "int";
@@ -2238,11 +2247,25 @@ static LLVMValueRef generate_index_address(
                                       (const ASTNode *)index_expression);
             }
         } else if (symbol->declared_type && symbol->declared_type->is_pointer) {
-            array_type = symbol->declared_type;
-            pointer_value = LLVMBuildLoad2(
-                context->builder, get_llvm_var_type(context, array_type),
-                symbol->value, "loaded_pointer");
-            is_pointer_index = 1;
+            // `&[T; N]`：引用承诺「恰好一个数组」，下标要按**数组元素**算 —— 先把
+            // 指针值当成数组地址再走数组路径，这样才有边界检查。当成 `*T` 做指针算术
+            // 的话 `r[i]` 会按整个数组跨步，既没有检查、语义也不对。
+            if (symbol->declared_type->is_reference &&
+                symbol->declared_type->element_type &&
+                symbol->declared_type->element_type->is_array) {
+                array_type = symbol->declared_type->element_type;
+                array_address = LLVMBuildLoad2(
+                    context->builder,
+                    get_llvm_var_type(context, symbol->declared_type), symbol->value,
+                    "loaded_reference_array");
+                is_pointer_index = 0;
+            } else {
+                array_type = symbol->declared_type;
+                pointer_value = LLVMBuildLoad2(
+                    context->builder, get_llvm_var_type(context, array_type),
+                    symbol->value, "loaded_pointer");
+                is_pointer_index = 1;
+            }
         } else if (symbol->array_type) {
             array_address = symbol->value;
             array_type = symbol->array_type;
@@ -2278,6 +2301,21 @@ static LLVMValueRef generate_index_address(
         }
     } else {
         report_error((const ASTNode *)index_expression, "invalid array or pointer index target"); // 中文：数组或指针索引目标无效
+    }
+
+    // `&T` / `&mut T`（T 不是数组）承诺「恰好一个 T」，所以下标只能是 0。
+    //
+    // 指针下标没有边界检查（`p[1]` 就是 `*(p + 1)`），对「单个对象」的引用来说任何
+    // 非零下标都是越界访问，会静默写坏内存。`*T` 不受这条约束：裸指针本来就是
+    // 「我知道自己在干什么」，malloc 出来的块靠 `values[i]` 访问，禁掉会打死
+    // std.memory / std.vec。
+    if (is_pointer_index && array_type && array_type->is_reference &&
+        !(array_type->element_type && array_type->element_type->is_array) &&
+        !is_literal_zero(index_expression->index)) {
+        report_error((const ASTNode *)index_expression,
+                     "a reference to a single value can only be indexed with [0]; "
+                     "dereference it with '*' instead");
+        // 中文：指向单个值的引用只能用 [0] 下标，请改用 * 解引用
     }
 
     // 固定长度数组的每一维都会根据下标有无符号执行上下界检查。
@@ -4137,6 +4175,18 @@ static void generate_index_assignment(
     if (element_type->is_pointer) {
         if (!expression_assignable_to(context, assignment->expression, element_type)) {
             report_error((const ASTNode *)assignment, "pointer element assignment type mismatch"); // 中文：指针元素赋值类型不匹配
+        }
+        LLVMValueRef value = generate_expression_for_type(
+            context, assignment->expression, element_type);
+        LLVMBuildStore(context->builder, value, address);
+        return;
+    }
+    // 具名类型（结构体 / 枚举）必须按完整类型生成 —— 落到下面的标量路径会把结构体
+    // 字面量当成标量，报出「struct literals must be used with a struct target type」。
+    // `*r = Point { ... }` 走的就是这条路（`*r = v` 在 parser 里脱糖成 `r[0] = v`）。
+    if (element_type->struct_name || element_type->enum_name) {
+        if (!expression_assignable_to(context, assignment->expression, element_type)) {
+            report_error((const ASTNode *)assignment, "array element assignment type mismatch"); // 中文：数组元素赋值类型不匹配
         }
         LLVMValueRef value = generate_expression_for_type(
             context, assignment->expression, element_type);

@@ -210,8 +210,10 @@ Codegen 使用循环上下文栈解析 `break` 和 `continue` 的目标基本块
 - 二元算术、比较与逻辑表达式。
 - 可嵌套的固定长度数组字面量、多维数组索引表达式和指针索引表达式。
 - 取地址表达式；`&value` 使用 `ReferenceNode` 保存可寻址目标。
-- 解引用表达式；`*pointer` 使用 `DereferenceNode` 保存被解引用的指针。只支持取值，
-  `*p = x` 这种左值写法还不支持（写操作用 `p[0] = x`）。
+- 解引用表达式；`*pointer` 使用 `DereferenceNode` 保存被解引用的指针。取值直接生成
+  load；`*p = x` 在 `parse_simple_statement()` 里**脱糖**成 `p[0] = x`（`NODE_INDEX_ASSIGNMENT`
+  + 字面量 0），所以 AST 里不会出现「解引用赋值」节点 —— 借用检查、codegen、泛型克隆、
+  跨模块改名都不用为它开分支。
 - 类型大小表达式；`sizeof(T)` 使用 `SizeofNode` 保存完整类型并产生 `uint` 常量。
 - 一元前缀；Parser 将 `-value` 转换成 `0 - value` 的 `BinaryOpNode`，
   将 `!value` 转换成 `value == false` 的 `BinaryOpNode`。

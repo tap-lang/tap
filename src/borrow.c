@@ -1065,7 +1065,11 @@ static void prescan_statement(NllScan *scan, ASTNode *statement) {
 
         case NODE_ASSIGNMENT: {
             AssignmentNode *assignment = (AssignmentNode *)statement;
-            // 赋给别的变量等于把指针交出去，按逃逸算（保守方向）。
+            // 赋值目标也是「用到这个名字」：`r.x = 5` 里 r 确实被用了。正式遍历不读
+            // 左值（走 resolve_identifier），这里不补的话 r 会被当成「从未使用」，
+            // 借用一直活到作用域结束。写入不是把指针交出去，所以 leaks 留 0。
+            last_use_record(scan->context, assignment->name, scan->index, 0);
+            // 右值赋给别的变量等于把指针交出去，按逃逸算（保守方向）。
             prescan_expression(scan, assignment->expression, 1);
             break;
         }
@@ -1148,8 +1152,10 @@ static void prescan_expression(NllScan *scan, ASTNode *expression, int leaks) {
             return;
 
         case NODE_DEREFERENCE:
-            prescan_expression(scan, ((DereferenceNode *)expression)->operand,
-                               leaks);
+            // 解引用取出来的是**值**（拷贝），不是把指针交出去，所以不按逃逸处理 ——
+            // 否则 `*r` 出现在实参位置就会让 r 的借用被迫活到作用域结束，
+            // 而 `*r` 正是推荐的解引用写法。
+            prescan_expression(scan, ((DereferenceNode *)expression)->operand, 0);
             return;
 
         case NODE_CAST:

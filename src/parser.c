@@ -698,7 +698,10 @@ static ASTNode *parse_statement(Parser *parser) {
         node = parse_loop_control_statement(parser);
     } else if (parser->current_token->type == TOKEN_MATCH) {
         node = parse_match(parser, 0);
-    } else if (is_module_component(parser->current_token)) {
+    } else if (is_module_component(parser->current_token) ||
+               parser->current_token->type == TOKEN_MULTIPLY) {
+        // `*` 开头只有一种合法语句：`*p = v`（解引用写），其余形态（`*p;`）由
+        // parse_simple_statement 报「expected assignment, increment, ...」。
         node = parse_expression_statement(parser);
     } else {
         parser_error(parser, "expected statement"); // 中文：期望语句
@@ -1140,6 +1143,24 @@ static ASTNode *parse_simple_statement(Parser *parser, int consume_semicolon) {
         consume(parser, TOKEN_ASSIGN);
         statement = (ASTNode *)create_index_assignment(
             (IndexExpressionNode *)expression, parse_expression(parser));
+    } else if (expression && expression->type == NODE_DEREFERENCE &&
+               parser->current_token->type == TOKEN_ASSIGN) {
+        // `*p = v` 是「写 p 指向的那个对象」，语义上就是 `p[0] = v`。
+        //
+        // 这里直接脱糖成下标赋值，不为它新增 AST 节点：借用检查、codegen、泛型克隆、
+        // 跨模块改名都已经认 NODE_INDEX_ASSIGNMENT，走同一条路不会有「漏补某个遍历器」
+        // 的风险。反过来，如果保留一个独立节点，就得在十来处 switch 里都补一遍。
+        consume(parser, TOKEN_ASSIGN);
+        DereferenceNode *deref = (DereferenceNode *)expression;
+        ASTNode *target = deref->operand;
+        SourceLoc target_loc = expression->loc;
+        deref->operand = NULL; // 所有权转给下标表达式，deref 本体随后释放
+        free_ast(expression);
+        IndexExpressionNode *index_target = create_index_expression(
+            target, (ASTNode *)create_int_literal(0));
+        stamp_location((ASTNode *)index_target, target_loc);
+        statement = (ASTNode *)create_index_assignment(
+            index_target, parse_expression(parser));
     } else if (expression && expression->type == NODE_IDENTIFIER &&
                (parser->current_token->type == TOKEN_INCREMENT ||
                 parser->current_token->type == TOKEN_DECREMENT)) {

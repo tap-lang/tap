@@ -307,8 +307,8 @@ typedef struct {
     int is_mutable;        // 1 表示 `&mut x`
 } ReferenceNode;
 
-// 解引用表达式节点（`*p`）。只用于**取值**；`*p = x` 这种左值写法暂不支持，
-// 写操作请用 `p[0] = x`。
+// 解引用表达式节点（`*p`）。取值直接用；`*p = x` 这种左值写法由 parser 脱糖成
+// `p[0] = x`（见 parse_simple_statement），所以这里不需要区分「读」和「写」。
 typedef struct {
     ASTNode base;
     ASTNode *operand;      // 被解引用的指针表达式，类型必须是 *T

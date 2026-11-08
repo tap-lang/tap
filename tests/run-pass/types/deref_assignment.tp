@@ -1,0 +1,55 @@
+// 解引用写 `*p = v`，以及引用下标的边界规则。
+//
+// 1. `*p = v` 写 p 指向的那个对象（parser 里脱糖成 `p[0] = v`，语义完全一样）。
+// 2. `&T` / `&mut T` 指向**单个**对象时，下标只能是 `[0]` —— 非零下标是越界访问，
+//    指针下标没有边界检查，会静默写坏内存，所以编译期直接拦。
+// 3. `&[T; N]` 指向一个数组，下标按**元素**算（先解引用一层），带运行时边界检查。
+// 4. `*T` 不受 2 的限制：裸指针本来就是「我自己负责」，malloc 出来的块靠 `p[i]` 访问。
+
+struct Point { x: i32, y: i32 }
+
+fn main(): int {
+    // 1. 标量引用：*r 读写，之后源对象就还回来了（NLL）
+    let value: i32 = 1;
+    let r: &mut i32 = &mut value;
+    *r = 7;
+    print("%d\n", *r);
+    print("%d\n", value);
+
+    // 2. 裸指针同样能 *p 写
+    let other: i32 = 2;
+    let p: *i32 = &other;
+    *p = 8;
+    print("%d\n", *p);
+
+    // 3. 结构体整体赋值
+    let point: Point = Point { x: 1, y: 2 };
+    let point_ref: &mut Point = &mut point;
+    *point_ref = Point { x: 5, y: 6 };
+    print("%d %d\n", point.x, point.y);
+
+    // 4. 引用到数组：下标按元素算，写进去的是 arr[1]
+    let arr: [i32; 3] = [1, 2, 3];
+    let arr_ref: &mut [i32; 3] = &mut arr;
+    let index: i32 = 1;
+    arr_ref[index] = 9;
+    print("%d %d %d\n", arr[0], arr[1], arr[2]);
+
+    // 5. 裸指针的指针算术照旧：`base[1]` 是下一个 i32
+    let nums: [i32; 3] = [10, 20, 30];
+    let base: *i32 = &nums[0];
+    print("%d %d\n", base[0], base[1]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+7
+7
+8
+5 6
+1 9 3
+10 20
+- .exit
+0
+-- */

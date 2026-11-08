@@ -1,0 +1,15 @@
+fn main(): i32 {
+    // 引用到数组（`&[T; N]`）的下标按**元素**算，所以边界检查照样生效。
+    let arr: [i32; 3] = [1, 2, 3];
+    let r: &mut [i32; 3] = &mut arr;
+    let index: i32 = 5;
+    print("%d\n", r[index]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+Array index out of bounds: index=5, length=3
+- .exit
+1
+-- */
