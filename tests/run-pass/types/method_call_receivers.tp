@@ -1,0 +1,92 @@
+// 方法接收者可以是任意表达式：调用结果、字段、字段链、数组元素。
+//
+// 早先接收者是调用名里的一段字符串，靠 `strrchr(name, '.')` 拆，所以只认
+// 「变量.方法」。多级接收者（`holder.point.bump()`）和「表达式结果上调用方法」
+// （`make().shift(1)`）都要先绑一个变量才能写。
+//
+// 现在接收者是 AST 里的独立节点，codegen 用 expression_address 求地址：
+// 能求地址的都能当接收者，`&self` / `&mut self` 的自动取地址也跟着走同一条路。
+import std.vec as vec;
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Board {
+    name: String,
+    origin: Point,
+    points: Vec<Point>,
+}
+
+trait Mutate {
+    fn bump(&mut self);
+}
+
+trait Read {
+    fn total(&self): i32;
+}
+
+impl Mutate for Point {
+    fn bump(&mut self) {
+        self.x = self.x + 1;
+    }
+}
+
+impl Read for Point {
+    fn total(&self): i32 {
+        return self.x + self.y;
+    }
+}
+
+fn make(x: i32): Point {
+    return Point { x: x, y: 0 };
+}
+
+fn shift(self: Point, delta: i32): Point {
+    return Point { x: self.x + delta, y: self.y };
+}
+
+fn main(): i32 {
+    // 1) 调用结果上调用方法，再取字段。
+    print("%d\n", make(8).shift(1).x);
+
+    // 2) 按值接收者 + 字段链接收者。
+    let board: Board = Board {
+        name: "b",
+        origin: Point { x: 1, y: 2 },
+        points: vec.new(),
+    };
+    print("%d\n", board.origin.total());
+
+    // 3) `&mut self` 作用在字段上：改的是 board.origin 本身。
+    board.origin.bump();
+    print("%d\n", board.origin.x);
+
+    // 4) 泛型容器字段：接收者是 `board.points`。
+    board.points.push(Point { x: 3, y: 4 });
+    board.points.push(Point { x: 5, y: 6 });
+    print("%llu %d\n", board.points.len(), board.points.get(1).total());
+
+    // 5) 数组元素当接收者。
+    let points: [Point; 2] = [make(10), make(20)];
+    points[1].bump();
+    print("%d %d\n", points[0].x, points[1].x);
+
+    // 6) 字符串字段当接收者。
+    print("%llu\n", board.name.len());
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+9
+3
+2
+2 11
+10 21
+1
+- .exit
+0
+-- */

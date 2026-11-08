@@ -3,9 +3,12 @@
 tap 当前采用手写前端和 LLVM 后端，主要编译流程如下：
 
 ```text
-源文件 -> Lexer -> Token -> Parser -> AST -> [模块装载 -> 名字归一 -> 泛型单态化
-        -> Sema -> 借用检查] -> LLVM Codegen -> IR / 可执行文件
+源文件 -> Lexer -> Token -> Parser -> AST -> [模块装载 -> 载荷枚举降级 -> 名字归一
+        -> 泛型单态化 -> Sema -> 借用检查] -> LLVM Codegen -> IR / 可执行文件
 ```
+
+**名字归一在单态化之前**：泛型方法的接收者类型（`board.points.push(x)` 的 `T`）只能从
+接收者表达式推，不能从名字字符串推；单态化出来的实例是模板的克隆，克隆自带已改写的节点。
 
 ## 核心模块
 
@@ -48,8 +51,11 @@ tap 当前采用手写前端和 LLVM 后端，主要编译流程如下：
 | `p.inner.value`（读） | `FIELD_ACCESS(FIELD_ACCESS(p, inner), value)` |
 | `p.x = v`（写） | `FIELD_ASSIGNMENT(FIELD_ACCESS(p, x), v)` |
 | `make().x = v` | parser 直接产出 `FIELD_ASSIGNMENT`（接收者不是标识符） |
+| `p.inner.bump()`（方法） | `CALL{name: "bump", receiver: FIELD_ACCESS(p, inner)}` |
+| `list.get(0).peek()` | `CALL{name: "peek", receiver: CALL{...}}`（parser 直接产出） |
 
-判断依据只有一条：**根是不是本函数的局部变量**（参数、`let`/`const`、`match` 绑定）。
+判断依据只有一条：**根是不是局部名或顶层常量**（参数、`let`/`const`、`match` 绑定，以及
+`program->constants` 里的顶层常量 —— 模块限定的常量 `c.LABEL` 会取前两段当根）。
 不需要再排除「和模块别名同名」的写法 —— 局部名会遮蔽别名，只要根是局部变量，`vec.data`
 里的 `vec` 就一定是那个变量。模块成员 / 类型成员的根不是局部变量，自然落到原字符串路径。
 
@@ -58,7 +64,14 @@ tap 当前采用手写前端和 LLVM 后端，主要编译流程如下：
 | 形态 | 谁产生 | 谁处理 |
 |---|---|---|
 | `NODE_FIELD_ACCESS` / `NODE_FIELD_ASSIGNMENT` | `names.c`（根是局部变量）；parser（接收者是 `arr[0]`、`make()` 这类表达式） | 借用检查、Sema、Codegen 的字段分支 |
+| `NODE_FUNCTION_CALL` + `receiver` | `names.c`（根是局部名/常量）；parser（接收者是表达式） | 泛型单态化、借用检查、Codegen：都用接收者**类型/地址**判定 |
 | 带点的 `IdentifierNode` | 模块成员（`math.PI`）、类型成员（`Color.Red`） | 各阶段自己的命名空间解析 |
+
+方法调用同理：`p.method(args)` 的接收者从名字里拆出来挂到 `FunctionCallNode.receiver` 上，
+`name` 只剩方法名。于是「接收者是表达式」和「接收者是变量」在后续阶段没有区别 ——
+泛型单态化按接收者**类型**实例化（`board.points.push(x)` 的 `T` 来自 `board.points`），
+codegen 按接收者**地址**传 `&self` / `&mut self`，借用检查按接收者**字段路径**登记。
+这也是 `list.get(0).peek()`、`o.inner.peek()` 能用的原因。
 
 **字段访问只有这一条路。** codegen 里原来那套「按字符串拆点号找字段」的
 `field_access_info` / `generate_field_address`、以及 borrow 里的 `split_dotted`，在

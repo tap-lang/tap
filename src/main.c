@@ -310,8 +310,6 @@ int main(int argc, char *argv[]) {
     if (load_modules(program, input_file, argv[0]) != 0 
         || load_prelude(program, argv[0]) != 0
         || lower_payload_enums(program) != 0
-        || specialize_generics(program) != 0
-        || (!(skip_sema && skip_sema[0]) && analyze_program(program) != 0)
     ) {
         free_ast((ASTNode *)program);
         free_parser(parser);
@@ -319,15 +317,27 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 名字归一：把「根是局部变量」的点号标识符改写成字段访问链（读和写都改）。
+    // 名字归一：把「根是局部变量」的点号标识符改写成字段访问 / 字段赋值 / 方法调用节点。
     //
-    // 必须在模块装载之后 —— import 可以写在文件末尾，模块别名这时才齐全。单态化
-    // 出来的实例也在 program->functions 里，一并处理，所以模板和实例都不会漏。
+    // 必须在模块装载之后 —— import 可以写在文件末尾，模块别名这时才齐全。
     //
-    // 这一步之后，下游不再需要「按字符串拆点号找字段」的那套实现（codegen 和 borrow
-    // 里的旧分支已经删掉），所以它没有开关：跳过它编译不过字段访问。
+    // 放在**单态化之前**：泛型方法要知道接收者的类型（`board.points.push(x)` 的 T 来自
+    // `board.points` 的类型），而接收者的类型只能从 AST 节点推，不能从名字字符串推。
+    // 单态化出来的实例是模板的克隆，克隆会带上已改写的节点，所以不需要再跑一遍。
+    //
+    // 这一步之后，下游不再需要「按字符串拆点号」的那套实现（codegen 和 borrow 里的
+    // 旧分支已经删掉），所以它没有开关：跳过它编译不过字段访问。
     // TAP_TRACE_NAMES=1 打印每一处改写。
     normalize_qualified_names(program);
+
+    if (specialize_generics(program) != 0
+        || (!(skip_sema && skip_sema[0]) && analyze_program(program) != 0)
+    ) {
+        free_ast((ASTNode *)program);
+        free_parser(parser);
+        free_lexer(lexer);
+        return 1;
+    }
 
     // 借用检查紧跟在 Sema 之后：它只看 AST 和类型标注，不依赖 Codegen 的推断结果，
     // 所以放在生成任何 IR 之前就能给出诊断。TAP_NO_BORROW=1 可以跳过，

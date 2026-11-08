@@ -431,38 +431,32 @@ static FunctionNode *find_method_function_for(BorrowContext *context,
     return NULL;
 }
 
-// 解析一次调用。receiver_out 非空表示这是方法调用，接收者符号已解析出来
-//（方法名写在调用名的点号前面，实参列表里不含接收者）。
+// 解析一次调用。receiver_out 非空表示这是方法调用，接收者的左值信息已解析出来
+//（实参列表里不含接收者）。
+//
+// 接收者的两种来源和 Codegen 保持一致：显式 receiver 节点（`p.m()`、`p.f.m()`、
+// `make().m()`），或者还写在调用名里的老形态。
 static FunctionNode *resolve_called_function(BorrowContext *context,
                                              FunctionCallNode *call,
-                                             BorrowSymbol **receiver_out) {
-    if (receiver_out) *receiver_out = NULL;
+                                             LValueInfo *receiver_out) {
+    if (receiver_out) reset_lvalue(receiver_out);
     if (!call || !call->name) return NULL;
 
-    FunctionNode *function = find_named_function(context->program, call->name);
-    if (function) return function;
+    // 有接收者就是方法调用，不能再按名字当自由函数查 —— 方法的实现本身就是同名的
+    // 顶层函数，查到它会当成「没有接收者」，借用的来源就对不上了。
+    if (!call->receiver) {
+        FunctionNode *function = find_named_function(context->program, call->name);
+        if (function) return function;
+    }
 
-    const char *dot = strrchr(call->name, '.');
-    if (!dot || dot == call->name) return NULL;
-
-    size_t length = (size_t)(dot - call->name);
-    if (length >= 256) return NULL;
-    char base[256];
-    memcpy(base, call->name, length);
-    base[length] = '\0';
-
-    BorrowSymbol *receiver = lookup_symbol(context, base);
-    if (!receiver || !receiver->type) return NULL;
+    if (!call->receiver) return NULL;
 
     // 和 Codegen 的 resolve_method_call 一致：用接收者**声明的完整类型**去匹配首参，
     // 不先解引用。方法签名写成 `fn m(v: &Counter)` 时，接收者也得是 `&Counter`。
-    const VarTypeNode *receiver_type = receiver->type;
-    if (!receiver_type->struct_name) return NULL;
-
-    function = find_method_function_for(context, receiver_type, dot + 1);
-    if (!function) return NULL;
-    if (receiver_out) *receiver_out = receiver;
-    return function;
+    resolve_lvalue(context, call->receiver, receiver_out);
+    const VarTypeNode *receiver_type = receiver_out->type;
+    if (!receiver_type || !receiver_type->struct_name) return NULL;
+    return find_method_function_for(context, receiver_type, call->name);
 }
 
 // 按省略规则确定「返回的借用来自第几个参数」。
@@ -534,21 +528,22 @@ static int reference_rank_of(BorrowContext *context, ASTNode *expression,
 
     if (expression->type == NODE_FUNCTION_CALL) {
         FunctionCallNode *call = (FunctionCallNode *)expression;
-        BorrowSymbol *receiver = NULL;
+        LValueInfo receiver;
         FunctionNode *function = resolve_called_function(context, call, &receiver);
         if (!function) return 0;
         int source = borrow_source_parameter(function, NULL);
         if (source < 0) return 0;
 
-        if (receiver) {
+        BorrowSymbol *receiver_symbol = lvalue_borrow_base(&receiver);
+        if (receiver_symbol) {
             // 方法：参数 0 是接收者，其余实参从 1 开始对位。
             if (source == 0) {
                 // 借的是接收者。接收者本身是引用时，借的是它指向的存储；否则
                 // 调用点会为 `&self` 自动取地址，借的就是接收者自己所在的槽 ——
                 // 所以这里要区分，直接用 pointee_rank 会把局部接收者当成函数外。
-                *pointee_rank = receiver->is_reference
-                    ? receiver->pointee_rank
-                    : receiver->storage_rank;
+                *pointee_rank = receiver_symbol->is_reference
+                    ? receiver_symbol->pointee_rank
+                    : receiver.rank;
                 return 1;
             }
             *pointee_rank = argument_source_rank(
@@ -705,17 +700,18 @@ static void mark_method_receiver_borrow(BorrowContext *context,
                                         const ASTNode *diagnostic_node) {
     if (!expression || expression->type != NODE_FUNCTION_CALL) return;
 
-    BorrowSymbol *receiver = NULL;
+    LValueInfo receiver;
     FunctionNode *function = resolve_called_function(
         context, (FunctionCallNode *)expression, &receiver);
-    if (!function || !receiver || receiver->is_reference) return;
+    BorrowSymbol *holder = lvalue_borrow_base(&receiver);
+    if (!function || !holder || holder->is_reference) return;
     if (!function->return_type || !function->return_type->is_reference) return;
     if (borrow_source_parameter(function, NULL) != 0) return;
 
     const VarTypeNode *self_type = function_parameter_type(function, 0);
     if (!self_type || !self_type->is_reference) return;
 
-    check_symbol_borrow_conflict(context, receiver, "",
+    check_symbol_borrow_conflict(context, holder, receiver.path,
                                  self_type->reference_mutable, 1,
                                  diagnostic_node);
 }
@@ -735,9 +731,10 @@ static void check_method_receiver_borrow(BorrowContext *context,
     if (!expression || expression->type != NODE_FUNCTION_CALL) return;
 
     FunctionCallNode *call = (FunctionCallNode *)expression;
-    BorrowSymbol *receiver = NULL;
+    LValueInfo receiver;
     FunctionNode *function = resolve_called_function(context, call, &receiver);
-    if (!function || !receiver || receiver->is_reference) return;
+    BorrowSymbol *holder = lvalue_borrow_base(&receiver);
+    if (!function || !holder || holder->is_reference) return;
 
     const VarTypeNode *self_type = function_parameter_type(function, 0);
     if (!self_type) return;
@@ -747,20 +744,19 @@ static void check_method_receiver_borrow(BorrowContext *context,
     if (!self_type->is_reference) {
         int has_mutable = 0;
         int has_shared = 0;
-        collect_overlapping_borrows(context, receiver, "", 0, 1, &has_mutable,
-                                    &has_shared);
+        collect_overlapping_borrows(context, holder, receiver.path, 0, 1,
+                                    &has_mutable, &has_shared);
         if (has_mutable || has_shared) {
-            const char *dot = strrchr(call->name, '.');
             report_error_soft(expression,
                               "cannot call method '%s' on '%s' while it is borrowed",
-                              dot ? dot + 1 : call->name, receiver->name);
+                              call->name, holder->name);
             // 中文：接收者还被借用着，不能调用按值接收的方法
         }
         return;
     }
 
     // `&mut self` 是独占要求；`&self` 只要接收者没被独占借走就行。
-    check_symbol_borrow_conflict(context, receiver, "",
+    check_symbol_borrow_conflict(context, holder, receiver.path,
                                  self_type->reference_mutable, 0, expression);
 }
 
@@ -1152,21 +1148,12 @@ static void prescan_expression(NllScan *scan, ASTNode *expression, int leaks) {
 
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
-            // 方法调用的接收者写在调用名的点号前面。
+            // 方法调用的接收者。
             //
             // 接收者不算逃逸：`&self` / `&mut self` 只在调用期间借用，tap 没有全局
             // 状态，方法没地方把接收者存到调用之后。按逃逸算会让 `held.len()`、
             // `held.to_string()` 这种最常见的收尾写法解不开借用。
-            const char *dot = strrchr(call->name, '.');
-            if (dot && dot != call->name) {
-                char buffer[256];
-                size_t length = (size_t)(dot - call->name);
-                if (length < sizeof(buffer)) {
-                    memcpy(buffer, call->name, length);
-                    buffer[length] = '\0';
-                    last_use_record(scan->context, buffer, scan->index, 0);
-                }
-            }
+            prescan_expression(scan, call->receiver, 0);
             // 实参可能被调用方存起来，按逃逸算。
             for (ASTNode *argument = call->arguments; argument;
                  argument = argument->next) {

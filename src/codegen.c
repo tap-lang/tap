@@ -485,7 +485,7 @@ static int variadic_forward_target(
     }
     if (argument) return 0;
 
-    FunctionNode *target = find_function(context, call->name);
+    FunctionNode *target = call->receiver ? NULL : find_function(context, call->name);
     if (!target || !target->is_variadic) return 0;
 
     *target_out = target;
@@ -722,36 +722,23 @@ static StringMethodKind internal_string_method(const FunctionCallNode *call) {
 //
 // 接收者本身可以带点：`conf.NAME.len()` 里 `conf.NAME` 是限定常量名，模块私有的还会
 // 变成 `__tap_module_0.NAME`。所以按**最后一个**点切分，不能假设只有一个点。
-static StringMethodKind named_string_method(
-    const FunctionCallNode *call, const char **receiver_name, size_t *receiver_length) {
-    const char *dot = strrchr(call->name, '.');
-    if (!dot || dot == call->name) return STRING_METHOD_NONE;
+static StringMethodKind named_string_method(const FunctionCallNode *call) {
+    // 方法名就是 `call->name`：接收者是独立节点，名字里不再带接收者。
+    const char *method_name = call->name;
+    if (!call->receiver) return STRING_METHOD_NONE;
 
     StringMethodKind method = STRING_METHOD_NONE;
-    if (strcmp(dot + 1, "len") == 0) method = STRING_METHOD_LEN;
-    else if (strcmp(dot + 1, "char_count") == 0) method = STRING_METHOD_CHAR_COUNT;
-    else if (strcmp(dot + 1, "byte_at") == 0) method = STRING_METHOD_BYTE_AT;
-    else if (strcmp(dot + 1, "slice") == 0) method = STRING_METHOD_SLICE;
-    else if (strcmp(dot + 1, "contains") == 0) method = STRING_METHOD_CONTAINS;
-    else if (strcmp(dot + 1, "starts_with") == 0) method = STRING_METHOD_STARTS_WITH;
-    else if (strcmp(dot + 1, "ends_with") == 0) method = STRING_METHOD_ENDS_WITH;
-    else if (strcmp(dot + 1, "replace") == 0) method = STRING_METHOD_REPLACE;
+    if (strcmp(method_name, "len") == 0) method = STRING_METHOD_LEN;
+    else if (strcmp(method_name, "char_count") == 0) method = STRING_METHOD_CHAR_COUNT;
+    else if (strcmp(method_name, "byte_at") == 0) method = STRING_METHOD_BYTE_AT;
+    else if (strcmp(method_name, "slice") == 0) method = STRING_METHOD_SLICE;
+    else if (strcmp(method_name, "contains") == 0) method = STRING_METHOD_CONTAINS;
+    else if (strcmp(method_name, "starts_with") == 0) method = STRING_METHOD_STARTS_WITH;
+    else if (strcmp(method_name, "ends_with") == 0) method = STRING_METHOD_ENDS_WITH;
+    else if (strcmp(method_name, "replace") == 0) method = STRING_METHOD_REPLACE;
     if (method == STRING_METHOD_NONE) return method;
 
-    *receiver_name = call->name;
-    *receiver_length = (size_t)(dot - call->name);
     return method;
-}
-
-// 接收者名称不是独立的零结尾字符串，因此按指定长度查询局部符号。
-static Symbol *find_symbol_with_length(
-    CodeGenContext *context, const char *name, size_t length) {
-    for (Symbol *symbol = context->symbols; symbol; symbol = symbol->next) {
-        if (strlen(symbol->name) == length && strncmp(symbol->name, name, length) == 0) {
-            return symbol;
-        }
-    }
-    return NULL;
 }
 
 // 返回函数的标量返回类型；未声明返回类型即**无返回值**（LITERAL_VOID）。
@@ -879,8 +866,7 @@ static VarTypeNode *named_value_type(CodeGenContext *context, const char *name) 
 }
 
 // 按名字取可寻址值的地址：只认局部变量（字段链走 expression_address）。
-static LLVMValueRef named_value_address(CodeGenContext *context, const char *name,
-                                        const ASTNode *node) {
+static LLVMValueRef named_value_address(CodeGenContext *context, const char *name) {
     Symbol *symbol = find_symbol(context, name);
     if (symbol) return symbol->value;
     return NULL;
@@ -964,45 +950,30 @@ static FunctionNode *find_method_function(
     return fallback;
 }
 
-// 解析 receiver.method(...) 调用，只有接收者是结构体变量时才参与方法匹配。
+// 解析一次方法调用：接收者优先用 `call->receiver`（显式节点），没有才按名字拆点号。
+//
+// 显式接收者是 `p.method()` / `p.inner.method()` / `make().method()` 的唯一表示：
+// 名字里只剩方法名本身，接收者是一段可以求值和求地址的表达式，所以多级字段、
+// 调用结果、下标元素都能当接收者 —— 字符串拆分做不到这些。
+//
+// `receiver_name_out` 只在接收者恰好是标识符时给出名字（字符串内建方法要用它查符号），
+// 其余情况给 NULL。
 static FunctionNode *resolve_method_call(
     CodeGenContext *context, const FunctionCallNode *call,
-    Symbol **receiver_symbol_out, char **receiver_name_out,
-    char **method_name_out) {
-    char *receiver_name = NULL;
-    char *method_name = NULL;
-    if (!split_field_access_name(call->name, &receiver_name, &method_name)) {
-        return NULL;
-    }
+    char **receiver_name_out) {
+    if (!call) return NULL;
+    if (receiver_name_out) *receiver_name_out = NULL;
 
-    Symbol *receiver_symbol = find_symbol(context, receiver_name);
-    if (!receiver_symbol ||
-        !receiver_symbol->declared_type ||
-        !receiver_symbol->declared_type->struct_name) {
-        free(receiver_name);
-        free(method_name);
-        return NULL;
-    }
+    if (!call->receiver) return NULL;
 
+    VarTypeNode *receiver_type = expression_full_type(context, call->receiver);
     FunctionNode *function =
-        find_method_function(context, receiver_symbol->declared_type, method_name, call);
-    if (!function) {
-        free(receiver_name);
-        free(method_name);
-        return NULL;
+        find_method_function(context, receiver_type, call->name, call);
+    if (function && receiver_name_out &&
+        call->receiver->type == NODE_IDENTIFIER) {
+        *receiver_name_out = strdup(((IdentifierNode *)call->receiver)->name);
     }
-
-    if (receiver_symbol_out) *receiver_symbol_out = receiver_symbol;
-    if (receiver_name_out) {
-        *receiver_name_out = receiver_name;
-    } else {
-        free(receiver_name);
-    }
-    if (method_name_out) {
-        *method_name_out = method_name;
-    } else {
-        free(method_name);
-    }
+    free_ast((ASTNode *)receiver_type);
     return function;
 }
 
@@ -1016,11 +987,14 @@ static FunctionNode *resolve_method_call(
 static FunctionNode *resolve_call_function(CodeGenContext *context,
                                            const FunctionCallNode *call) {
     if (!call) return NULL;
-    FunctionNode *function = find_function(context, call->name);
-    if (!function) {
-        function = resolve_method_call(context, call, NULL, NULL, NULL);
+    // 有接收者就是方法调用，**绝不能**再按名字查自由函数：方法的实现本身就是同名的
+    // 顶层函数（`fn shift(p: Point)`），按名字查到它会少传接收者实参 ——
+    // 而接收者现在是一个独立的表达式，只有方法路径知道怎么把它接上去。
+    if (!call->receiver) {
+        FunctionNode *function = find_function(context, call->name);
+        if (function) return function;
     }
-    return function;
+    return resolve_method_call(context, call, NULL);
 }
 
 // 判断调用是否返回使用 LLVM opaque pointer 的底层内存地址。
@@ -1160,12 +1134,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                 context, (ReferenceNode *)expression, target_type);
         }
         if (expression && expression->type == NODE_FUNCTION_CALL) {
-            FunctionNode *function =
-                find_function(context, ((FunctionCallNode *)expression)->name);
-            if (!function) {
-                function = resolve_method_call(
-                    context, (FunctionCallNode *)expression, NULL, NULL, NULL);
-            }
+            FunctionNode *function = resolve_call_function(
+                context, (FunctionCallNode *)expression);
             const VarTypeNode *return_type = function_return_var_type(function);
             return return_type && pointer_assignable(return_type, target_type);
         }
@@ -1213,12 +1183,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
                     struct_tagged_enum(context, target_type->struct_name);
                 return target_enum && strcmp(target_enum->name, enum_node->name) == 0;
             }
-            FunctionNode *function =
-                find_function(context, ((FunctionCallNode *)expression)->name);
-            if (!function) {
-                function = resolve_method_call(
-                    context, (FunctionCallNode *)expression, NULL, NULL, NULL);
-            }
+            FunctionNode *function = resolve_call_function(
+                context, (FunctionCallNode *)expression);
             const VarTypeNode *return_type = function_return_var_type(function);
             return return_type && return_type->struct_name &&
                    strcmp(return_type->struct_name, target_type->struct_name) == 0;
@@ -1247,12 +1213,8 @@ static int expression_assignable_to(CodeGenContext *context, ASTNode *expression
             }
         }
         if (expression && expression->type == NODE_FUNCTION_CALL) {
-            FunctionNode *function =
-                find_function(context, ((FunctionCallNode *)expression)->name);
-            if (!function) {
-                function = resolve_method_call(
-                    context, (FunctionCallNode *)expression, NULL, NULL, NULL);
-            }
+            FunctionNode *function = resolve_call_function(
+                context, (FunctionCallNode *)expression);
             const VarTypeNode *return_type = function_return_var_type(function);
             return return_type && return_type->enum_name &&
                    strcmp(return_type->enum_name, target_type->enum_name) == 0;
@@ -1446,10 +1408,7 @@ static VarTypeNode *compute_expression_full_type(
                 }
                 return create_struct_type(enum_node->name);
             }
-            FunctionNode *function = find_function(context, call->name);
-            if (!function) {
-                function = resolve_method_call(context, call, NULL, NULL, NULL);
-            }
+            FunctionNode *function = resolve_call_function(context, call);
             const VarTypeNode *return_type = function_return_var_type(function);
             return return_type ? tap_type_clone(return_type) : NULL;
         }
@@ -1622,16 +1581,10 @@ static enum LiteralType expression_type(CodeGenContext *context, ASTNode *expres
                 const VarTypeNode *return_type = callee->declared_type->return_type;
                 return return_type ? return_type->type : default_integer_type();
             }
-            const char *receiver_name = NULL;
-            size_t receiver_length = 0;
-            FunctionNode *function = find_function(context, call->name);
-            if (!function) {
-                function = resolve_method_call(context, call, NULL, NULL, NULL);
-            }
+            FunctionNode *function = resolve_call_function(context, call);
             StringMethodKind method = internal_string_method(call);
             if (method == STRING_METHOD_NONE) {
-                method = named_string_method(
-                    call, &receiver_name, &receiver_length);
+                method = named_string_method(call);
             }
             if (!function) {
                 if (method == STRING_METHOD_LEN) return LITERAL_UINT;
@@ -2255,7 +2208,7 @@ static LLVMValueRef expression_address(
         case NODE_IDENTIFIER:
             // 局部变量、单层字段、多级字段都在这里面。
             return named_value_address(
-                context, ((IdentifierNode *)expression)->name, expression);
+                context, ((IdentifierNode *)expression)->name);
         case NODE_INDEX_EXPRESSION:
             return generate_index_address(
                 context, (IndexExpressionNode *)expression, NULL);
@@ -2697,14 +2650,15 @@ static LLVMValueRef generate_logical_binary(CodeGenContext *context, BinaryOpNod
 // 解析字符串方法的接收者和用户参数。
 static LLVMValueRef generate_string_receiver(
     CodeGenContext *context, FunctionCallNode *call, StringMethodKind method,
-    const char *receiver_name, size_t receiver_length,
     unsigned expected_argument_count, ASTNode **arguments_out) {
     unsigned argument_count = 0;
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
         argument_count++;
     }
 
-    unsigned user_argument_count = receiver_name
+    // 两种形态：显式接收者节点（`s.len()`、`holder.name.len()`），接收者不在实参列表里；
+    // 字符串字面量上的内建写法（`"abc".contains(x)`），parser 把接收者塞成了第一个实参。
+    unsigned user_argument_count = call->receiver
         ? argument_count
         : argument_count > 0 ? argument_count - 1 : 0;
     if (user_argument_count != expected_argument_count) {
@@ -2714,50 +2668,15 @@ static LLVMValueRef generate_string_receiver(
                         user_argument_count);
     }
 
-    if (receiver_name) {
-        Symbol *symbol = find_symbol_with_length(context, receiver_name, receiver_length);
-        if (!symbol) {
-            // 全局常量不在局部符号表里，但它同样能当接收者：
-            //     const A: String = "alpha";
-            //     A.len()
-            // 所以查不到局部符号还要按名字找一遍全局常量，两者都没有才是真的未定义。
-            char *name = malloc(receiver_length + 1);
-            if (!name) {
-                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-                exit(1);
-            }
-            memcpy(name, receiver_name, receiver_length);
-            name[receiver_length] = '\0';
-            VarDeclNode *constant = find_global_constant(context, name);
-            LLVMValueRef global = constant
-                ? LLVMGetNamedGlobal(context->module, name)
-                : NULL;
-            free(name);
-
-            if (!constant || !constant->type || !global) {
-                report_error_at(call->filename, call->line, call->column,
-                                "undefined variable '%.*s'",
-                                (int)receiver_length, receiver_name);
-            }
-            if (constant->type->is_array || constant->type->type != LITERAL_STRING) {
-                report_error_at(call->filename, call->line, call->column,
-                                "method '%s' is only available on String values",
-                                string_method_name(method));
-            }
-            *arguments_out = call->arguments;
-            return LLVMBuildLoad2(
-                context->builder, get_llvm_type(context, LITERAL_STRING),
-                global, "string_method_receiver");
-        }
-        if (symbol->array_type || symbol->type != LITERAL_STRING) {
+    if (call->receiver) {
+        // 接收者是任意表达式：字段链、调用结果、全局常量都走 generate_expression。
+        *arguments_out = call->arguments;
+        if (expression_type(context, call->receiver) != LITERAL_STRING) {
             report_error_at(call->filename, call->line, call->column,
                             "method '%s' is only available on String values",
                             string_method_name(method));
         }
-        *arguments_out = call->arguments;
-        return LLVMBuildLoad2(
-            context->builder, get_llvm_type(context, LITERAL_STRING),
-            symbol->value, "string_method_receiver");
+        return generate_expression(context, call->receiver);
     }
 
     ASTNode *receiver_expression = call->arguments;
@@ -3034,6 +2953,13 @@ static LLVMValueRef generate_string_concat(
         context, "__tap_string_concat", string_type, arguments, parameter_types, 2);
 }
 
+// 字符串方法在诊断里的名字：显式接收者时 call->name 就是方法名；老形态从点号后面取；
+// 字符串字面量上的内建写法（`"abc".contains(x)`）名字是内部符号。
+static const char *string_method_label(const FunctionCallNode *call) {
+    if (call->receiver) return call->name;
+    return string_method_name(internal_string_method(call));
+}
+
 static LLVMValueRef generate_string_integer_argument(
     CodeGenContext *context, FunctionCallNode *call, ASTNode *argument,
     unsigned argument_index) {
@@ -3041,9 +2967,7 @@ static LLVMValueRef generate_string_integer_argument(
     if (!is_integer_type(type) || integer_type_bits(type) > 64) {
         report_error_at(call->filename, call->line, call->column,
                         "method '%s' argument %u must be an integer of at most 64 bits",
-                        strchr(call->name, '.') ? strrchr(call->name, '.') + 1 :
-                        string_method_name(internal_string_method(call)),
-                        argument_index);
+                        string_method_label(call), argument_index);
     }
     return generate_expression_as(context, argument, LITERAL_I64);
 }
@@ -3056,17 +2980,14 @@ static LLVMValueRef generate_string_string_argument(
     if (type != LITERAL_STRING) {
         report_error_at(call->filename, call->line, call->column,
                         "method '%s' argument %u must be a String value",
-                        strchr(call->name, '.') ? strrchr(call->name, '.') + 1 :
-                        string_method_name(internal_string_method(call)),
-                        argument_index);
+                        string_method_label(call), argument_index);
     }
     return generate_expression(context, argument);
 }
 
 // 生成内建字符串方法。
 static LLVMValueRef generate_string_method(
-    CodeGenContext *context, FunctionCallNode *call, StringMethodKind method,
-    const char *receiver_name, size_t receiver_length) {
+    CodeGenContext *context, FunctionCallNode *call, StringMethodKind method) {
     unsigned expected_count = method == STRING_METHOD_LEN
         ? 0
         : method == STRING_METHOD_CHAR_COUNT ? 0
@@ -3078,8 +2999,7 @@ static LLVMValueRef generate_string_method(
         : method == STRING_METHOD_REPLACE ? 2 : 2;
     ASTNode *arguments = NULL;
     LLVMValueRef receiver = generate_string_receiver(
-        context, call, method, receiver_name, receiver_length,
-        expected_count, &arguments);
+        context, call, method, expected_count, &arguments);
     LLVMTypeRef string_type = get_llvm_type(context, LITERAL_STRING);
 
     if (method == STRING_METHOD_LEN) {
@@ -3148,10 +3068,47 @@ static LLVMValueRef generate_string_method(
         call_arguments, parameter_types, 3);
 }
 
+// 接收者在诊断里的名字：标识符直接用名字（和以前的报错一致），其余给一句「表达式」。
+static const char *receiver_display_name(ASTNode *receiver) {
+    if (receiver && receiver->type == NODE_IDENTIFIER) {
+        return ((IdentifierNode *)receiver)->name;
+    }
+    return "value";
+}
+
+// 左值（变量、字段链、下标、解引用）的根是不是 `const`。
+// `label_out` 给出根标识符的名字，供诊断用（根不是变量时为 NULL）。
+static int lvalue_root_is_const(CodeGenContext *context, ASTNode *expression,
+                                const char **label_out) {
+    if (label_out) *label_out = NULL;
+    ASTNode *root = expression;
+    while (root) {
+        if (root->type == NODE_FIELD_ACCESS) {
+            root = ((FieldAccessNode *)root)->object;
+        } else if (root->type == NODE_INDEX_EXPRESSION) {
+            root = ((IndexExpressionNode *)root)->array;
+        } else if (root->type == NODE_DEREFERENCE) {
+            root = ((DereferenceNode *)root)->operand;
+        } else {
+            break;
+        }
+    }
+    if (!root || root->type != NODE_IDENTIFIER) return 0;
+    const char *name = ((IdentifierNode *)root)->name;
+    if (label_out) *label_out = name;
+    Symbol *symbol = find_symbol(context, name);
+    VarDeclNode *constant = symbol ? NULL : find_global_constant(context, name);
+    return (symbol && symbol->is_const) || (constant && constant->is_const);
+}
+
 // 生成结构体方法调用；语句形式可在返回同类型结构体时自动写回接收者。
+//
+// 接收者从 `call->receiver` 取（显式节点）：能求地址就能当接收者，所以多级字段、
+// 调用结果、下标元素都可以。`&self` / `&mut self` 传地址、按值 `self` 传加载出来的值，
+// 和以前按名字找符号时完全一样 —— 区别只是地址来自任意表达式，不再要求它是变量。
 static LLVMValueRef generate_method_call(
     CodeGenContext *context, FunctionCallNode *call, FunctionNode *function,
-    Symbol *receiver_symbol, int write_back_receiver) {
+    int write_back_receiver) {
     unsigned user_count = 0;
     for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
         user_count++;
@@ -3166,8 +3123,26 @@ static LLVMValueRef generate_method_call(
                         user_count); // 中文：方法参数数量不匹配
     }
 
-    const VarTypeNode *receiver_type = receiver_symbol->declared_type;
+    LLVMValueRef receiver_address = NULL;
+    VarTypeNode *receiver_type_owned = NULL;
+    const VarTypeNode *receiver_type = NULL;
+    const char *receiver_label = "value";
+    int receiver_is_const = 0;
+
+    receiver_type_owned = expression_full_type(context, call->receiver);
+    receiver_type = receiver_type_owned;
+    receiver_label = receiver_display_name(call->receiver);
+    receiver_is_const = lvalue_root_is_const(context, call->receiver, NULL);
+    receiver_address = expression_address(context, call->receiver);
+
     const VarTypeNode *first_param = function_param_var_type(function, 0);
+    if (!receiver_type || !receiver_address) {
+        report_error_at(call->filename, call->line, call->column,
+                        "cannot resolve the receiver of method '%s'",
+                        function_base_name(function->name)); // 中文：无法解析方法接收者
+        free_ast((ASTNode *)receiver_type_owned);
+        return NULL;
+    }
     if (!first_param || !tap_receiver_type_matches(first_param, receiver_type)) {
         report_error_at(call->filename, call->line, call->column,
                         "method '%s' receiver type mismatch",
@@ -3189,23 +3164,22 @@ static LLVMValueRef generate_method_call(
         exit(1);
     }
 
-    // 接收者实参。方法首参是 `&T` 而接收者是 `T` 时传**地址**（`receiver_symbol->value`
-    // 本身就是那个 alloca），这就是 `&self` 的自动取地址；其余情况照旧传值。
+    // 接收者实参。方法首参是 `&T` 而接收者是 `T` 时传**地址**，这就是 `&self` 的
+    // 自动取地址；其余情况照旧传值。
     //
     // 传地址意味着方法真的能改到接收者本身，所以常量接收者必须在这里拦下 ——
     // 否则 `const` 的「不可写」承诺会被一个 `&mut self` 方法从后门破掉。
     if (first_param->is_reference && !receiver_type->is_reference) {
-        if (first_param->reference_mutable && receiver_symbol->is_const) {
+        if (first_param->reference_mutable && receiver_is_const) {
             report_error_at(call->filename, call->line, call->column,
                             "cannot call mutating method '%s' on constant '%s'",
-                            function_base_name(function->name),
-                            receiver_symbol->name); // 中文：不能对常量调用可变方法
+                            function_base_name(function->name), receiver_label); // 中文：不能对常量调用可变方法
         }
-        arguments[0] = receiver_symbol->value;
+        arguments[0] = receiver_address;
     } else {
         arguments[0] = LLVMBuildLoad2(
             context->builder, get_llvm_var_type(context, receiver_type),
-            receiver_symbol->value, "method_receiver");
+            receiver_address, "method_receiver");
     }
 
     ASTNode *argument = call->arguments;
@@ -3235,15 +3209,15 @@ static LLVMValueRef generate_method_call(
 
     const VarTypeNode *return_type = function_return_var_type(function);
     if (write_back_receiver && return_type && tap_type_equal(return_type, receiver_type)) {
-        if (receiver_symbol->is_const) {
+        if (receiver_is_const) {
             report_error_at(call->filename, call->line, call->column,
                             "cannot call mutating method '%s' on constant '%s'",
-                            function_base_name(function->name),
-                            receiver_symbol->name); // 中文：不能对常量调用可变方法
+                            function_base_name(function->name), receiver_label); // 中文：不能对常量调用可变方法
         }
-        LLVMBuildStore(context->builder, value, receiver_symbol->value);
+        LLVMBuildStore(context->builder, value, receiver_address);
     }
 
+    free_ast((ASTNode *)receiver_type_owned);
     return value;
 }
 
@@ -3367,14 +3341,13 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
         return generate_indirect_call(context, call, callee_symbol);
     }
 
-    const char *receiver_name = NULL;
-    size_t receiver_length = 0;
     StringMethodKind string_method = internal_string_method(call);
     if (string_method == STRING_METHOD_NONE) {
-        string_method = named_string_method(
-            call, &receiver_name, &receiver_length);
+        string_method = named_string_method(call);
     }
-    FunctionNode *function = find_function(context, call->name);
+    // 有接收者的调用走方法路径（见 resolve_call_function 的说明）。
+    FunctionNode *function =
+        call->receiver ? NULL : find_function(context, call->name);
 
     // 变参转发函数（Prelude 里的 print）在编译期就被合并到目标函数（printf）上：
     // 它自己不生成 LLVM 函数，调用点直接按目标的签名生成代码。
@@ -3391,19 +3364,14 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     }
 
     if (!function) {
-        Symbol *method_receiver = NULL;
-        FunctionNode *method =
-            resolve_method_call(context, call, &method_receiver, NULL, NULL);
+        FunctionNode *method = resolve_method_call(context, call, NULL);
         if (method) {
-            return generate_method_call(context, call, method, method_receiver, 0);
+            return generate_method_call(context, call, method, 0);
         }
     }
 
-    // 已解析到真实函数的 module.method() 优先按模块调用处理。
-    if (receiver_name && function) string_method = STRING_METHOD_NONE;
     if (string_method != STRING_METHOD_NONE) {
-        return generate_string_method(
-            context, call, string_method, receiver_name, receiver_length);
+        return generate_string_method(context, call, string_method);
     }
 
     if (strcmp(call->name, "assert") == 0) {
@@ -3414,6 +3382,35 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
     const char *callee_name = function ? llvm_call_name(function->name) : call->name;
     LLVMValueRef llvm_function = LLVMGetNamedFunction(context->module, callee_name);
     if (!llvm_function || !function) {
+        if (call->receiver) {
+            // 有接收者却没匹配到方法：报「类型没有这个方法」，比「未定义的函数」有用得多。
+            // 接收者是字段时还要先排除「这是函数指针字段」（`handler.run(7)`）。
+            if (call->receiver->type == NODE_FIELD_ACCESS) {
+                FieldAccessNode *access = (FieldAccessNode *)call->receiver;
+                if (access->object->type == NODE_IDENTIFIER) {
+                    Symbol *symbol = find_symbol(
+                        context, ((IdentifierNode *)access->object)->name);
+                    if (symbol_has_function_pointer_field(context, symbol, access->field)) {
+                        report_error_at(call->filename, call->line, call->column,
+                                        "'%s.%s' is a function pointer field; read it into a variable first",
+                                        ((IdentifierNode *)access->object)->name,
+                                        access->field); // 中文：函数指针字段要先取到变量再调用
+                    }
+                }
+            }
+            VarTypeNode *receiver_type =
+                expression_full_type(context, call->receiver);
+            const char *type_name = receiver_type
+                ? (receiver_type->struct_name
+                    ? receiver_type->struct_name
+                    : receiver_type->enum_name)
+                : NULL;
+            report_error_at(call->filename, call->line, call->column,
+                            "type '%s' has no method '%s'",
+                            type_name ? type_name : "?",
+                            call->name); // 中文：类型没有该方法
+        }
+
         char *base_name = NULL;
         char *method_name = NULL;
         if (split_field_access_name(call->name, &base_name, &method_name)) {
@@ -3534,7 +3531,7 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
 //
 // 两种来源都要覆盖：具名函数省略了 `: T`；函数指针签名的返回类型为空（`*fn(...)`）。
 static int call_returns_no_value(CodeGenContext *context, FunctionCallNode *call) {
-    FunctionNode *function = find_function(context, call->name);
+    FunctionNode *function = resolve_call_function(context, call);
     if (function) return function->return_type == NULL;
 
     Symbol *callee = find_symbol(context, call->name);
@@ -3682,7 +3679,7 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
                     report_error_at(call->filename, call->line, call->column,
                                     "variant construction must be used where an enum type is expected"); // 中文：载荷枚举构造必须用于期望枚举类型的场合
                 }
-                FunctionNode *function = find_function(context, call->name);
+                FunctionNode *function = resolve_call_function(context, call);
                 const VarTypeNode *return_type = function_return_var_type(function);
                 if (return_type && return_type->is_array) {
                     report_error((const ASTNode *)call, "array-returning function '%s' must be used as an array value",
@@ -4311,10 +4308,7 @@ static const VarTypeNode *expression_var_type(
     }
     if (expression->type == NODE_FUNCTION_CALL) {
         FunctionCallNode *call = (FunctionCallNode *)expression;
-        FunctionNode *function = find_function(context, call->name);
-        if (!function) {
-            function = resolve_method_call(context, call, NULL, NULL, NULL);
-        }
+        FunctionNode *function = resolve_call_function(context, call);
         return function_return_var_type(function);
     }
     if (expression->type == NODE_INDEX_EXPRESSION) {
@@ -5056,11 +5050,9 @@ static void generate_statement_list(CodeGenContext *context, ASTNode *statement)
                 if (strcmp(call->name, "assert") == 0) {
                     generate_assert(context, call);
                 } else {
-                    Symbol *method_receiver = NULL;
-                    FunctionNode *method =
-                        resolve_method_call(context, call, &method_receiver, NULL, NULL);
+                    FunctionNode *method = resolve_method_call(context, call, NULL);
                     if (method) {
-                        generate_method_call(context, call, method, method_receiver, 1);
+                        generate_method_call(context, call, method, 1);
                     } else {
                         generate_function_call(context, call);
                     }

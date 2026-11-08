@@ -578,8 +578,8 @@ C 会把两边都提升到 `int` 再算（signed），tap 按 `u8` 算（unsigne
   符合预期，但和「u8 会回绕」的直觉不符。
 - **`if (1)` 是合法的**：条件允许整数（报错信息原文是 `if condition must be an integer or
   boolean expression`），不是缺陷。
-- **在表达式结果上调用方法不支持**：`outer.get(0).get(1)` 报
-  `calling a method on an expression result is not supported`，需要先绑到变量。
+- ~~**在表达式结果上调用方法不支持**~~：已经支持（2026-11-08，接收者成为 AST 节点），
+  `outer.get(0).get(1)`、`o.inner.peek()` 都能直接用。
 - **泛型实参不能从枚举载荷反推**：`enum H { Only(Vec<i32>) }` 写 `H.Only(vec.new())` 报
   `cannot infer generic type parameter 'T'`。先绑到带标注的局部变量再传即可
   （`let v: Vec<i32> = vec.new();` 然后 `H.Only(v)`）。这是既有行为，B5 之前也一样。

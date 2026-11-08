@@ -403,7 +403,11 @@ typedef struct {
     char *filename;
     int line;
     int column;
-    char *name;            // 函数名
+    char *name;            // 函数名；方法调用时是**方法名本身**（不含接收者）
+    // 方法接收者：`p.shift(1)` 的 `p`、`p.inner.value()` 的 `p.inner`、`make().x()` 的调用结果。
+    // NULL 表示普通函数调用（含 `math.abs` 这类模块函数）。早先接收者是名字里的一段
+    // 字符串，靠 `strrchr(name, '.')` 拆，于是 `a.b.method()` 和多级接收者都做不了。
+    ASTNode *receiver;
     ASTNode *type_arguments; // 显式泛型实参列表（VarTypeNode），用于泛型函数
     ASTNode *enum_type_arguments; // 显式枚举类型实参，仅 Enum<T>.Member(...) 构造使用
     ASTNode *arguments;    // 参数列表

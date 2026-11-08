@@ -451,6 +451,7 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
             copy->filename = call->filename ? strdup(call->filename) : NULL;
             copy->line = call->line;
             copy->column = call->column;
+            copy->receiver = clone_expression(call->receiver, template, bindings);
             for (ASTNode *type = call->type_arguments; type; type = type->next) {
                 add_type_argument(copy, substitute_type(
                     template, (VarTypeNode *)type, bindings));
@@ -1509,6 +1510,23 @@ static const VarTypeNode *receiver_core_type(const VarTypeNode *type) {
     return (type && type->is_reference) ? type->element_type : type;
 }
 
+// 方法名：显式接收者时 `call->name` 就是方法名，否则是名字里点号后面那段。
+// 不是方法调用（没有点、也没有 receiver）时返回 NULL。
+static const char *method_call_name(const FunctionCallNode *call,
+                                    const char *call_name) {
+    return call->receiver ? call_name : NULL;
+}
+
+// 方法接收者的类型。显式 receiver 走正常的表达式推断（字段链、调用结果都行）；
+// 老形态（接收者还写在调用名里）查这一层的符号表。返回的节点归调用方所有。
+static VarTypeNode *method_receiver_type(GenericContext *context,
+                                         FunctionCallNode *call,
+                                         const char *call_name) {
+    (void)call_name;
+    if (!call->receiver) return NULL;
+    return process_expression(context, call->receiver, NULL);
+}
+
 // 查找 receiver.method(...) 对应的泛型函数模板。
 static FunctionNode *find_generic_method_template(
     GenericContext *context, const char *method_name,
@@ -1532,37 +1550,28 @@ static FunctionNode *find_generic_method_template(
 static FunctionNode *specialize_method_call(
     GenericContext *context, FunctionCallNode *call,
     const VarTypeNode *expected) {
-    // 接收者类型若是模块私有、被改名成 `__tap_module_N.Type`，方法名会变成
-    // 包含多个点的形状。按**最后一个**点切分，前缀才是正确的接收者类型名；
-    // 拒绝多点的写法会让泛型方法在模块私有类型上无法实例化。
-    const char *dot = strrchr(call->name, '.');
-    if (!dot || dot == call->name) return NULL;
+    const char *method_name = method_call_name(call, call->name);
+    if (!method_name) return NULL;
 
-    size_t receiver_length = (size_t)(dot - call->name);
-    char *receiver_name = malloc(receiver_length + 1);
-    if (!receiver_name) {
-        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-        exit(1);
-    }
-    memcpy(receiver_name, call->name, receiver_length);
-    receiver_name[receiver_length] = '\0';
-    TypeSymbol *receiver = find_symbol(context, receiver_name);
-    free(receiver_name);
-    if (!receiver) return NULL;
+    VarTypeNode *receiver_type = method_receiver_type(context, call, call->name);
+    if (!receiver_type) return NULL;
 
     FunctionNode *template = find_generic_method_template(
-        context, dot + 1, receiver->type);
-    if (!template) return NULL;
+        context, method_name, receiver_type);
+    if (!template) {
+        free_ast((ASTNode *)receiver_type);
+        return NULL;
+    }
     if (node_count(call->arguments) + 1 != node_count(template->params)) {
         generic_call_error(call,
-            "generic method argument count mismatch for '%s'", dot + 1);
+            "generic method argument count mismatch for '%s'", method_name);
     }
 
     unsigned type_param_count = node_count(template->type_params);
     unsigned explicit_count = node_count(call->type_arguments);
     if (explicit_count > 0 && explicit_count != type_param_count) {
         generic_call_error(call,
-            "generic function type argument count mismatch for '%s'", dot + 1);
+            "generic function type argument count mismatch for '%s'", method_name);
     }
 
     TypeBinding *bindings = NULL;
@@ -1572,16 +1581,16 @@ static FunctionNode *specialize_method_call(
         if (!bind_type(&bindings, ((IdentifierNode *)type_parameter)->name,
                        (VarTypeNode *)type_argument)) {
             generic_call_error(call,
-                "conflicting generic type arguments for '%s'", dot + 1);
+                "conflicting generic type arguments for '%s'", method_name);
         }
         type_parameter = type_parameter->next;
         type_argument = type_argument->next;
     }
 
     if (!unify_type(template, receiver_core_type((VarTypeNode *)template->param_types),
-                    receiver_core_type(receiver->type), &bindings, 0)) {
+                    receiver_core_type(receiver_type), &bindings, 0)) {
         generic_call_error(call,
-            "cannot infer compatible generic receiver for '%s'", dot + 1);
+            "cannot infer compatible generic receiver for '%s'", method_name);
     }
 
     ASTNode *argument = call->arguments;
@@ -1592,7 +1601,7 @@ static FunctionNode *specialize_method_call(
                                    actual, &bindings, 0)) {
             free_ast((ASTNode *)actual);
             generic_call_error(call,
-                "cannot infer compatible generic arguments for '%s'", dot + 1);
+                "cannot infer compatible generic arguments for '%s'", method_name);
         }
         free_ast((ASTNode *)actual);
         argument = argument->next;
@@ -1620,6 +1629,7 @@ static FunctionNode *specialize_method_call(
     free_ast(call->type_arguments);
     call->type_arguments = NULL;
     free_bindings(bindings);
+    free_ast((ASTNode *)receiver_type);
     return specialized;
 }
 
@@ -1644,33 +1654,25 @@ static VarTypeNode *index_type(GenericContext *context,
 // 少了这一步，非泛型方法调用会一路落到 process_call 末尾、被当成默认的 i32，
 // 和 Codegen 侧推断出的真实类型对不上（例如 `let q = p.shift(4);` 之后的泛型调用）。
 static FunctionNode *find_non_generic_method(
-    GenericContext *context, const char *call_name) {
-    const char *dot = strrchr(call_name, '.');
-    if (!dot || dot == call_name) return NULL;
+    GenericContext *context, FunctionCallNode *call) {
+    const char *method_name = method_call_name(call, call->name);
+    if (!method_name) return NULL;
 
-    size_t receiver_length = (size_t)(dot - call_name);
-    char *receiver_name = (char *)malloc(receiver_length + 1);
-    if (!receiver_name) {
-        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-        exit(1);
-    }
-    memcpy(receiver_name, call_name, receiver_length);
-    receiver_name[receiver_length] = '\0';
-    TypeSymbol *receiver = find_symbol(context, receiver_name);
-    const VarTypeNode *receiver_type = receiver ? receiver->type : NULL;
-    free(receiver_name);
+    VarTypeNode *receiver_type = method_receiver_type(context, call, call->name);
     if (!receiver_type) return NULL;
 
-    const char *method_name = dot + 1;
+    FunctionNode *result = NULL;
     for (ASTNode *node = context->program->functions; node; node = node->next) {
         FunctionNode *function = (FunctionNode *)node;
         if (function->type_params || !function->param_types) continue;
         if (!function_base_matches(function->name, method_name)) continue;
         if (tap_type_equal((VarTypeNode *)function->param_types, receiver_type)) {
-            return function;
+            result = function;
+            break;
         }
     }
-    return NULL;
+    free_ast((ASTNode *)receiver_type);
+    return result;
 }
 
 // 泛型结构体字面量没写类型实参时，用字段值反推。
@@ -1722,10 +1724,20 @@ static VarTypeNode *infer_array_literal_type(
     return create_array_type(element_type, length);
 }
 
+static const char *method_call_name(const FunctionCallNode *call,
+                                    const char *call_name);
+static int call_method_named(const FunctionCallNode *call, const char *name) {
+    const char *label = method_call_name(call, call->name);
+    return label && strcmp(label, name) == 0;
+}
+
 static VarTypeNode *process_call(GenericContext *context,
                                  FunctionCallNode *call,
                                  const VarTypeNode *expected) {
-    FunctionNode *function = find_function(context->program, call->name);
+    // 有接收者就是方法调用，不能按名字去查自由函数：方法实现和同名的模板可能共用一个
+    // 基础名，按名字查到模板会拿用户实参去推 T（`push(&mut Vec<T>, T)` 的 T 就推错了）。
+    FunctionNode *function =
+        call->receiver ? NULL : find_function(context->program, call->name);
     if (function && function->type_params) {
         function = specialize_call(context, call, function, expected);
         return tap_type_clone(function->return_type);
@@ -1733,7 +1745,7 @@ static VarTypeNode *process_call(GenericContext *context,
     if (!function) {
         function = specialize_method_call(context, call, expected);
         if (function) return tap_type_clone(function->return_type);
-        function = find_non_generic_method(context, call->name);
+        function = find_non_generic_method(context, call);
     }
     if (call->type_arguments) {
         generic_call_error(call, "function '%s' is not generic", call->name);
@@ -1748,19 +1760,19 @@ static VarTypeNode *process_call(GenericContext *context,
     }
     if (function && function->return_type) return tap_type_clone(function->return_type);
     if (strcmp(call->name, "__tap_builtin_string_len") == 0 ||
-        strstr(call->name, ".len")) {
+        call_method_named(call, "len")) {
         return create_var_type(LITERAL_UINT);
     }
     if (strcmp(call->name, "__tap_builtin_string_char_count") == 0 ||
-        strstr(call->name, ".char_count")) {
+        call_method_named(call, "char_count")) {
         return create_var_type(LITERAL_UINT);
     }
     if (strcmp(call->name, "__tap_builtin_string_byte_at") == 0 ||
-        strstr(call->name, ".byte_at")) {
+        call_method_named(call, "byte_at")) {
         return create_var_type(LITERAL_U8);
     }
     if (strcmp(call->name, "__tap_builtin_string_slice") == 0 ||
-        strstr(call->name, ".slice")) {
+        call_method_named(call, "slice")) {
         return create_var_type(LITERAL_STRING);
     }
     return expected ? tap_type_clone(expected) : create_var_type(LITERAL_I32);
@@ -1792,13 +1804,22 @@ static VarTypeNode *process_expression(GenericContext *context,
             return index_type(context, (IndexExpressionNode *)expression);
         case NODE_FIELD_ACCESS: {
             // `接收者.字段`：先推接收者的类型，再按名字查字段。
+            //
+            // 注意 `struct_name` 和 `enum_name` 都要看：`parse_type` 把具名类型建成
+            // `create_enum_type`（名字放 enum_name），要等 Sema 或者后续推断才填
+            // struct_name。只看 struct_name 会让「参数是 `&mut Buf`，取 `buf.data`」
+            // 这类最常见的写法推不出字段类型（历史上走字符串拆分那条路是两者都看的）。
             FieldAccessNode *access = (FieldAccessNode *)expression;
             VarTypeNode *object_type = process_expression(
                 context, access->object, NULL);
             VarTypeNode *result = NULL;
-            if (object_type && object_type->struct_name) {
-                StructNode *struct_node =
-                    tap_find_struct(context->program, object_type->struct_name);
+            if (object_type) {
+                const char *type_name = object_type->struct_name
+                    ? object_type->struct_name
+                    : object_type->enum_name;
+                StructNode *struct_node = type_name
+                    ? tap_find_struct(context->program, type_name)
+                    : NULL;
                 StructFieldNode *field = struct_node
                     ? tap_find_struct_field(struct_node, access->field, NULL)
                     : NULL;

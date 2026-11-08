@@ -14,7 +14,7 @@
 | 4 | match 无嵌套模式、无分支守卫 | `expected '(' but got 'identifier'` | 中 | 中 |
 | 5 | 载荷枚举不能按值递归 | `struct` 报类型不匹配；`enum` 直接炸 LLVM IR 校验 | 中 | 中 |
 | 6 | 没有 for-each | `expected '(' but got 'identifier'` | 高 | 大 |
-| 7 | 表达式结果上不能调方法 | `calling a method on an expression result is not supported` | 高 | 中 |
+| 7 | ~~表达式结果上不能调方法~~ | ✅ 已支持（2026-11-08），见下 | 高 | 中 |
 | 8 | `if` 不是表达式 | 无 `let x = if (c) { 1 } else { 2 }` | 低 | 小 |
 | 9 | 没有切片类型 `[T]` / `&[T]` | `expected token ';' but got ']'` | 中 | 大 |
 
@@ -233,7 +233,25 @@ error: expected `(` but got `identifier`
 
 ## 7. 表达式结果上不能调方法
 
-### 现在什么表现
+### ✅ 已完成（2026-11-08）
+
+没有走当初设想的「sema 降级成临时变量」，而是把接收者变成 AST 里的**一等节点**：
+`FunctionCallNode.receiver`。`names.c` 把 `p.method()` 拆成 `receiver = p`、
+`name = "method"`；parser 对 `expr.method()` 直接建带 receiver 的调用节点。
+接收者的地址用 `expression_address` 求，所以字段链、下标、调用结果都能当接收者。
+
+顺带解决的：
+
+- `o.inner.peek()`（多级字段接收者）：原先被解析成「调用 `o.inner.peek`」，报
+  `undefined function`；现在是正常的 `FIELD_ACCESS` 接收者。
+- `list.get(0).peek()`（调用结果接收者）：不再需要先绑变量。
+- 泛型方法的接收者类型现在从接收者**表达式**推断，`board.points.push(x)` 这类
+  「容器字段上的方法」也能正确单态化（原先只能查名字 → 查不到类型 → 不实例化）。
+- 借用检查里方法接收者的登记粒度跟着细化到字段路径。
+
+用例：[`tests/run-pass/types/method_call_receivers.tp`](../tests/run-pass/types/method_call_receivers.tp)。
+
+### 当初什么表现
 
 ```text
 let list: Vec<Point> = vec.new();
@@ -263,12 +281,12 @@ error: undefined function 'o.inner.peek'
 因为它被解析成「调用一个叫 `o.inner.peek` 的函数」，而数组下标那条走的是另一条路径、
 报得清楚。同一个语义限制给出两种质量完全不同的诊断，这个至少该统一。
 
-### 为什么
+### 当初的判断
 
 语法上 `a.b(...)` 一律按「类型 `a` 的方法 `b`」解析，接收者只能是**标识符**；
 `codegen` 的 `generate_method_call` 需要接收者符号的地址，表达式结果没有符号。
 
-### 改法
+### 当初的改法（没有采用）
 
 在 sema 阶段把 `expr.method(args)` 降级成：
 
@@ -325,10 +343,10 @@ error: expected token `;` but got `]`
 
 | 顺序 | 项目 | 理由 |
 |---|---|---|
-| 1 | **7 表达式结果上调用方法** | 日常写代码最痛的一条；不改语法，纯降级 |
-| 2 | **1 固有 impl** | 样板量减半；改动小 |
-| 3 | **3 限定类型名** | 补上唯一的显式消歧手段；改动小 |
-| 4 | **4 嵌套模式 + 守卫** | 枚举套结构体的常见形状；中等代价 |
-| 5 | **6a for-each（内建版）** | 覆盖数组和 Vec 的主流场景 |
-| 6 | **2 具体实例化的 impl** | 泛型形式留到关联类型那一期 |
-| 7 | 5 / 8 / 9 | 各有前置依赖 |
+| ~~1~~ | ~~**7 表达式结果上调用方法**~~ | ✅ 已完成（2026-11-08） |
+| 1 | **1 固有 impl** | 样板量减半；改动小 |
+| 2 | **3 限定类型名** | 补上唯一的显式消歧手段；改动小 |
+| 3 | **4 嵌套模式 + 守卫** | 枚举套结构体的常见形状；中等代价 |
+| 4 | **6a for-each（内建版）** | 覆盖数组和 Vec 的主流场景 |
+| 5 | **2 具体实例化的 impl** | 泛型形式留到关联类型那一期 |
+| 6 | 5 / 8 / 9 | 各有前置依赖 |

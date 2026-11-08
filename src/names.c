@@ -39,6 +39,7 @@ typedef struct {
 
 typedef struct {
     NameSet locals;       // 当前函数的局部名字：参数、let/const、match 绑定
+    NameSet constants;    // 顶层常量名：`CONST.field` / `CONST.method()` 的根
     int trace;            // TAP_TRACE_NAMES=1：打印每一处改写
 } NameContext;
 
@@ -77,14 +78,16 @@ static void name_set_free(NameSet *set) {
     set->capacity = 0;
 }
 
-// 把 `a.b.c` 拆成 IdentifierNode(a) + 两层 FIELD_ACCESS。
+// 把 `name[0..end)` 里的点号链拆成 IdentifierNode(首段) + 若干层 FIELD_ACCESS。
+// `end` 传 0 表示整串。只有一段时返回裸 IdentifierNode。
 //
-// 不适用（没有点、段太长）时返回 NULL，调用方保持原节点。**不释放旧节点** —— 调用方
+// 不适用（段为空、段太长）时返回 NULL，调用方保持原节点。**不释放旧节点** —— 调用方
 // 负责在摘掉链表后继之后释放它（free_ast 会递归释放 next，先摘再放才不会连带释放整条链）。
 static ASTNode *build_field_chain(ASTNode *source, const char *name,
-                                  size_t root_length) {
+                                  size_t root_length, size_t end) {
+    if (end == 0) end = strlen(name);
     char buffer[256];
-    if (root_length >= sizeof(buffer)) return NULL;
+    if (root_length >= sizeof(buffer) || root_length >= end) return NULL;
     memcpy(buffer, name, root_length);
     buffer[root_length] = '\0';
 
@@ -92,9 +95,10 @@ static ASTNode *build_field_chain(ASTNode *source, const char *name,
     chain->loc = source->loc;
 
     const char *rest = name + root_length + 1;
-    while (rest && rest[0]) {
-        const char *dot = strchr(rest, '.');
-        size_t length = dot ? (size_t)(dot - rest) : strlen(rest);
+    const char *limit = name + end;
+    while (rest < limit && rest[0]) {
+        const char *dot = memchr(rest, '.', (size_t)(limit - rest));
+        size_t length = dot ? (size_t)(dot - rest) : (size_t)(limit - rest);
         if (length == 0 || length >= sizeof(buffer)) {
             // 段名不合法：整条链作废，保持原样，交给旧路径报错。
             chain->next = NULL;
@@ -110,13 +114,18 @@ static ASTNode *build_field_chain(ASTNode *source, const char *name,
         access->line = (int)source->loc.line;
         access->column = (int)source->loc.column;
         chain = (ASTNode *)access;
-        rest = dot ? dot + 1 : NULL;
+        rest = dot ? dot + 1 : limit;
     }
 
     return chain;
 }
 
-// `name` 的点号链是否该当字段访问处理：根必须是**当前函数的局部变量**。
+// `name` 的点号链是否该当字段访问处理：根必须是**局部名或顶层常量**。
+//
+// 顶层常量也要算：`const EMPTY: String = ""; EMPTY.len()` 和 `CONFIG.port` 都是
+// 「常量上的字段/方法」，它们的根不在局部符号表里，但同样不是命名空间。
+// 模块成员的引用在更早的模块装载阶段就被改名成了 `__tap_module_N.name`，根是
+// `__tap_module_N` 而不是别名，所以这里不会把 `math.PI` 误当字段链。
 //
 // 不需要额外排除「和模块别名 / 类型名同名」的情况：局部名遮蔽别名是合法的
 // （`import std.vec as vec;` 之后 `let vec: i32 = 1;` 能编译），所以只要根是局部变量，
@@ -128,13 +137,67 @@ static int qualified_name_is_field(const NameContext *context, const char *name,
     const char *dot = name ? strchr(name, '.') : NULL;
     if (!dot || dot == name) return 0;
     size_t length = (size_t)(dot - name);
-    if (!name_set_contains(&context->locals, name, length)) return 0;
-    *root_length = length;
-    return 1;
+    if (name_set_contains(&context->locals, name, length) ||
+        name_set_contains(&context->constants, name, length)) {
+        *root_length = length;
+        return 1;
+    }
+
+    // 模块限定的顶层常量：`c.LABEL.len()` 装载后是 `__tap_module_0.LABEL.len`，
+    // 根是**前两段**。只在这一段确实是常量时才认 —— 同样的形状也可能是
+    // `__tap_module_0.EnumType.Member`（模块私有枚举的成员），那个不是字段链。
+    const char *second = dot + 1;
+    const char *next = strchr(second, '.');
+    if (!next) return 0;
+    size_t two = (size_t)(next - name);
+    if (name_set_contains(&context->constants, name, two)) {
+        *root_length = two;
+        return 1;
+    }
+    return 0;
 }
 
 static ASTNode *rewrite_expression(NameContext *context, ASTNode *expression);
 static void rewrite_statements(NameContext *context, ASTNode **head);
+
+// `p.shift(1)` / `p.inner.value()`：把接收者从调用名里拆出来，改成显式 receiver。
+//
+// 判据和字段访问完全一致 —— 根是当前函数的局部变量。模块函数（`math.abs`）的根不是
+// 局部变量，名字原样保留，继续走模块装载阶段改名后的查表。
+//
+// 方法名是**最后一段**（`a.b.method` 的 method），接收者是它前面的整条链。
+static void rewrite_method_receiver(NameContext *context, FunctionCallNode *call) {
+    const char *name = call->name;
+    if (!name) return;
+    const char *last_dot = strrchr(name, '.');
+    if (!last_dot || last_dot == name) return;
+
+    size_t root_length = 0;
+    if (!qualified_name_is_field(context, name, &root_length)) return;
+
+    size_t receiver_end = (size_t)(last_dot - name);
+    if (root_length > receiver_end) return; // 名字畸形（根跨越了方法名）
+
+    ASTNode *receiver = NULL;
+    if (root_length == receiver_end) {
+        // 接收者就是根变量本身：`p.shift(1)`。
+        char buffer[256];
+        if (root_length >= sizeof(buffer)) return;
+        memcpy(buffer, name, root_length);
+        buffer[root_length] = '\0';
+        receiver = (ASTNode *)create_identifier(buffer);
+        receiver->loc = ((ASTNode *)call)->loc;
+    } else {
+        // 接收者本身是字段链：`p.inner.value()`。
+        receiver = build_field_chain((ASTNode *)call, name, root_length, receiver_end);
+    }
+    if (!receiver) return;
+
+    char *method = strdup(last_dot + 1);
+    free(call->name);
+    call->name = method;
+    call->receiver = receiver;
+}
 
 static void trace_rewrite(const NameContext *context, const char *name) {
     if (context->trace) {
@@ -186,7 +249,7 @@ static ASTNode *rewrite_expression(NameContext *context, ASTNode *expression) {
             if (!qualified_name_is_field(context, name, &root_length)) {
                 return expression;
             }
-            ASTNode *chain = build_field_chain(expression, name, root_length);
+            ASTNode *chain = build_field_chain(expression, name, root_length, 0);
             if (chain) trace_rewrite(context, name);
             return chain ? chain : expression;
         }
@@ -238,6 +301,11 @@ static ASTNode *rewrite_expression(NameContext *context, ASTNode *expression) {
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *call = (FunctionCallNode *)expression;
             rewrite_expression_list(context, &call->arguments);
+            if (call->receiver) {
+                rewrite_slot(context, &call->receiver);
+            } else {
+                rewrite_method_receiver(context, call);
+            }
             return expression;
         }
         case NODE_TRY: {
@@ -276,7 +344,7 @@ static void rewrite_statements(NameContext *context, ASTNode **head) {
                     break; // 根不是局部变量：模块/类型成员，交给旧路径
                 }
                 ASTNode *chain = build_field_chain(
-                    statement, assignment->name, root_length);
+                    statement, assignment->name, root_length, 0);
                 if (!chain || chain->type != NODE_FIELD_ACCESS) {
                     if (chain) free_ast(chain);
                     break;
@@ -355,6 +423,9 @@ void normalize_qualified_names(ProgramNode *program) {
 
     NameContext context;
     memset(&context, 0, sizeof(context));
+    for (ASTNode *node = program->constants; node; node = node->next) {
+        name_set_add(&context.constants, ((VarDeclNode *)node)->name);
+    }
     const char *trace = getenv("TAP_TRACE_NAMES");
     context.trace = trace && trace[0];
 
@@ -363,4 +434,5 @@ void normalize_qualified_names(ProgramNode *program) {
     }
 
     name_set_free(&context.locals);
+    name_set_free(&context.constants);
 }

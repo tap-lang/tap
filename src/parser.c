@@ -1540,6 +1540,7 @@ static ASTNode *parse_factor_inner(Parser *parser) {
                 free_ast(expression);
                 parser_error(parser, "expected member name after `.`");
             }
+            SourceLoc member_loc = current_location(parser);
             char *member_name = strdup(parser->current_token->lexeme);
             consume(parser, TOKEN_IDENTIFIER);
 
@@ -1583,13 +1584,30 @@ static ASTNode *parse_factor_inner(Parser *parser) {
                 continue;
             }
 
-            // 在表达式结果上调用方法还不支持（这里只认字符串内建方法）。
+            // `expr.method(...)`：接收者是任意表达式，显式记在 receiver 上。
+            //
+            // 解析期分不出「方法」和「模块函数」（`a.b()` 两种都可能），所以这里只负责
+            // 建节点；到底是哪个由后面的阶段按接收者类型判定。标识符接收者的
+            // `p.method()` 在解析期还是一串带点的名字，由 names.c 统一改写。
             if (parser->current_token->type == TOKEN_LPAREN) {
+                FunctionCallNode *call = create_function_call(member_name);
+                call->filename = strdup(parser->lexer->filename);
+                call->line = line;
+                call->column = column;
+                call->receiver = expression;
                 free(member_name);
-                free_ast(expression);
-                parser_error(parser,
-                    "calling a method on an expression result is not supported; "
-                    "bind the value to a variable first");
+                consume(parser, TOKEN_LPAREN);
+                if (parser->current_token->type != TOKEN_RPAREN) {
+                    add_argument(call, parse_expression(parser));
+                }
+                while (parser->current_token->type == TOKEN_COMMA) {
+                    consume(parser, TOKEN_COMMA);
+                    add_argument(call, parse_expression(parser));
+                }
+                consume(parser, TOKEN_RPAREN);
+                stamp_location((ASTNode *)call, member_loc);
+                expression = (ASTNode *)call;
+                continue;
             }
 
             FieldAccessNode *access = create_field_access(expression, member_name);

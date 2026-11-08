@@ -259,6 +259,11 @@ static void dump_expr(ASTNode *n, int depth) {
             printf(">");
         }
         printf("(\n");
+        if (fc->receiver) {
+            print_indent(depth + 2);
+            printf("receiver://n");
+            dump_expr(fc->receiver, depth + 4);
+        }
         for (ASTNode *a = fc->arguments; a; a = a->next) {
             dump_expr(a, depth + 2);
         }
@@ -1290,6 +1295,7 @@ FunctionCallNode *create_function_call(const char *name) {
     function_call->line = 0;
     function_call->column = 0;
     function_call->name = strdup(name);
+    function_call->receiver = NULL;
     function_call->type_arguments = NULL;
     function_call->enum_type_arguments = NULL;
     function_call->arguments = NULL;
@@ -1976,6 +1982,7 @@ void free_ast(ASTNode *node) {
         case NODE_FUNCTION_CALL: {
             FunctionCallNode *function_call = (FunctionCallNode *)node;
             free(function_call->name);
+            free_ast(function_call->receiver);
             free(function_call->filename);
             free_ast(function_call->type_arguments);
             free_ast(function_call->enum_type_arguments);

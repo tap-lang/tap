@@ -121,7 +121,7 @@ Sema 目前是**影子模式**：只填类型，不接管诊断，推不出来�
 | `NODE_INDEX_EXPRESSION` | `IndexExpressionNode` | 数组表达式和下标表达式 |
 | `NODE_INDEX_ASSIGNMENT` | `IndexAssignmentNode` | 索引目标和新的元素值 |
 | `NODE_FIELD_ASSIGNMENT` | `FieldAssignmentNode` | 字段访问链目标和新的值表达式；`p.x = v`、`p.inner.value = v`、`arr[0].x = v` 都是它 |
-| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名、显式泛型类型实参和普通实参链表；`enum_type_arguments` 保存 `Enum<T>.Member(...)` 的显式枚举类型实参，`forwards_variadic` 标记实参列表末尾的 `...` 转发 |
+| `NODE_FUNCTION_CALL` | `FunctionCallNode` | 函数名、方法接收者（`receiver`，NULL 表示普通函数调用）、显式泛型类型实参和普通实参链表；`enum_type_arguments` 保存 `Enum<T>.Member(...)` 的显式枚举类型实参，`forwards_variadic` 标记实参列表末尾的 `...` 转发 |
 | `NODE_IF_STATEMENT` | `IfStatementNode` | 条件、真分支和假分支 |
 | `NODE_FOR_STATEMENT` | `ForStatementNode` | 初始化、条件、更新和循环体 |
 | `NODE_BREAK_STATEMENT` | `ASTNode` | 结束当前循环 |

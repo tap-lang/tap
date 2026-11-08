@@ -287,6 +287,15 @@ p.reset();              // error: 'p' is already borrowed, so it cannot be
                         //        borrowed mutably
 ```
 
+接收者写在 AST 里（`FunctionCallNode.receiver`），所以「接收者」不限于变量 ——
+`board.left.bump()`、`list.get(0).peek()` 都按同一套规则判。粒度跟着接收者的路径走：
+
+```text
+let held: &mut Point = &mut board.left;
+board.right.bump();     // 合法：兄弟字段
+board.left.bump();      // error: 'board' is already mutably borrowed
+```
+
 方法返回借用时，这次借用会登记到接收者身上（`let r = p.peek()` 之后 `p` 就被借走了）。
 **只对返回值是引用的方法生效** —— 否则 `let n = vec.len()` 会让后面所有
 `vec.data[i] = x` 全部误报。
@@ -560,6 +569,8 @@ now`），免得一个系统性错误刷屏。
   泛型约束下的 `&self` 调用、引用接收者、方法互相调用。
 - [`borrow_field_granularity.tp`](../tests/run-pass/types/borrow_field_granularity.tp)：
   借用粒度到字段 —— 借一个字段时写/借兄弟字段、常量下标互不相干。
+- [`method_call_receivers.tp`](../tests/run-pass/types/method_call_receivers.tp)：
+  方法接收者是任意表达式 —— 调用结果、字段链、数组元素、泛型容器字段。
 - [`vec_reference_element.tp`](../tests/run-pass/types/vec_reference_element.tp)：
   容器装引用 —— `Vec<&i32>` 的 `push` / `get` / 传 `&Vec<&T>`、`Vec<&mut i32>` 原地写回、
   `&mut` 收窄成 `&`、以及与 `Vec<*i32>` 的实例隔离。
@@ -571,6 +582,8 @@ now`），免得一个系统性错误刷屏。
   [`borrow_parent_while_child_borrowed.tp`](../tests/compile-fail/borrow/borrow_parent_while_child_borrowed.tp)
   和 [`use_whole_while_field_borrowed.tp`](../tests/compile-fail/borrow/use_whole_while_field_borrowed.tp)
   守住路径前缀关系的另一侧（借了父路径/整个对象就不能再借子路径或整体使用）。
+  [`method_on_borrowed_field.tp`](../tests/compile-fail/borrow/method_on_borrowed_field.tp)
+  守住「方法接收者按字段路径判借用」（兄弟字段可以调，被借走的那侧不行）。
   NLL 的三条边界各有一个用例：[`conflict_before_last_use.tp`](../tests/compile-fail/borrow/conflict_before_last_use.tp)
   （最后一次使用之前读源对象仍报错）、
   [`alias_copy_keeps_borrow_alive.tp`](../tests/compile-fail/borrow/alias_copy_keeps_borrow_alive.tp)

@@ -1,0 +1,21 @@
+// 有接收者的调用解析不到方法时，要报「类型没有这个方法」，而不是「未定义的函数」。
+//
+// 接收者现在是 AST 节点，类型可以从它推出来 —— 所以诊断能直接点名是哪个类型。
+// 多级字段接收者（`o.inner.nope()`）在旧实现里报的是
+// `undefined function 'o.inner.nope'`，同一个限制给出两种质量的诊断。
+struct Inner { value: i32 }
+struct Outer { inner: Inner }
+
+fn main(): i32 {
+    let outer: Outer = Outer { inner: Inner { value: 1 } };
+    outer.inner.nope();
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: type 'Inner' has no method 'nope'
+--> tests/compile-fail/types/type_has_no_method.tp:11:5
+- .exit
+1
+-- */
