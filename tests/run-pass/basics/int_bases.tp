@@ -20,7 +20,8 @@ fn main(): int {
     let wide: u64 = 0xFFFFFFFFFFFFFFFF;
     let huge: u128 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
     let same: u128 = 340282366920938463463374607431768211455;
-    print("%lu %d\n", wide, huge == same);
+    // 64 位必须用 %llu：Windows 是 LLP64，%lu 只有 32 位（long 是 4 字节）
+    print("%llu %d\n", wide, huge == same);
 
     // 数组长度、重复初始化、const 里同样能用
     let table: [i32; 0x3] = [0x1, 0o2, 0b11];

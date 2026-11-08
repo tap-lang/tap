@@ -140,6 +140,11 @@ fn main(): i32 {
 `extern` 的写法见 [`variadic_extern.tp`](../tests/run-pass/types/variadic_extern.tp)，
 自己写变参包装函数的写法见 [`variadic_forward.tp`](../tests/run-pass/types/variadic_forward.tp)。
 
+64 位整数要自己挑对格式符：`i64` 用 `%lld`，`u64` 用 `%llu`。**不要用 `%ld` / `%lu`** ——
+Windows 是 LLP64（`long` 只有 4 字节），同一份源码在 macOS/Linux 上打印正确，到 Windows 上
+会静默截断成低 32 位（`18446744073709551615` 打成 `4294967295`）。格式串的语义完全由 libc
+决定，编译器不做跨平台归一化，所以这条只能靠调用方保证。
+
 `-lex` 和 `-parse` 只处理传入的源文件，不加载 Prelude —— 也就是说这两个模式下 `print`
 只是个普通标识符，只有完整编译流程才会把它解析成 Prelude 里的函数。
 
