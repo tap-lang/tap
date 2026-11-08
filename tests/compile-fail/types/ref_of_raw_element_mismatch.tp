@@ -1,0 +1,15 @@
+// `&*p` 是「裸指针升回借用」，只承诺类型对得上，元素类型不匹配照样拒绝。
+fn main(): i32 {
+    let x: i32 = 1;
+    let p: *i32 = &x;
+    let r: &u8 = &*p;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: pointer expression type mismatch
+ref_of_raw_element_mismatch.tp:5:18
+- .exit
+1
+-- */

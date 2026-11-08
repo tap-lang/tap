@@ -1,0 +1,74 @@
+// 嵌套引用 `&&T` / `&mut &T`，以及把裸指针重新包成借用的 `&*p`。
+//
+// `&&T` 以前报 `expected type`：词法层把两个 `&` 合并成 `&&`（表达式里它是逻辑与），
+// 类型位置只认单个 `&`，于是紧凑写法被挡住 —— 写成 `& &T` 反而是通的。现在解析
+// 类型时把 `&&` 自己拆成两层，外层固定共享，`mut` 归内层。
+//
+// `&*p` 以前报 `pointer expression type mismatch`：解析和借用检查都不拦，但 Codegen
+// 既不认这个取地址目标（没走 `expression_address`），也不认它的类型。现在按
+// 「解引用再取地址在机器码上是恒等」直接返回 p，并保留空指针检查。
+//
+// 注意 `&*p` 是**升级**，不验证寿命：p 指向的东西活不活得到引用用完，由调用方负责。
+
+struct Holder { inner: &&i32 }
+struct Pair { left: i32, right: i32 }
+
+fn load(pp: &&i32): i32 {
+    return pp[0][0];
+}
+
+fn bump(pp: &mut &mut i32) {
+    pp[0][0] = pp[0][0] + 1;
+}
+
+fn main(): i32 {
+    // 紧凑写法和带空格写法等价
+    let x: i32 = 41;
+    let a: &i32 = &x;
+    let tight: &&i32 = &a;
+    let spaced: & &i32 = &a;
+    print("%d %d\n", tight[0][0], spaced[0][0]);
+    print("via fn: %d\n", load(tight));
+
+    // 结构体字段也能放嵌套引用
+    let holder: Holder = Holder { inner: &a };
+    print("field: %d sizeof: %llu\n", holder.inner[0][0], sizeof(&&i32));
+
+    // 裸指针升回借用：读
+    let raw_target: i32 = 7;
+    let p: *i32 = &raw_target;
+    let r: &i32 = &*p;
+    print("raw: %d\n", r[0]);
+
+    // 指向结构体的裸指针升回借用，字段访问照旧
+    let pair: Pair = Pair { left: 4, right: 5 };
+    let raw_pair: *Pair = &pair;
+    let view: &Pair = &*raw_pair;
+    print("struct: %d %d\n", view.left, view.right);
+
+    // 外层是共享借用、内层可变的 `&&mut T`：只能读
+    let y: i32 = 5;
+    let m: &mut i32 = &mut y;
+    let read_only: &&mut i32 = &m;
+    print("read-only: %d\n", read_only[0][0]);
+
+    // `&mut &mut T` 可以一路写进去
+    let z: i32 = 1;
+    let zm: &mut i32 = &mut z;
+    bump(&mut zm);
+    print("bumped: %d\n", zm[0]);
+    return 0;
+}
+
+/** -- test
+- .stdout
+41 41
+via fn: 41
+field: 41 sizeof: 8
+raw: 7
+struct: 4 5
+read-only: 5
+bumped: 2
+- .exit
+0
+-- */
