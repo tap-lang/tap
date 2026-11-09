@@ -1126,10 +1126,13 @@ static const VarTypeNode *function_param_type(FunctionNode *function,
 
 // 根据调用点信息实例化泛型函数并改写调用名称。
 // 一个具体类型是否实现了某个 trait：impl 表里有没有 (trait, type) 这条记录。
+//
+// 固有 impl（`impl Point { }`）的 trait_name 是 NULL，它不满足任何 trait 约束。
 static int type_implements_trait(
     ProgramNode *program, const char *trait_name, const char *type_name) {
     for (ASTNode *node = program ? program->impls : NULL; node; node = node->next) {
         ImplNode *impl_node = (ImplNode *)node;
+        if (!impl_node->trait_name) continue;
         if (strcmp(impl_node->trait_name, trait_name) == 0 &&
             strcmp(impl_node->type_name, type_name) == 0) {
             return 1;
@@ -1265,6 +1268,21 @@ static TraitNode *find_trait(ProgramNode *program, const char *name) {
     return NULL;
 }
 
+// 在程序里按名字查结构体或枚举（类型名的最后一段）。
+//
+// 只用来给固有 impl 做「目标类型存在吗」的检查 —— 固有 impl 没有 trait 声明可以对照，
+// 类型名打错的话方法会脱糖成 `len$Piont` 这种谁都调不到的函数，一声不响地消失。
+static int type_name_is_known(ProgramNode *program, const char *name) {
+    if (!program || !name) return 0;
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        if (strcmp(((StructNode *)node)->name, name) == 0) return 1;
+    }
+    for (ASTNode *node = program->enums; node; node = node->next) {
+        if (strcmp(((EnumNode *)node)->name, name) == 0) return 1;
+    }
+    return 0;
+}
+
 // 在 trait 里按名字查方法签名。
 static TraitMethodNode *find_trait_method(TraitNode *trait_node, const char *name) {
     for (ASTNode *node = trait_node ? trait_node->methods : NULL;
@@ -1302,9 +1320,21 @@ static char *impl_method_source_name(const FunctionNode *method) {
 // 返回类型」；关联类型和默认方法 v1 都没有，所以不涉及。
 //
 // trait 名找不到时这里不报错（那属于「用了没定义的 trait」，是另一回事），直接跳过。
+//
+// 固有 impl（`impl Point { }`，trait_name 为 NULL）没有 trait 声明可以对照，签名一律放行，
+// 只顺手确认一下目标类型真的存在 —— 没有别的环节会检查它。
 int validate_impl_signatures(ProgramNode *program) {
     for (ASTNode *node = program ? program->impls : NULL; node; node = node->next) {
         ImplNode *impl_node = (ImplNode *)node;
+        if (!impl_node->trait_name) {
+            if (!type_name_is_known(program, impl_node->type_name)) {
+                report_error_at(impl_node->filename, impl_node->line,
+                                impl_node->column,
+                                "no type named '%s' for inherent impl",
+                                impl_node->type_name); // 中文：固有 impl 的目标类型不存在
+            }
+            continue;
+        }
         TraitNode *trait_node = find_trait(program, impl_node->trait_name);
         if (!trait_node) continue;
 

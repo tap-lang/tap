@@ -943,12 +943,12 @@ static ModuleExport *find_bare_type_import(
 // 命名空间导入（`import std.vec as vec;`）**也会**把模块的 pub 类型名带进裸名作用域——
 // `Vec<i32>` 就是这么用的，保住它才不会让 std 全线崩。
 //
-// 但命名空间导入是**兜底**（三级查找的第③级），所以要求唯一：多个被命名空间导入的模块
+// 但命名空间导入是**兜底**（四级查找的第④级），所以要求唯一：多个被命名空间导入的模块
 // 都导出同一个类型名时，裸名没有确定答案。
 //
 // **用到才报，不在导入时报。** 「导入」本身没问题，只有真的写出那个裸名才有问题：
 // 同时导入两个都导出 `Point` 的包，只要不写裸名 `Point`（用 `let p = a.make();` 让推断
-// 定类型）就完全正常。导入时报错会把这种完全合法的用法也堵死。
+// 定类型，或者写限定名 `a.Point`）就完全正常。导入时报错会把这种完全合法的用法也堵死。
 //
 // 报错不带位置（`VarTypeNode` 没有行列），所以把涉及的两个模块名都列出来。
 static ModuleExport *find_namespace_type_import(
@@ -965,7 +965,9 @@ static ModuleExport *find_namespace_type_import(
                 name, found_binding->import_node->module_name,
                 binding->import_node->module_name);
             fprintf(stderr,
-                "note: qualified type names are not supported yet; rename one of them, or avoid writing the type name\n"); // 中文：暂不支持限定类型名
+                "note: write '%s.%s' or '%s.%s' to pick one\n", // 中文：用限定名挑一个
+                found_binding->import_node->alias, name,
+                binding->import_node->alias, name);
             exit(1);
         }
         found = export;
@@ -1306,12 +1308,12 @@ static int report_bare_name_conflict(
                      import_node->column,
                      "import from module '%s' brings in '%s', which is already defined or imported in this file",
                      import_node->module_name, name); // 中文：导入引入的裸名与本地定义/其他导入重名
-    // 类型的建议不能照抄函数/常量那句：限定类型名（`a.Point`）目前还不支持，
-    // 让用户「用名称空间限定」会把人带进死胡同。
+    // 类型和函数/常量的建议不一样：类型要靠限定名（`a.Point`）消歧，而限定名只对
+    // 命名空间导入有效 —— 单成员 / 通配导入没有前缀可用，只能改名。
     print_diagnostic(stderr, "note", import_node->filename, import_node->line,
                      import_node->column,
                      is_type
-                         ? "rename one of them (qualified type names are not supported yet)" // 中文：改名（暂不支持限定类型名）
+                         ? "rename one of them, or use a namespace import and write the qualified name" // 中文：改名，或改用名称空间导入并写限定名
                          : "rename one of them, or import the module as a namespace and qualify the call"); // 中文：改名，或改用名称空间导入
     return 1;
 }
@@ -1414,22 +1416,75 @@ static int rewrite_expression(
     ProgramNode *program, ASTNode *expression,
     LoadedModule *current_module, ImportBinding *bindings);
 
+// 限定类型名 `alias.Type`：按**第一个**点切成「模块别名 + 类型名」。
+//
+// 这是唯一能显式消歧的写法，所以排在查找的最前面：写出来了就按写出来的找，不再
+// 走裸名那几级。只认命名空间导入（`import std.vec as vec;`）的别名 —— 单成员导入
+// 已经把成员带进裸名作用域，再给它加个前缀没有意义。
+//
+// 别名不是任何命名空间导入时返回 NULL，让调用方回落到裸名查找：已经改过名的类型
+// （`__tap_module_0.Point`）本身就是带点的，必须能原样穿过这里。
+//
+// report_errors 区分「类型位置」和「探测」：`resolve_enum_member_name` 会拿
+// `c.LABEL` 这种**前缀**来试（`c.LABEL.len` 按最后一个点切出来的），那里的成员是常量
+// 不是类型，不能报错。真正的类型位置上别名认出来但成员不对就直接报错 —— 用户既然写出
+// 了前缀，意图是明确的，再回落到裸名只会得到「undefined struct type 'a.Piont'」。
+static ModuleExport *find_qualified_type_import(
+    ImportBinding *bindings, const char *name, int report_errors) {
+    const char *dot = strchr(name, '.');
+    if (!dot || dot == name || !dot[1]) return NULL;
+
+    size_t alias_length = (size_t)(dot - name);
+    char *alias = malloc(alias_length + 1);
+    if (!alias) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        return NULL;
+    }
+    memcpy(alias, name, alias_length);
+    alias[alias_length] = '\0';
+    ImportBinding *binding = find_namespace_binding(bindings, alias);
+    free(alias);
+    if (!binding) return NULL;
+
+    const char *member = dot + 1;
+    ModuleExport *export = find_public_export(binding->module, member);
+    if (export && export->is_type) return export;
+    if (!report_errors) return NULL;
+
+    // 这里报错没有位置可带（VarTypeNode 没有行列信息），所以把模块名写进消息。
+    const char *module_name = binding->import_node->module_name;
+    if (export) {
+        fprintf(stderr, "error: '%s' in module '%s' is not a type\n", // 中文：该成员不是类型
+                member, module_name);
+    } else if (find_export(binding->module, member)) {
+        fprintf(stderr, "error: type '%s' is private to module '%s'\n", // 中文：该类型是模块私有的
+                member, module_name);
+    } else {
+        fprintf(stderr, "error: module '%s' has no type '%s'\n", // 中文：模块中没有该类型
+                module_name, member);
+    }
+    exit(1);
+}
+
 // 把一个源语言里的类型名解析成内部唯一符号名。返回 export->symbol（不新分配，调用方
 // 负责 copy），NULL 表示这个类型名不认识（交给下游按标量或外部类型处理）。
 //
-// 三级查找，顺序固定：
-//   ① 本模块自己声明的类型 —— pub 与否都在这，它们现在都带模块前缀
-//   ② 裸名导入明确引入的类型（`import m.T;` / `import m.*;`）
-//   ③ 命名空间导入的模块里唯一导出这个类型名的那个
+// 四级查找，顺序固定：
+//   ① 限定名 `alias.Type` —— 显式写出来的模块前缀，优先级最高
+//   ② 本模块自己声明的类型 —— pub 与否都在这，它们现在都带模块前缀
+//   ③ 裸名导入明确引入的类型（`import m.T;` / `import m.*;`）
+//   ④ 命名空间导入的模块里唯一导出这个类型名的那个
 //      （`import std.vec as vec;` 之后写裸名 `Vec<i32>` 就是靠这一级）
-// 三级都不命中返回 NULL。
+// 四级都不命中返回 NULL。report_errors 见 find_qualified_type_import。
 static char *resolve_type_name(
-    LoadedModule *module, ImportBinding *bindings, const char *name) {
+    LoadedModule *module, ImportBinding *bindings, const char *name,
+    int report_errors) {
     // 通配分支（`_ => ...`）的 `arm->enum_name` 是 NULL，调用方会原样传进来。
     // 不挡的话会一路走到 strcmp(export->name, NULL) 直接段错误。
     if (!name) return NULL;
 
-    ModuleExport *export = find_type_export(module, name);
+    ModuleExport *export = find_qualified_type_import(bindings, name, report_errors);
+    if (!export) export = find_type_export(module, name);
     if (!export) export = find_bare_type_import(bindings, name);
     if (!export) export = find_namespace_type_import(bindings, name);
     return export ? export->symbol : NULL;
@@ -1442,14 +1497,14 @@ static void rewrite_var_type(
     if (!type) return;
 
     if (type->struct_name) {
-        char *copy = copy_string_or_null(resolve_type_name(module, bindings, type->struct_name));
+        char *copy = copy_string_or_null(resolve_type_name(module, bindings, type->struct_name, 1));
         if (copy) {
             free(type->struct_name);
             type->struct_name = copy;
         }
     }
     if (type->enum_name) {
-        char *copy = copy_string_or_null(resolve_type_name(module, bindings, type->enum_name));
+        char *copy = copy_string_or_null(resolve_type_name(module, bindings, type->enum_name, 1));
         if (copy) {
             free(type->enum_name);
             type->enum_name = copy;
@@ -1483,7 +1538,7 @@ static char *resolve_enum_member_name(
     }
     memcpy(prefix, name, prefix_length);
     prefix[prefix_length] = '\0';
-    char *renamed = resolve_type_name(module, bindings, prefix);
+    char *renamed = resolve_type_name(module, bindings, prefix, 0);
     free(prefix);
     if (!renamed) return NULL;
 
@@ -1522,7 +1577,7 @@ static void rewrite_declared_types(
     // impl 的目标类型如果改过名，这里要跟着改，否则约束检查拿到的名字对不上。
     for (ASTNode *node = program->impls; node; node = node->next) {
         ImplNode *impl_node = (ImplNode *)node;
-        char *renamed = copy_string_or_null(resolve_type_name(module, bindings, impl_node->type_name));
+        char *renamed = copy_string_or_null(resolve_type_name(module, bindings, impl_node->type_name, 1));
         if (renamed) {
             free(impl_node->type_name);
             impl_node->type_name = renamed;
@@ -1668,7 +1723,7 @@ static int rewrite_statement_list(
                     MatchArmNode *arm = (MatchArmNode *)arm_node;
                     // 模式里的枚举名要跟着改名（本模块私有枚举会被加前缀）。
                     char *renamed_enum = copy_string_or_null(
-                        resolve_type_name(current_module, bindings, arm->enum_name));
+                        resolve_type_name(current_module, bindings, arm->enum_name, 1));
                     if (renamed_enum) {
                         free(arm->enum_name);
                         arm->enum_name = renamed_enum;
@@ -1853,7 +1908,7 @@ static int rewrite_expression(
             StructLiteralNode *literal = (StructLiteralNode *)expression;
             // 结构体名和泛型实参里的类型名都要跟着改名。
             char *renamed = copy_string_or_null(
-                resolve_type_name(current_module, bindings, literal->struct_name));
+                resolve_type_name(current_module, bindings, literal->struct_name, 1));
             if (renamed) {
                 free(literal->struct_name);
                 literal->struct_name = renamed;
@@ -1911,7 +1966,7 @@ static int rewrite_expression(
                 MatchArmNode *arm = (MatchArmNode *)arm_node;
                 // 模式里的枚举名要跟着改名（本模块私有枚举会被加前缀）。
                 char *renamed_enum = copy_string_or_null(
-                    resolve_type_name(current_module, bindings, arm->enum_name));
+                    resolve_type_name(current_module, bindings, arm->enum_name, 1));
                 if (renamed_enum) {
                     free(arm->enum_name);
                     arm->enum_name = renamed_enum;

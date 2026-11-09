@@ -489,7 +489,7 @@ typedef struct ImplMethodLink {
 // 这里只保留归属信息（trait / 类型）和方法引用，供签名校验用。
 typedef struct {
     ASTNode base;
-    char *trait_name;        // 实现的 trait 名
+    char *trait_name;        // 实现的 trait 名；固有 impl（`impl Type { }`）为 NULL
     char *type_name;         // 目标类型名（v1 只支持具名非泛型类型）
     ImplMethodLink *methods; // 块内方法（脱糖后的函数），按源语言顺序
     char *filename;

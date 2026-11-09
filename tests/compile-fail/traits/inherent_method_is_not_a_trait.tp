@@ -1,0 +1,31 @@
+// 固有 impl 的方法**不**参与 trait 约束：`T: Peek` 要求的是 `impl Peek for T`，
+// 光有 `impl Point { fn peek }` 不算。这条不用特殊实现，只要 type_implements_trait
+// 跳过没有 trait 名的 impl 就成立。
+trait Peek {
+    fn peek(&self): i32;
+}
+
+struct Point { x: i32 }
+
+impl Point {
+    fn peek(&self): i32 {
+        return self.x;
+    }
+}
+
+fn show<T: Peek>(value: &T): i32 {
+    return value.peek();
+}
+
+fn main(): i32 {
+    let p: Point = Point { x: 7 };
+    return show(&p);
+}
+
+/** -- test
+- .stderr
+error: type 'Point' does not implement trait 'Peek' required by 'T'
+--> tests/compile-fail/traits/inherent_method_is_not_a_trait.tp:22:12
+- .exit
+1
+-- */

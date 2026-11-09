@@ -293,6 +293,47 @@ static char *append_name_component(char *name, const char *component) {
     return expanded;
 }
 
+// 前瞻一个 token，不移动解析位置。调用方负责 free_token。
+//
+// 只改 lexer 的读取位置，`parser->current_token` 不动 —— 它已经是对应文本的 token 了。
+static Token *peek_token(Parser *parser) {
+    char *saved_current = parser->lexer->current;
+    int saved_line = parser->lexer->line;
+    int saved_column = parser->lexer->column;
+
+    Token *token = get_next_token(parser->lexer);
+
+    parser->lexer->current = saved_current;
+    parser->lexer->line = saved_line;
+    parser->lexer->column = saved_column;
+    return token;
+}
+
+// 读一个可能带模块前缀的名字：`Type` 或 `alias.Type`。
+//
+// 类型标注（`let v: vec.Vec<i32>`）和 impl 的目标类型都走这里。点号只在**紧跟标识符**
+// 时才吃 —— 类型位置的点不会出现在别处，但前瞻一下能保证将来给类型加上别的后缀语法时
+// 不会把点误吞掉。名字拼成 `alias.Type` 这种整串，解析成内部符号名是 Module Loader
+// 的事（见 module.c 的 resolve_type_name）。
+static char *parse_qualified_name(Parser *parser, const char *expected) {
+    if (parser->current_token->type != TOKEN_IDENTIFIER) {
+        parser_error(parser, expected);
+    }
+    char *name = strdup(parser->current_token->lexeme);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    while (parser->current_token->type == TOKEN_DOT) {
+        Token *next = peek_token(parser);
+        int is_identifier = next->type == TOKEN_IDENTIFIER;
+        free_token(next);
+        if (!is_identifier) break;
+        consume(parser, TOKEN_DOT);
+        name = append_name_component(name, parser->current_token->lexeme);
+        consume(parser, TOKEN_IDENTIFIER);
+    }
+    return name;
+}
+
 static ImportNode *parse_import(Parser *parser) {
     consume(parser, TOKEN_IMPORT);
     if (!is_module_component(parser->current_token)) {
@@ -466,8 +507,9 @@ static VarTypeNode *parse_type(Parser *parser) {
         case TOKEN_C_STRING: type = LITERAL_C_STRING; break;
         case TOKEN_CHAR: type = LITERAL_CHAR; break;
         case TOKEN_IDENTIFIER: {
-            char *type_name = strdup(parser->current_token->lexeme);
-            consume(parser, TOKEN_IDENTIFIER);
+            // 具名类型：`Point`，或带模块前缀的 `vec.Vec`（见 parse_qualified_name）。
+            // 名字原样保留，解析成内部符号名交给 Module Loader。
+            char *type_name = parse_qualified_name(parser, "expected type");
             VarTypeNode *named_type = create_enum_type(type_name);
             free(type_name);
             if (parser->current_token->type == TOKEN_LESS_THAN) {
@@ -841,23 +883,25 @@ static ASTNode *parse_match(Parser *parser, int as_value) {
             }
             arm = create_match_arm(NULL, NULL);
         } else {
-            if (!is_module_component(parser->current_token)) {
-                parser_error(parser, "expected match pattern"); // 中文：期望 match 模式
-            }
-            char *enum_name = strdup(parser->current_token->lexeme);
-            consume(parser, parser->current_token->type);
-
-            if (parser->current_token->type != TOKEN_DOT) {
-                free(enum_name);
+            // 模式是 `Enum.Variant`，枚举名可以带模块前缀（`a.Color.Red`）—— 所以整串
+            // 读完再按**最后一个点**切：前面是枚举名，最后一段是成员名。
+            char *full = parse_qualified_name(parser, "expected match pattern");
+            const char *last_dot = strrchr(full, '.');
+            if (!last_dot || last_dot == full || !last_dot[1]) {
+                free(full);
                 parser_error(parser, "match pattern must be Enum.Variant or _"); // 中文：match 模式必须是 Enum.Variant 或 _
             }
-            consume(parser, TOKEN_DOT);
-            if (!is_module_component(parser->current_token)) {
-                free(enum_name);
-                parser_error(parser, "expected variant name"); // 中文：期望枚举成员名称
+            size_t enum_length = (size_t)(last_dot - full);
+            char *enum_name = malloc(enum_length + 1);
+            if (!enum_name) {
+                free(full);
+                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                exit(1);
             }
-            char *variant_name = strdup(parser->current_token->lexeme);
-            consume(parser, parser->current_token->type);
+            memcpy(enum_name, full, enum_length);
+            enum_name[enum_length] = '\0';
+            char *variant_name = strdup(last_dot + 1);
+            free(full);
 
             arm = create_match_arm(enum_name, variant_name);
             free(enum_name);
@@ -1402,13 +1446,6 @@ static ASTNode *parse_primary(Parser *parser) {
         char *name = strdup(token->lexeme);
         consume(parser, token_type);
 
-        if (parser->current_token->type == TOKEN_LBRACE ||
-            looks_like_generic_struct_literal(parser)) {
-            ASTNode *literal = parse_struct_literal(parser, name);
-            free(name);
-            return literal;
-        }
-
         // 泛型枚举的显式类型实参：`Enum<T>.Member(...)` 或 `Enum<T>.Member`。
         // 实参先收集成链表，等构造调用或标识符建好后再挂上去。
         ASTNode *explicit_arguments = NULL;
@@ -1438,6 +1475,15 @@ static ASTNode *parse_primary(Parser *parser) {
             }
             name = append_name_component(name, parser->current_token->lexeme);
             consume(parser, parser->current_token->type);
+        }
+
+        // 结构体字面量要放在点号循环**之后**判断：`a.Point { x: 1 }` 里的名字是
+        // 循环拼完才知道的，先判断就只能看到 `a`、后面跟着 `.`，于是漏掉。
+        if (parser->current_token->type == TOKEN_LBRACE ||
+            looks_like_generic_struct_literal(parser)) {
+            ASTNode *literal = parse_struct_literal(parser, name);
+            free(name);
+            return literal;
         }
 
         if (parser->current_token->type == TOKEN_LPAREN ||
@@ -1941,29 +1987,38 @@ static char *impl_method_name(const char *method_name, const char *type_name) {
     return name;
 }
 
-// 顶层 impl 块：`impl Trait for Type { fn m(v: Type, ...): R { ... } ... }`
+// 顶层 impl 块，两种写法：
+//
+//   impl Trait for Type { fn m(v: Type, ...): R { ... } ... }   // trait 实现
+//   impl Type { fn m(v: Type, ...): R { ... } ... }             // 固有实现（没有 trait）
 //
 // 块内的方法直接脱糖成顶层函数（改名 + 挂进 program->functions），impl 节点只记归属信息。
+// 两种写法脱糖结果完全一样，区别只有 `trait_name` 是不是 NULL：方法查找按「类型 + 方法名」
+// 走（见 borrow.c 的 find_method_function_for、codegen 的 method_name_matches），本来就不看
+// trait，所以固有 impl 的方法天然可调用。trait 侧只影响两件事：泛型约束
+// （type_implements_trait 只认有 trait 名的 impl）和签名比对（validate_impl_signatures 跳过
+// 没有 trait 的 impl）。
 static ImplNode *parse_impl(Parser *parser, ProgramNode *program) {
     consume(parser, TOKEN_IMPL);
-    if (parser->current_token->type != TOKEN_IDENTIFIER) {
-        parser_error(parser, "expected trait name after `impl`"); // 中文：impl 后期望 trait 名
-    }
     int line = parser->current_token->line;
     int column = parser->current_token->column;
-    char *trait_name = strdup(parser->current_token->lexeme);
-    consume(parser, TOKEN_IDENTIFIER);
+    // 两种写法都可能带模块前缀：`impl a.Point { }` / `impl Show for a.Point { }`。
+    // 前缀只对目标类型有意义（trait 名不参与模块私有改名），但用同一个读法不影响
+    // `impl Trait for Type`：trait 名后面跟的是 `for`，点号循环不会触发。
+    char *first_name = parse_qualified_name(
+        parser, "expected a trait or type name after `impl`");
 
-    if (parser->current_token->type != TOKEN_FOR) {
-        parser_error(parser, "expected `for` after trait name in impl"); // 中文：impl 里 trait 名后期望 for
+    // 第一个名字后面跟 `for` 就是 `impl Trait for Type`，否则它是固有 impl 的目标类型。
+    char *trait_name = NULL;
+    char *type_name = NULL;
+    if (parser->current_token->type == TOKEN_FOR) {
+        consume(parser, TOKEN_FOR);
+        trait_name = first_name;
+        type_name = parse_qualified_name(parser, "expected type name after `for`");
+    } else {
+        type_name = first_name;
+        first_name = NULL;
     }
-    consume(parser, TOKEN_FOR);
-
-    if (parser->current_token->type != TOKEN_IDENTIFIER) {
-        parser_error(parser, "expected type name after `for`"); // 中文：for 后期望类型名
-    }
-    char *type_name = strdup(parser->current_token->lexeme);
-    consume(parser, TOKEN_IDENTIFIER);
     if (parser->current_token->type == TOKEN_LESS_THAN) {
         free(trait_name);
         free(type_name);

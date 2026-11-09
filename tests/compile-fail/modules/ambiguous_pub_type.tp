@@ -1,4 +1,5 @@
 // 两个被命名空间导入的模块都导出 Point，写裸名没有确定答案 —— 必须报歧义，不静默偏向。
+// 想指定其中一个就写限定名 `a.Point` / `b.Point`（见 run-pass/modules/qualified_type_name.tp）。
 //
 // 报错**不带位置**（VarTypeNode 没有行列信息），所以把涉及的两个模块名都列出来。
 // 另外这条是「用到才报」：导入本身没问题，只有真的写出那个裸名才会触发。
@@ -13,7 +14,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: type name 'Point' is exported by both 'modules.clash_b' and 'modules.clash_a'; the bare name is ambiguous
-note: qualified type names are not supported yet; rename one of them, or avoid writing the type name
+note: write 'b.Point' or 'a.Point' to pick one
 - .exit
 1
 -- */

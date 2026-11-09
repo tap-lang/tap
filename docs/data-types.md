@@ -267,9 +267,10 @@ let number: Box<i32> = Box<i32> { value: 42 };
   codegen 用同一套地址计算求值，所以「能求地址的都能当接收者」。
 - 泛型结构体的类型实参能从字段值反推（`Box { value: 42 }` 就是 `Box<i32>`），也可以显式写出；
   编译器按实际使用的类型组合生成具体结构体。
-- 当前不支持结构体内声明方法和默认字段值。模块级函数可以用结构体作为首个参数，之后通过
-  `value.method(...)` 调用。模块中的结构体可以被导入，但类型名会进入全局类型命名空间，
-  还不支持 `module.TypeName` 这种限定类型名。
+- 方法写在 `impl Type { }` 块里，不在结构体体内，也不支持默认字段值。模块级函数也可以用
+  结构体作为首个参数，之后通过 `value.method(...)` 调用；`impl` 方法脱糖后就是这种函数
+  （见下面的 [trait 与类型约束](#trait-与类型约束)）。模块中的结构体可以被导入，类型名既能
+  写裸名，也能写限定名 `alias.TypeName`（见 [`module.md`](module.md#限定类型名-aliastype)）。
 
 ### 枚举类型
 
@@ -789,8 +790,38 @@ let w: &i32 = r.width();      // 方法返回借用
 - **借用会跟着方法调用走**：`let w = r.width();` 之后 `r` 就被借走了，改 `r` 或调 `&mut self`
   方法都会报错，直到 `w` 离开作用域。
 
+#### 固有 impl（没有 trait 的 impl）
+
+想给一个类型加方法，不必先造一个只用一次的单方法 trait —— 直接写 `impl Type { }`：
+
+```text
+struct Counter { value: i32 }
+
+impl Counter {
+    fn get(&self): i32 { return self.value; }
+    fn bump(&mut self, delta: i32) { self.value = self.value + delta; }
+}
+```
+
+- **脱糖结果和 trait impl 完全一样**：`bump` 变成 `bump$Counter` 这个顶层函数，所以方法查找、
+  借用检查、Codegen 一条特例都没有。`impl` 后面那个名字后面跟 `for` 才是 trait 实现，不跟就是
+  目标类型。
+- **它不满足任何 trait 约束**：`fn f<T: Peek>(v: &T)` 要求的是 `impl Peek for T`，光有
+  `impl Point { fn peek }` 不算，调用处报
+  `error: type 'Point' does not implement trait 'Peek' required by 'T'`。
+- **同名冲突直接报错**：固有 impl 和 trait impl 定义了同名方法时会撞成同一个符号，报
+  `error: duplicate function definition 'peek$Point'`（并给出前一处定义的位置）。v1 不做
+  「固有优先」的消歧。
+- **目标类型必须存在**：固有 impl 没有 trait 声明可以对照，所以这里额外查一次类型名 ——
+  `impl Piont { }` 报 `error: no type named 'Piont' for inherent impl`，不会让方法一声不响
+  地变成谁都调不到的 `get$Piont`。
+
+**注意**：没有接收者的关联函数（`fn new(): Point`）现在不能通过 `Point.new()` 调用 —— 这条
+调用语法还不存在，与 impl 是固有还是 trait 无关。
+
 **v1 的边界**：没有关联类型、默认方法、`dyn` / 运行时多态和运算符重载；`impl` 的目标类型必须
-是具名的非泛型类型（`impl Show for Vec<i32>` 报错）；trait 方法自身不能是泛型。
+是具名的非泛型类型（`impl Show for Vec<i32>` 报错）；trait 方法自身不能是泛型。方法接收者只能
+是结构体（枚举当接收者会报 `error: undefined struct type`，trait impl 和固有 impl 都一样）。
 
 ### 泛型动态数组
 

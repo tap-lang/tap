@@ -1,0 +1,21 @@
+// 固有 impl 没有 trait 声明可以对照，所以这里要主动确认目标类型存在。
+// 类型名打错的话，方法会脱糖成 `get$Piont` 这种谁都调不到的函数，一声不响地消失。
+struct Point { x: i32 }
+
+impl Piont {
+    fn get(&self): i32 {
+        return self.x;
+    }
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: no type named 'Piont' for inherent impl
+--> tests/compile-fail/traits/inherent_impl_unknown_type.tp:5:6
+- .exit
+1
+-- */

@@ -1,0 +1,19 @@
+// 限定名的前缀认出来了，但模块里没有这个类型 —— 直接报错，不再回落到裸名查找。
+//
+// 回落的后果是 codegen 报 `undefined struct type 'a.Piont'`，用户看到的是一个从没
+// 出现过的整串名字，比「模块里没有 Piont」难懂得多。
+//
+// 这条诊断没有位置可带（VarTypeNode 没有行列信息），所以把模块名写进消息里。
+import modules.clash_a as a;
+
+fn main(): i32 {
+    let p: a.Piont = a.Point { x: 1 };
+    return p.x;
+}
+
+/** -- test
+- .stderr
+error: module 'modules.clash_a' has no type 'Piont'
+- .exit
+1
+-- */

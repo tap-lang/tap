@@ -479,7 +479,11 @@ void print_ast(const ProgramNode *program) {
     for (ASTNode *node = program->impls; node; node = node->next) {
         if (node->type == NODE_IMPL) {
             ImplNode *impl_node = (ImplNode *)node;
-            printf("  Impl: %s for %s\n", impl_node->trait_name, impl_node->type_name);
+            if (impl_node->trait_name) {
+                printf("  Impl: %s for %s\n", impl_node->trait_name, impl_node->type_name);
+            } else {
+                printf("  Impl: %s (inherent)\n", impl_node->type_name);
+            }
             for (ImplMethodLink *link = impl_node->methods; link; link = link->next) {
                 const FunctionNode *method = link->function;
                 printf("    Fn: %s\n",
@@ -1661,7 +1665,8 @@ ImplNode *create_impl(
     }
     impl_node->base.type = NODE_IMPL;
     impl_node->base.next = NULL;
-    impl_node->trait_name = strdup(trait_name);
+    // 固有 impl（`impl Type { }`）没有 trait，这里留 NULL，所有读它的地方都要容忍。
+    impl_node->trait_name = trait_name ? strdup(trait_name) : NULL;
     impl_node->type_name = strdup(type_name);
     impl_node->methods = NULL;
     impl_node->filename = strdup(filename);

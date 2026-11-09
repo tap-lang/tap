@@ -8,9 +8,9 @@
 
 | # | 缺口 | 现在什么表现 | 收益 | 代价 |
 |---|---|---|---|---|
-| 1 | 没有固有 impl（`impl Point { }`） | `expected 'for' after trait name in impl` | 高 | 小 |
+| 1 | ~~没有固有 impl（`impl Point { }`）~~ | ✅ 已支持（2026-11-09），见下 | 高 | 小 |
 | 2 | 泛型类型不能 impl | `impl for a generic type is not supported yet` | 高 | 大 |
-| 3 | 限定类型名 `vec.Vec<i32>` | `expected token '=' but got '.'` | 中 | 小 |
+| 3 | ~~限定类型名 `vec.Vec<i32>`~~ | ✅ 已支持（2026-11-09），见下 | 中 | 小 |
 | 4 | match 无嵌套模式、无分支守卫 | `expected '(' but got 'identifier'` | 中 | 中 |
 | 5 | 载荷枚举不能按值递归 | `struct` 报类型不匹配；`enum` 直接炸 LLVM IR 校验 | 中 | 中 |
 | 6 | 没有 for-each | `expected '(' but got 'identifier'` | 高 | 大 |
@@ -20,7 +20,36 @@
 
 ## 1. 固有 impl（没有 trait 的 impl）
 
-### 现在什么表现
+### ✅ 已完成（2026-11-09）
+
+按下面「改法」里最省事的那条落地：`parse_impl` 读第一个标识符，后面跟 `for` 就是
+`impl Trait for Type`，不跟就把它当**目标类型**、`trait_name` 置 NULL。方法登记、签名校验、
+方法查找、Codegen 一条路径都没动 —— 它们本来就是按「类型 + 方法名」找的。
+
+改动只有四处：
+
+- `parse_impl`：多一条分支（`trait_name` 可为 NULL）。
+- `create_impl` / `print_ast`：容忍 NULL（AST 打印成 `Impl: Point (inherent)`）。
+- `type_implements_trait`：跳过没有 trait 名的 impl，所以固有方法**不**满足任何 trait 约束。
+- `validate_impl_signatures`：没有 trait 就跳过签名比对，改为查一次「目标类型存在吗」
+  （固有 impl 没有 trait 声明可以对照，类型名打错的话方法会变成谁都调不到的
+  `get$Piont`，一声不响地消失）。
+
+**同名冲突的定案和当初的建议不同**：不做「固有优先」。同一个方法名在固有 impl 和 trait impl
+里各定义一次，会撞成同一个符号 `peek$Point`，由已有的重名检查报
+`error: duplicate function definition 'peek$Point'`（带前一处定义的位置）。两个 trait 给同一
+类型实现同名方法本来就是这么报的，沿用同一条规则比新加一层消歧更简单，也不会让
+「这个方法到底调的是哪个」变成需要查 impl 顺序的事。
+
+用例：[`tests/run-pass/traits/inherent_impl.tp`](../../tests/run-pass/traits/inherent_impl.tp)、
+[`tests/compile-fail/traits/inherent_impl_unknown_type.tp`](../../tests/compile-fail/traits/inherent_impl_unknown_type.tp)、
+[`tests/compile-fail/traits/inherent_method_is_not_a_trait.tp`](../../tests/compile-fail/traits/inherent_method_is_not_a_trait.tp)。
+语法说明见 [`../data-types.md`](../data-types.md#固有-impl没有-trait-的-impl)。
+
+**没跟着解决的**：没有接收者的关联函数（`fn new(): Point`）仍然不能通过 `Point.new()` 调用
+—— 缺的是调用语法，和 impl 有没有 trait 无关。
+
+### 当初什么表现
 
 ```text
 struct Point { x: i32 }
@@ -94,7 +123,40 @@ impl 表现在以「类型名」为 key。泛型类型要参与约束求解，ke
 
 ## 3. 限定类型名 `vec.Vec<i32>`
 
-### 现在什么表现
+### ✅ 已完成（2026-11-09）
+
+Parser 侧加了 `parse_qualified_name()`（读标识符 + 点号循环，前瞻确认 `.` 后面是标识符），
+Module Loader 侧在 `resolve_type_name` 里加了第 0 级查找，专门认 `alias.Type`。
+
+**Parser 侧要改的地方比预想的多**：类型标注在 `parse_type`，但同名语法还出现在另外三处，
+它们各有各的解析代码：
+
+- **结构体字面量** `a.Point { x: 1 }`：`parse_primary` 里「标识符后面跟 `{`」的判断原来放在
+  点号循环**之前**，只看到 `a` 就否掉了。移到循环之后即可。
+- **match 模式** `a.Color.Red`：原来「读枚举名 → 要求 `.` → 读成员名」，只认一段前缀。
+  改成整串读完再按**最后一个点**切（前面是枚举名，最后一段是成员名）。
+- **impl 目标类型** `impl a.Point { }`：`parse_impl` 改用同一个读法。
+
+**Module Loader 侧只有一处**：`resolve_type_name` 多一级 `find_qualified_type_import`，
+按**第一个**点切成「别名 + 类型名」，只认命名空间导入的别名（单成员 / 通配导入没有前缀）。
+
+两个坑：
+
+1. **`find_qualified_type_import` 不能无条件报错。** `resolve_enum_member_name` 会拿
+   `c.LABEL` 当前缀来**探测**（`c.LABEL.len` 按最后一个点切出来的），那里的成员是常量不是
+   类型 —— 无条件报错会把 `tests/run-pass/modules/constants.tp` 打挂。所以加了
+   `report_errors` 参数，探测路径传 0。
+2. **已改名的类型本身就是带点的**（`__tap_module_0.Point`）。别名不是任何命名空间导入时
+   必须回落到裸名查找，否则重复改写会把名字丢掉。别名认出来但成员不对时才报错：
+   `module 'x' has no type 'Y'` / `type 'Y' is private to module 'x'` /
+   `'y' in module 'x' is not a type`（都不带位置，`VarTypeNode` 没有行列信息）。
+
+用例：[`run-pass/modules/qualified_type_name.tp`](../../tests/run-pass/modules/qualified_type_name.tp)
+（标注 / 字面量 / 泛型实参 / match 模式四个位置）、
+[`compile-fail/modules/qualified_type_name_unknown.tp`](../../tests/compile-fail/modules/qualified_type_name_unknown.tp)。
+语法说明见 [`../module.md`](../module.md#限定类型名-aliastype)。
+
+### 当初什么表现
 
 ```text
 import std.vec as vec;
@@ -369,9 +431,9 @@ error: expected token `;` but got `]`
 | 顺序 | 项目 | 理由 |
 |---|---|---|
 | ~~1~~ | ~~**7 表达式结果上调用方法**~~ | ✅ 已完成（2026-11-08） |
-| 1 | **1 固有 impl** | 样板量减半；改动小 |
-| 2 | **3 限定类型名** | 补上唯一的显式消歧手段；改动小 |
-| 3 | **4 嵌套模式 + 守卫** | 枚举套结构体的常见形状；中等代价 |
-| 4 | **6a for-each（内建版）** | 覆盖数组和 Vec 的主流场景 |
-| 5 | **2 具体实例化的 impl** | 泛型形式留到关联类型那一期 |
-| 6 | 5 / 8 / 9 | 各有前置依赖 |
+| ~~2~~ | ~~**1 固有 impl**~~ | ✅ 已完成（2026-11-09） |
+| ~~3~~ | ~~**3 限定类型名**~~ | ✅ 已完成（2026-11-09） |
+| 1 | **4 嵌套模式 + 守卫** | 枚举套结构体的常见形状；中等代价 |
+| 2 | **6a for-each（内建版）** | 覆盖数组和 Vec 的主流场景 |
+| 3 | **2 具体实例化的 impl** | 泛型形式留到关联类型那一期 |
+| 4 | 5 / 8 / 9 | 各有前置依赖 |

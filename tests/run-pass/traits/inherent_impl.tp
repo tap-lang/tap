@@ -1,0 +1,55 @@
+// 固有 impl：没有 trait 的 `impl Type { }`。
+//
+// 脱糖结果和 trait impl 完全一样（方法变成 `<方法名>$<类型名>` 的顶层函数），所以方法
+// 查找、借用检查、Codegen 都不需要区分这两种来源。区别只在 trait 侧：固有 impl 不写进
+// `(trait, type)` 表，因此不满足任何泛型约束。
+
+struct Counter {
+    value: i32,
+}
+
+impl Counter {
+    fn get(&self): i32 {
+        return self.value;
+    }
+    fn bump(&mut self, delta: i32) {
+        self.value = self.value + delta;
+    }
+    // 返回借自 self 的字段：借用检查走的是同一条「返回借用来自接收者」的规则。
+    fn slot(&self): &i32 {
+        return &self.value;
+    }
+}
+
+// 同一个类型可以既有一个 trait impl，又有自己的固有 impl（方法名不撞就行）。
+trait Reset {
+    fn reset(&mut self);
+}
+
+impl Reset for Counter {
+    fn reset(&mut self) {
+        self.value = 0;
+    }
+}
+
+fn main(): i32 {
+    let c: Counter = Counter { value: 10 };
+    print("get=%d\n", c.get());
+    c.bump(5);
+    print("get=%d\n", c.get());
+    let s: &i32 = c.slot();
+    print("slot=%d\n", *s);
+    c.reset();
+    print("after reset=%d\n", c.get());
+    return 0;
+}
+
+/** -- test
+- .stdout
+get=10
+get=15
+slot=15
+after reset=0
+- .exit
+0
+-- */
