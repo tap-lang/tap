@@ -15,7 +15,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: 'point' is already mutably borrowed
+error: 'point.inner.value' is already mutably borrowed
 - .exit
 1
 -- */

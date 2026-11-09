@@ -24,7 +24,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: 'p' is borrowed and cannot be assigned here
+error: 'p.x' is borrowed and cannot be assigned here
 - .exit
 1
 -- */

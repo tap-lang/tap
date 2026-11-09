@@ -17,7 +17,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: 'p' is borrowed and cannot be assigned here
+error: 'p.left' is borrowed and cannot be assigned here
 return_borrow_from_free_call.tp:14:5
 - .exit
 1

@@ -22,6 +22,12 @@ typedef struct BorrowSymbol {
     // 声明的完整类型，用来判断 `&a.b[i]` 到底指向栈帧还是堆。未知时为 NULL，
     // 此时一律按「还在栈帧里」处理（保守方向：宁可报错也不放过悬垂）。
     const VarTypeNode *type;
+    // 这个变量的**值**里是否藏着指向本函数栈帧的借用。
+    //
+    // 引用变量靠 pointee_rank 就能判断，这一位是给**聚合值**用的：`Holder{src:&local}`
+    // 把引用藏进字段之后，类型里看不出任何「谁借了谁」，只能靠这个标记跟着 `let` /
+    // 赋值传播。目前只有 `return` 用它 —— 返回值是借用唯一能离开本帧的出口。
+    int holds_local_borrow;
     struct BorrowSymbol *next;
 } BorrowSymbol;
 
@@ -145,6 +151,7 @@ static BorrowSymbol *insert_symbol(BorrowContext *context, const char *name,
     symbol->is_reference = is_reference;
     symbol->reference_mutable = reference_mutable;
     symbol->type = type;
+    symbol->holds_local_borrow = 0;
     symbol->next = context->symbols;
     context->symbols = symbol;
     return symbol;
@@ -586,6 +593,53 @@ static void add_borrow_record(BorrowContext *context, BorrowSymbol *base,
     context->borrows = record;
 }
 
+// 把「基名 + 借用路径」渲染成人读的形式，给诊断消息用。
+//
+// 借用粒度早就细到字段了，但消息里一直只报基名（`'p' is mutably borrowed`），
+// 读者还得自己猜是哪条路径被借走。路径的存储格式是 `'/left/#0/*'`，这里转成
+// `p.left[0][*]`：`#N` 是常量下标、`*` 是未知下标、其余是字段名。
+static void describe_borrow_target(const BorrowSymbol *symbol, const char *path,
+                                   char *buffer, size_t size) {
+    if (!buffer || size == 0) return;
+    int used = snprintf(buffer, size, "%s", symbol && symbol->name ? symbol->name : "?");
+    if (used < 0 || (size_t)used >= size) return;
+
+    const char *cursor = path ? path : "";
+    while (*cursor == '/') {
+        cursor++;
+        const char *end = strchr(cursor, '/');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length == 0) break;
+
+        char segment[64];
+        if (length >= sizeof(segment)) length = sizeof(segment) - 1;
+        memcpy(segment, cursor, length);
+        segment[length] = '\0';
+
+        const char *suffix = NULL;
+        char suffix_buffer[72];
+        if (segment[0] == '#') {
+            // `#0` → `[0]`
+            snprintf(suffix_buffer, sizeof(suffix_buffer), "[%s]", segment + 1);
+            suffix = suffix_buffer;
+        } else if (strcmp(segment, "*") == 0) {
+            suffix = "[*]";
+        } else {
+            snprintf(suffix_buffer, sizeof(suffix_buffer), ".%s", segment);
+            suffix = suffix_buffer;
+        }
+
+        int written = snprintf(buffer + used, size - (size_t)used, "%s", suffix);
+        if (written < 0 || (size_t)written >= size - (size_t)used) {
+            buffer[used] = '\0'; // 截断：宁可少写，也不要越界
+            return;
+        }
+        used += written;
+        if (!end) break;
+        cursor = end;
+    }
+}
+
 // 统计 base 上与被查路径重叠的借用。
 //
 // only_mutable 为真时只关心独占借用（`&self` 接收、普通读取用得上）；
@@ -626,6 +680,8 @@ static void check_symbol_borrow_conflict(BorrowContext *context,
                                          int is_mutable, int mark,
                                          const ASTNode *diagnostic_node) {
     if (!source) return;
+    char target[256];
+    describe_borrow_target(source, path, target, sizeof(target));
     int has_mutable = 0;
     int has_shared = 0;
     collect_overlapping_borrows(context, source, path, 0, !mark, &has_mutable,
@@ -637,13 +693,13 @@ static void check_symbol_borrow_conflict(BorrowContext *context,
     if (is_mutable) {
         if (has_mutable) {
             report_error_soft(diagnostic_node, "'%s' is already mutably borrowed",
-                              source->name); // 中文：已经被独占借用
+                              target); // 中文：已经被独占借用
             return;
         }
         if (has_shared) {
             report_error_soft(diagnostic_node,
                               "'%s' is already borrowed, so it cannot be borrowed mutably",
-                              source->name); // 中文：已被共享借用，不能再独占借用
+                              target); // 中文：已被共享借用，不能再独占借用
             return;
         }
         add_borrow_record(context, source, path, 1, !mark);
@@ -653,7 +709,7 @@ static void check_symbol_borrow_conflict(BorrowContext *context,
     if (has_mutable) {
         report_error_soft(diagnostic_node,
                           "'%s' is mutably borrowed, so it cannot be borrowed again",
-                          source->name); // 中文：已被独占借用，不能再借用
+                          target); // 中文：已被独占借用，不能再借用
         return;
     }
     add_borrow_record(context, source, path, 0, !mark);
@@ -805,9 +861,11 @@ static void check_plain_use(BorrowContext *context, BorrowSymbol *symbol,
     // 临时借用也算：`f(&mut x, x)` 里第二个实参读的就是被独占借走的 x。
     collect_overlapping_borrows(context, symbol, path, 1, 1, &has_mutable, NULL);
     if (!has_mutable) return;
+    char target[256];
+    describe_borrow_target(symbol, path, target, sizeof(target));
     report_error_soft(diagnostic_node,
                       "'%s' is mutably borrowed and cannot be used here",
-                      symbol->name); // 中文：变量已被独占借用
+                      target); // 中文：变量已被独占借用
 }
 
 // 写入一个左值（`x = v`、`x.f = v`、`x[i] = v`）时的检查。
@@ -840,16 +898,18 @@ static void check_write_target(BorrowContext *context, const LValueInfo *info,
     int has_shared = 0;
     collect_overlapping_borrows(context, base, info->path, 0, 0, &has_mutable,
                                 &has_shared);
+    char target[256];
+    describe_borrow_target(base, info->path, target, sizeof(target));
     if (has_mutable) {
         report_error_soft(diagnostic_node,
                           "'%s' is mutably borrowed and cannot be assigned here",
-                          base->name); // 中文：变量已被独占借用
+                          target); // 中文：变量已被独占借用
         return;
     }
     if (has_shared) {
         report_error_soft(diagnostic_node,
                           "'%s' is borrowed and cannot be assigned here",
-                          base->name); // 中文：变量已被借用，不能赋值
+                          target); // 中文：变量已被借用，不能赋值
     }
 }
 
@@ -865,8 +925,8 @@ static void check_write_target(BorrowContext *context, const LValueInfo *info,
 // 实参** —— `return wrap(Holder { src: &local })` 里借用能不能逃出去取决于 wrap 拿
 // 它做什么，静态判断只会误报，那一层留给生命周期参数。
 //
-// 剩下的洞：借用装进结构体后先存进变量、再返回变量（`let h = Holder{...}; return h;`）
-// 仍然不报 —— 要堵它得给变量记「持有本帧借用」的状态并跟着赋值传播，那是另一半工作。
+// 「借用先存进变量再返回」这条（`let h = Holder{src:&local}; return h;`）不在这里处理，
+// 交给 `expression_holds_local_borrow` —— 那需要跟着 `let` / 赋值传播的状态。
 static void check_escaping_borrow(BorrowContext *context, ASTNode *expression,
                                   const char *field_name,
                                   const ASTNode *diagnostic_node) {
@@ -905,6 +965,103 @@ static void check_escaping_borrow(BorrowContext *context, ASTNode *expression,
                           "the returned value borrows something that lives in this "
                           "function");
         // 中文：返回值得以存在的借用指向本函数的局部存储
+    }
+}
+
+// `E.V(...)` 是不是**载荷枚举的构造**。
+//
+// 载荷枚举的构造在 AST 里就是一次普通调用（名字是 `Enum.Variant`），借用检查这边
+// 没有 codegen 的 `variant_reference`，只能自己按「点号前是枚举名、点号后是成员名」
+// 反查。查不到就返回 0 —— 方向是「少报」，不会把普通调用误当成构造。
+static int is_enum_variant_construction(BorrowContext *context,
+                                        FunctionCallNode *call) {
+    if (!context->program || !call || !call->name) return 0;
+    if (call->receiver) return 0; // 方法调用，不是变体构造
+    const char *dot = strrchr(call->name, '.');
+    if (!dot || dot == call->name) return 0;
+
+    size_t length = (size_t)(dot - call->name);
+    if (length >= 256) return 0;
+    char enum_name[256];
+    memcpy(enum_name, call->name, length);
+    enum_name[length] = '\0';
+
+    for (ASTNode *node = context->program->enums; node; node = node->next) {
+        if (node->type != NODE_ENUM) continue;
+        EnumNode *enum_node = (EnumNode *)node;
+        if (!enum_node->name || strcmp(enum_node->name, enum_name) != 0) continue;
+        for (ASTNode *variant = enum_node->variants; variant;
+             variant = variant->next) {
+            if (strcmp(((EnumVariantNode *)variant)->name, dot + 1) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
+// 这个表达式的**值**里是否藏着指向本帧的借用。
+//
+// 只服务一条规则：返回值不能把本帧的借用带出去（`return` 是借用唯一的出口）。
+// 类型里没有寿命信息，判据全在「值是怎么拼出来的」：
+//
+//   `&x` / 引用变量 / 返回借用的调用   交给 reference_rank_of，秩非负即本帧
+//   带标记的变量                      let / 赋值时算出来的 holds_local_borrow
+//   结构体 / 数组字面量                任一成员持有
+//   `E.V(&local)`                    枚举载荷构造，任一实参持有
+//
+// **刻意不递归字段和下标。** `h.src` 取出来的可能是引用，`h.value` 却只是个 i32，
+// 光看 AST 分不出来（要看类型），而按「基对象持有就算持有」处理会让
+// `let h = Holder{src:&local}; return h.value;` 误报。这类「从聚合值里抽一根引用
+// 再返回」先放行 —— 方向是少报，不是多报。
+static int expression_holds_local_borrow(BorrowContext *context,
+                                         ASTNode *expression) {
+    if (!expression) return 0;
+
+    int pointee_rank = -1;
+    if (reference_rank_of(context, expression, &pointee_rank)) {
+        return pointee_rank >= 0;
+    }
+
+    switch (expression->type) {
+        case NODE_IDENTIFIER: {
+            BorrowSymbol *symbol =
+                lookup_symbol(context, ((IdentifierNode *)expression)->name);
+            return symbol ? symbol->holds_local_borrow : 0;
+        }
+
+        case NODE_STRUCT_LITERAL: {
+            StructLiteralNode *literal = (StructLiteralNode *)expression;
+            for (ASTNode *node = literal->fields; node; node = node->next) {
+                if (expression_holds_local_borrow(
+                        context, ((StructInitFieldNode *)node)->expression)) {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        case NODE_ARRAY_LITERAL: {
+            ArrayLiteralNode *array = (ArrayLiteralNode *)expression;
+            for (ASTNode *element = array->elements; element;
+                 element = element->next) {
+                if (expression_holds_local_borrow(context, element)) return 1;
+            }
+            return 0;
+        }
+
+        case NODE_FUNCTION_CALL: {
+            // 只有枚举载荷构造会把实参原样存进返回值；普通调用交给上面的
+            // reference_rank_of（它认「返回引用」的函数）。
+            FunctionCallNode *call = (FunctionCallNode *)expression;
+            if (!is_enum_variant_construction(context, call)) return 0;
+            for (ASTNode *argument = call->arguments; argument;
+                 argument = argument->next) {
+                if (expression_holds_local_borrow(context, argument)) return 1;
+            }
+            return 0;
+        }
+
+        default:
+            return 0;
     }
 }
 
@@ -1443,6 +1600,9 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             walk_expression(context, declaration->expression);
             // 这里之后的记录才是这条 let 建立的持久借用，用来给 NLL 收窄失效点。
             BorrowRecord *borrow_mark = context->borrows;
+            // 值里是否藏着本帧的借用（`let h = Holder{src:&local}`）。return 时要用。
+            int holds_local_borrow =
+                expression_holds_local_borrow(context, declaration->expression);
 
             // 显式标注成裸指针 `*T` 就是「遗忘借用」：不跟踪寿命，也不登记别名。
             // 这是和 C 打交道、以及需要长期持有指针时唯一的出口。
@@ -1456,8 +1616,10 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             int pointee_rank = -1;
             if (!reference_rank_of(context, declaration->expression,
                                    &pointee_rank)) {
-                insert_symbol(context, declaration->name, context->rank, 0, -1, 0,
-                              declaration->type);
+                BorrowSymbol *symbol =
+                    insert_symbol(context, declaration->name, context->rank, 0, -1,
+                                  0, declaration->type);
+                if (symbol) symbol->holds_local_borrow = holds_local_borrow;
                 break;
             }
 
@@ -1491,8 +1653,10 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             int is_mutable = declaration->type && declaration->type->is_reference
                 ? declaration->type->reference_mutable
                 : reference_is_mutable(declaration->expression);
-            insert_symbol(context, declaration->name, context->rank, 1,
-                          pointee_rank, is_mutable, declaration->type);
+            BorrowSymbol *symbol =
+                insert_symbol(context, declaration->name, context->rank, 1,
+                              pointee_rank, is_mutable, declaration->type);
+            if (symbol) symbol->holds_local_borrow = holds_local_borrow;
             break;
         }
 
@@ -1509,6 +1673,11 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
             // 寿命与别名登记仍然按「整个引用变量」做：`r = &other` 改的是 r 这个槽，
             // 它指向哪里是类型层面的事，和字段路径无关。
             BorrowSymbol *target = info.base;
+            // 整体重新赋值会换掉值里藏的借用，标记要跟着走（`h = Holder{src:&y}`）。
+            if (target) {
+                target->holds_local_borrow = expression_holds_local_borrow(
+                    context, assignment->expression);
+            }
             int pointee_rank = -1;
             if (target && target->is_reference &&
                 reference_rank_of(context, assignment->expression,
@@ -1618,9 +1787,17 @@ static void walk_statement(BorrowContext *context, ASTNode *statement) {
 
             // 引用藏进结构体 / 数组字面量之后 reference_rank_of 认不出来（字面量
             // 本身的类型不是引用），只能按字段递归查一遍。见 check_escaping_borrow。
+            //
+            // 其他形态（`return h;`、`return E.V(&local);`）走 holds_local_borrow ——
+            // 那需要 let / 赋值时记下的状态。两者互斥，别重复报同一条。
             if (expression && (expression->type == NODE_STRUCT_LITERAL ||
                                expression->type == NODE_ARRAY_LITERAL)) {
                 check_escaping_borrow(context, expression, NULL, statement);
+            } else if (expression_holds_local_borrow(context, expression)) {
+                report_error_soft(
+                    statement,
+                    "the returned value borrows something that lives in this function");
+                // 中文：返回的值里藏着指向本函数局部存储的借用
             }
             break;
         }

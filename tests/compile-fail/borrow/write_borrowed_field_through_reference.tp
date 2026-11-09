@@ -30,7 +30,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: 'self' is mutably borrowed and cannot be assigned here
+error: 'self.x' is mutably borrowed and cannot be assigned here
 write_borrowed_field_through_reference.tp:21:9
 - .exit
 1

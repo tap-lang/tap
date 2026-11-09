@@ -1,0 +1,21 @@
+// 枚举载荷构造 `E.V(&local)` 在 AST 里是一次普通调用，1c 的「字面量逐字段检查」
+// 覆盖不到；实参是原样存进返回值的，指向本帧就是悬垂。
+enum Maybe { Some(&i32), None }
+
+fn leak(): Maybe {
+    let local: i32 = 7;
+    return Maybe.Some(&local);
+}
+
+fn main(): i32 {
+    let value: Maybe = leak();
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: the returned value borrows something that lives in this function
+return_enum_payload_holding_local.tp:7:5
+- .exit
+1
+-- */

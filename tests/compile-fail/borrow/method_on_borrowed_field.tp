@@ -27,7 +27,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: 'board' is already mutably borrowed
+error: 'board.left' is already mutably borrowed
 --> tests/compile-fail/borrow/method_on_borrowed_field.tp:23:5
 - .exit
 1

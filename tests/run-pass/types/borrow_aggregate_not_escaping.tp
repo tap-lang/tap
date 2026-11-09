@@ -1,0 +1,49 @@
+// 「值里藏着本帧借用」这条规则的**反面**：只认聚合值整体，不该把「从聚合值里
+// 取出一个普通字段/元素」也当成借用逃逸 —— `h.value` 是 i32，`r[0]` 也是 i32，
+// 它们都是拷贝，返回值里没有指针。
+struct Holder { src: &i32, value: i32 }
+
+// 取普通字段：不是借用。
+fn pick_value(): i32 {
+    let local: i32 = 7;
+    let h: Holder = Holder { src: &local, value: 3 };
+    return h.value;
+}
+
+// 解引用取值：不是借用。
+fn deref(r: &i32): i32 {
+    return r[0];
+}
+
+// 借用来自**参数**（函数外的存储），可以原样装进结构体返回。
+fn wrap(p: &i32): Holder {
+    let h: Holder = Holder { src: p, value: 9 };
+    return h;
+}
+
+// 聚合值只在本帧内用完，不返回 —— 合法。
+fn sum(): i32 {
+    let local: i32 = 7;
+    let h: Holder = Holder { src: &local, value: 1 };
+    return h.src[0] + h.value;
+}
+
+fn main(): int {
+    let x: i32 = 5;
+    print("%d\n", pick_value());
+    print("%d\n", deref(&x));
+    let h: Holder = wrap(&x);
+    print("%d\n", h.src[0]);
+    print("%d\n", sum());
+    return 0;
+}
+
+/** -- test
+- .stdout
+3
+5
+5
+8
+- .exit
+0
+-- */

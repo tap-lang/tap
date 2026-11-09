@@ -1,0 +1,23 @@
+// 借用装进结构体、**先存进变量再返回**：类型里没有寿命信息（`Holder` 和 `i32`
+// 在类型系统里毫不相干），1c 只查「return 的字面量」，所以这里靠 let / 赋值时
+// 记下的「持有本帧借用」标记来拦。
+struct Holder { src: &i32 }
+
+fn sneaky(): Holder {
+    let local: i32 = 7;
+    let h: Holder = Holder { src: &local };
+    return h;
+}
+
+fn main(): i32 {
+    let h: Holder = sneaky();
+    return h.src[0];
+}
+
+/** -- test
+- .stderr
+error: the returned value borrows something that lives in this function
+return_struct_holding_local_through_var.tp:9:5
+- .exit
+1
+-- */

@@ -1,0 +1,19 @@
+// 数组把引用装进元素，经变量中转返回同样要拦（和结构体那条同一个机制）。
+fn leak(): [&i32; 1] {
+    let local: i32 = 7;
+    let arr: [&i32; 1] = [&local];
+    return arr;
+}
+
+fn main(): i32 {
+    let arr: [&i32; 1] = leak();
+    return arr[0][0];
+}
+
+/** -- test
+- .stderr
+error: the returned value borrows something that lives in this function
+return_array_holding_local_through_var.tp:5:5
+- .exit
+1
+-- */
