@@ -7,6 +7,7 @@
 // 2. match 作表达式时走的是 `process_expression` 的另一条路径（不是 process_statements），
 //    那里也要登记载荷绑定。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn payload_len(items: Result<Vec<i32>, String>, fallback: u32): u32 {
     let n: u32 = match (items) {

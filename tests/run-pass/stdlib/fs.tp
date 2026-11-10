@@ -3,6 +3,7 @@
 // 注意：测试的工作目录是仓库根目录，所以这里建的临时文件是相对路径。
 // 正常结束时 remove 会删掉；万一中断，.gitignore 里的 *.tmp 兜底。
 import std.fs as fs;
+import std.fs.File;
 
 fn main(): i32 {
     let path: String = "std_file_test.tmp";

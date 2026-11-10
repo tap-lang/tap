@@ -1,0 +1,25 @@
+// 命名空间导入**不带类型裸名**：裸写 `Point` 只有两种合法来源 —— 本文件自己声明，
+// 或者 `import m.Point;` 显式引入。
+//
+// 这里验的是前一种没被挤掉。以前还有一级「命名空间导入的模块里唯一导出这个名字的那个」
+// 兜底，入口文件（走到重写链时 module 为 NULL，第②级查不到自己的声明）会被它劫持成
+// 模块里的同名类型，症状是「struct 'Point' has no field 'mine'」——很难联想到是导入引起。
+import modules.clash_a as a;
+
+struct Point {
+    mine: i32,
+}
+
+fn main(): i32 {
+    let local: Point = Point { mine: 7 };
+    let imported: a.Point = a.make();
+    print("%d %d\n", local.mine, imported.x);
+    return 0;
+}
+
+/** -- test
+- .stdout
+7 1
+- .exit
+0
+-- */

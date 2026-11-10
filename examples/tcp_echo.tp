@@ -11,6 +11,7 @@
 //   - std.net 全靠 extern 绑 libc，没有往 runtime.c 加一行 C 代码。
 //   - accept / receive 都是阻塞的，会一直等下去，这是 std.net 目前的语义。
 import std.net as net;
+import std.net.Socket;
 
 fn main(): i32 {
     let server: Socket = unwrap(net.listen_on("127.0.0.1", 18080, 8));

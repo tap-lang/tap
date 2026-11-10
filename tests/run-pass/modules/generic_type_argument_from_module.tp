@@ -6,7 +6,9 @@
 // `method_name_matches` 就对不上，方法查找失败，最后误报成
 // 「method 'len' is only available on String values」。
 import std.vec as vec;
+import std.vec.Vec;
 import modules.clash_b as b;
+import modules.clash_b.Point;
 
 fn main(): i32 {
     let items: Vec<Point> = vec.new();

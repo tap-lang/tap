@@ -7,6 +7,7 @@
 //
 // 两条分支体都要覆盖：单载荷（`Item(inner)`）和多载荷（`Pair(items, n)`）。
 import std.vec as vec;
+import std.vec.Vec;
 
 enum Holder {
     Item(Vec<i32>),

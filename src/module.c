@@ -986,40 +986,45 @@ static ModuleExport *find_bare_type_import(
     return NULL;
 }
 
-// 命名空间导入（`import std.vec as vec;`）**也会**把模块的 pub 类型名带进裸名作用域——
-// `Vec<i32>` 就是这么用的，保住它才不会让 std 全线崩。
+// 裸名找不到时，看看有没有命名空间导入的模块导出了这个类型 —— 有的话给出可操作的提示。
 //
-// 但命名空间导入是**兜底**（四级查找的第④级），所以要求唯一：多个被命名空间导入的模块
-// 都导出同一个类型名时，裸名没有确定答案。
+// 命名空间导入**不把类型带进裸名作用域**：`import std.vec as vec;` 之后只有 `vec.Vec`，
+// 裸写 `Vec` 是不认的。所以这里只在报错时用来凑提示，不参与解析。
 //
-// **用到才报，不在导入时报。** 「导入」本身没问题，只有真的写出那个裸名才有问题：
-// 同时导入两个都导出 `Point` 的包，只要不写裸名 `Point`（用 `let p = a.make();` 让推断
-// 定类型，或者写限定名 `a.Point`）就完全正常。导入时报错会把这种完全合法的用法也堵死。
-//
-// 报错不带位置（`VarTypeNode` 没有行列），所以把涉及的两个模块名都列出来。
-static ModuleExport *find_namespace_type_import(
-    ImportBinding *bindings, const char *name) {
-    ModuleExport *found = NULL;
-    ImportBinding *found_binding = NULL;
+// `VarTypeNode` 没有行列信息，位置补不上来，只能把能用到的写法全列出来。多个模块都导出
+// 同名类型时逐个列出 —— 只报第一个会让人以为「只有一个模块有」。
+static int report_type_not_in_scope(ImportBinding *bindings, const char *name) {
+    const ImportBinding *matches[4];
+    size_t count = 0;
     for (ImportBinding *binding = bindings; binding; binding = binding->next) {
         if (binding->kind != IMPORT_NAMESPACE) continue;
         ModuleExport *export = find_public_export(binding->module, name);
         if (!export || !export->is_type) continue;
-        if (found && found != export) {
-            fprintf(stderr,
-                "error: type name '%s' is exported by both '%s' and '%s'; the bare name is ambiguous\n", // 中文：裸类型名有歧义
-                name, found_binding->import_node->module_name,
-                binding->import_node->module_name);
-            fprintf(stderr,
-                "note: write '%s.%s' or '%s.%s' to pick one\n", // 中文：用限定名挑一个
-                found_binding->import_node->alias, name,
-                binding->import_node->alias, name);
-            exit(1);
-        }
-        found = export;
-        found_binding = binding;
+        if (count < sizeof(matches) / sizeof(matches[0])) matches[count] = binding;
+        count++;
     }
-    return found;
+    if (count == 0) return 0;
+
+    fprintf(stderr, "error: type '%s' is not in scope\n", name); // 中文：类型不在作用域内
+    size_t listed = count < 4 ? count : 4;
+    for (size_t index = 0; index < listed; index++) {
+        const char *full = matches[index]->import_node->module_name;
+        const char *alias = matches[index]->import_node->alias;
+        if (alias && alias[0] != '\0') {
+            fprintf(stderr,
+                "note: module '%s' exports it, write '%s.%s'\n", // 中文：用限定名
+                full, alias, name);
+        } else {
+            fprintf(stderr,
+                "note: module '%s' exports it, write '%s.%s'\n", // 中文：用限定名
+                full, full, name);
+        }
+    }
+    const char *first = matches[0]->import_node->module_name;
+    fprintf(stderr,
+        "note: or bring it into scope: `import %s.%s;`\n", // 中文：单成员导入
+        first, name);
+    return 1;
 }
 
 static int add_binding(
@@ -1321,11 +1326,9 @@ static int has_local_top_level(
 // 一条绑定会引入裸名 name 吗？会的话把「源成员名」写到 *member_out —— 模块 + 成员名
 // 唯一确定一个符号，用来判断重复导入。
 //
-// **命名空间导入不算引入裸名**：`import std.vec as vec;` 不会把 `new`/`push` 变成裸名
-// （必须写 `vec.new`）。它的 pub 类型名确实能裸着用（`Vec<i32>`），但那是三级查找里的
-// 第③级、是**兜底**：本文件自己的定义和单成员/通配导入优先级更高，在场时第③级用不到。
-// 所以命名空间导入不能参与这里的重名判断——否则「一个包定义 Point 又依赖另一个也定义
-// Point 的包」就会误报。第③级自己的歧义（多个来源）另有一处校验。
+// **命名空间导入不算引入裸名**：`import std.vec as vec;` 既不会把 `new`/`push` 变成裸名
+// （必须写 `vec.new`），也不会把类型名带进来（必须写 `vec.Vec`，或者另写一行
+// `import std.vec.Vec;`）。所以它不可能和本文件的裸名撞车，不参与这里的重名判断。
 static int binding_introduces(
     ImportBinding *binding, const char *name, const char **member_out) {
     if (binding->kind == IMPORT_MEMBER) {
@@ -1415,9 +1418,8 @@ static int report_prelude_conflict(
 // 「本地定义优先于通配导入」的规则。
 // **类型同样参与**：类型名现在也带模块前缀，撞了就必须说清楚，不能靠全局唯一侥幸过关。
 //
-// 命名空间导入不在这里查：它的 pub 类型名只是三级查找的兜底，本文件自己的定义和单成员/
-// 通配导入优先级更高，在场时兜底用不到，不构成冲突。第③级自己的歧义由
-// `find_namespace_type_import` 在真正用到那个裸名时报（见那里的注释）。
+// 命名空间导入不在这里查：它不带任何裸名（类型要在 `alias.` 后面写，函数要在调用时加
+// `alias.`），所以不可能和本文件的裸名撞车。
 static int validate_bare_names(
     ModuleContext *context, ProgramNode *program, LoadedModule *module,
     ImportBinding *bindings) {
@@ -1581,45 +1583,85 @@ static ModuleExport *find_qualified_type_import(
     exit(1);
 }
 
+// 入口文件没有模块前缀，它自己声明的类型符号名就是声明名 —— 按原名找一遍，
+// 找到就把名字原样还回去（调用方会 copy）。
+static const char *find_local_type_name(ProgramNode *program, const char *name) {
+    for (ASTNode *node = program ? program->structs : NULL; node; node = node->next) {
+        if (strcmp(((StructNode *)node)->name, name) == 0) {
+            return ((StructNode *)node)->name;
+        }
+    }
+    for (ASTNode *node = program ? program->enums : NULL; node; node = node->next) {
+        if (strcmp(((EnumNode *)node)->name, name) == 0) {
+            return ((EnumNode *)node)->name;
+        }
+    }
+    return NULL;
+}
+
 // 把一个源语言里的类型名解析成内部唯一符号名。返回 export->symbol（不新分配，调用方
 // 负责 copy），NULL 表示这个类型名不认识（交给下游按标量或外部类型处理）。
 //
-// 四级查找，顺序固定：
+// 三级查找，顺序固定：
 //   ① 限定名 `alias.Type` —— 显式写出来的模块前缀，优先级最高
-//   ② 本模块自己声明的类型 —— pub 与否都在这，它们现在都带模块前缀
+//   ② 本文件自己声明的类型 —— 模块文件取带前缀的符号名，入口文件就是声明名本身
 //   ③ 裸名导入明确引入的类型（`import m.T;` / `import m.*;`）
-//   ④ 命名空间导入的模块里唯一导出这个类型名的那个
-//      （`import std.vec as vec;` 之后写裸名 `Vec<i32>` 就是靠这一级）
-// 四级都不命中返回 NULL。report_errors 见 find_qualified_type_import。
+//
+// **命名空间导入（`import m as alias;`）不参与裸名解析**：它按定义只提供 `alias.` 这一层
+// 可见性，不带任何裸名。以前这里还有第④级「命名空间导入的模块里唯一导出这个类型名的那
+// 个」，那等于让 `import std.vec as vec;` 顺手把 `Vec` 塞进裸名作用域，和函数的行为不
+// 一致，也会让入口文件自己的同名类型被悄悄换掉。现在裸名 `Vec` 只可能来自 ③。
+//
+// 三级都不命中返回 NULL。report_errors 见 find_qualified_type_import。
 static char *resolve_type_name(
-    LoadedModule *module, ImportBinding *bindings, const char *name,
-    int report_errors) {
+    ProgramNode *program, LoadedModule *module, ImportBinding *bindings,
+    const char *name, int report_errors) {
     // 通配分支（`_ => ...`）的 `arm->enum_name` 是 NULL，调用方会原样传进来。
     // 不挡的话会一路走到 strcmp(export->name, NULL) 直接段错误。
     if (!name) return NULL;
 
     ModuleExport *export = find_qualified_type_import(bindings, name, report_errors);
-    if (!export) export = find_type_export(module, name);
-    if (!export) export = find_bare_type_import(bindings, name);
-    if (!export) export = find_namespace_type_import(bindings, name);
-    return export ? export->symbol : NULL;
+    if (export) return export->symbol;
+
+    // ② 本文件自己声明的类型。模块文件走导出表（pub 与非 pub 都在表里，取到的是带
+    // 前缀的符号名）；入口文件没有模块、也没有前缀，声明名本身就是符号名。
+    //
+    // 这一步以前对入口文件是空的（`module` 为 NULL，导出表查不到），后果是第④级兜底
+    // 会把它劫持成某个命名空间导入模块里的同名类型 —— 症状是「字段不存在」，很难
+    // 联想到是 import 引起的。现在第④级已经删除，缺了这一步就会误报「不在作用域」。
+    if (module) {
+        export = find_type_export(module, name);
+        if (export) return export->symbol;
+    } else {
+        const char *local = find_local_type_name(program, name);
+        if (local) return (char *)local;
+    }
+
+    export = find_bare_type_import(bindings, name);
+    if (export) return export->symbol;
+
+    // 裸名没找到，但某个命名空间导入的模块正好导出这个名字：说明用户还在用旧写法。
+    // 这时给出限定名和单成员导入两种改法，比下游的「unknown type 'Vec'」有用得多。
+    if (report_errors && report_type_not_in_scope(bindings, name)) exit(1);
+    return NULL;
 }
 
 // 递归重写一个类型节点里的类型名。泛型实参在 type_arguments，数组/指针在 element_type，
 // 函数指针在 parameter_types 和 return_type。
 static void rewrite_var_type(
-    LoadedModule *module, ImportBinding *bindings, VarTypeNode *type) {
+    ProgramNode *program, LoadedModule *module, ImportBinding *bindings,
+    VarTypeNode *type) {
     if (!type) return;
 
     if (type->struct_name) {
-        char *copy = copy_string_or_null(resolve_type_name(module, bindings, type->struct_name, 1));
+        char *copy = copy_string_or_null(resolve_type_name(program, module, bindings, type->struct_name, 1));
         if (copy) {
             free(type->struct_name);
             type->struct_name = copy;
         }
     }
     if (type->enum_name) {
-        char *copy = copy_string_or_null(resolve_type_name(module, bindings, type->enum_name, 1));
+        char *copy = copy_string_or_null(resolve_type_name(program, module, bindings, type->enum_name, 1));
         if (copy) {
             free(type->enum_name);
             type->enum_name = copy;
@@ -1627,13 +1669,13 @@ static void rewrite_var_type(
     }
 
     for (ASTNode *node = type->type_arguments; node; node = node->next) {
-        rewrite_var_type(module, bindings, (VarTypeNode *)node);
+        rewrite_var_type(program, module, bindings, (VarTypeNode *)node);
     }
-    rewrite_var_type(module, bindings, type->element_type);
+    rewrite_var_type(program, module, bindings, type->element_type);
     for (ASTNode *node = type->parameter_types; node; node = node->next) {
-        rewrite_var_type(module, bindings, (VarTypeNode *)node);
+        rewrite_var_type(program, module, bindings, (VarTypeNode *)node);
     }
-    rewrite_var_type(module, bindings, type->return_type);
+    rewrite_var_type(program, module, bindings, type->return_type);
 }
 
 // 把 `Foo.Bar` 里的枚举前缀换成本模块私有符号名。返回新名字（调用方负责释放），
@@ -1641,7 +1683,8 @@ static void rewrite_var_type(
 //
 // 按**最后一个**点切分：模块前缀本身带点（`__tap_module_0.E`），用第一个点会切错。
 static char *resolve_enum_member_name(
-    LoadedModule *module, ImportBinding *bindings, const char *name) {
+    ProgramNode *program, LoadedModule *module, ImportBinding *bindings,
+    const char *name) {
     const char *dot = strrchr(name, '.');
     if (!dot || dot == name || !dot[1]) return NULL;
 
@@ -1653,7 +1696,7 @@ static char *resolve_enum_member_name(
     }
     memcpy(prefix, name, prefix_length);
     prefix[prefix_length] = '\0';
-    char *renamed = resolve_type_name(module, bindings, prefix, 0);
+    char *renamed = resolve_type_name(program, module, bindings, prefix, 0);
     free(prefix);
     if (!renamed) return NULL;
 
@@ -1674,7 +1717,7 @@ static void rewrite_declared_types(
     for (ASTNode *node = program->structs; node; node = node->next) {
         StructNode *structure = (StructNode *)node;
         for (ASTNode *field = structure->fields; field; field = field->next) {
-            rewrite_var_type(module, bindings, ((StructFieldNode *)field)->field_type);
+            rewrite_var_type(program, module, bindings, ((StructFieldNode *)field)->field_type);
         }
     }
     for (ASTNode *node = program->enums; node; node = node->next) {
@@ -1682,17 +1725,17 @@ static void rewrite_declared_types(
         for (ASTNode *variant = enum_node->variants; variant; variant = variant->next) {
             for (ASTNode *payload = ((EnumVariantNode *)variant)->payload_types;
                  payload; payload = payload->next) {
-                rewrite_var_type(module, bindings, (VarTypeNode *)payload);
+                rewrite_var_type(program, module, bindings, (VarTypeNode *)payload);
             }
         }
     }
     for (ASTNode *node = program->constants; node; node = node->next) {
-        rewrite_var_type(module, bindings, ((VarDeclNode *)node)->type);
+        rewrite_var_type(program, module, bindings, ((VarDeclNode *)node)->type);
     }
     // impl 的目标类型如果改过名，这里要跟着改，否则约束检查拿到的名字对不上。
     for (ASTNode *node = program->impls; node; node = node->next) {
         ImplNode *impl_node = (ImplNode *)node;
-        char *renamed = copy_string_or_null(resolve_type_name(module, bindings, impl_node->type_name, 1));
+        char *renamed = copy_string_or_null(resolve_type_name(program, module, bindings, impl_node->type_name, 1));
         if (renamed) {
             free(impl_node->type_name);
             impl_node->type_name = renamed;
@@ -1704,9 +1747,9 @@ static void rewrite_declared_types(
         for (ASTNode *method = trait_node->methods; method; method = method->next) {
             TraitMethodNode *signature = (TraitMethodNode *)method;
             for (ASTNode *type = signature->param_types; type; type = type->next) {
-                rewrite_var_type(module, bindings, (VarTypeNode *)type);
+                rewrite_var_type(program, module, bindings, (VarTypeNode *)type);
             }
-            rewrite_var_type(module, bindings, signature->return_type);
+            rewrite_var_type(program, module, bindings, signature->return_type);
         }
     }
 }
@@ -1750,7 +1793,7 @@ static int rewrite_statement_list(
             case NODE_VAR_DECL:
                 // 变量声明上的类型标注里可能引用了本模块的私有类型。
                 rewrite_var_type(
-                    current_module, bindings, ((VarDeclNode *)statement)->type);
+                    program, current_module, bindings, ((VarDeclNode *)statement)->type);
                 result = rewrite_expression(
                     program, ((VarDeclNode *)statement)->expression,
                     current_module, bindings);
@@ -1838,7 +1881,7 @@ static int rewrite_statement_list(
                     MatchArmNode *arm = (MatchArmNode *)arm_node;
                     // 模式里的枚举名要跟着改名（本模块私有枚举会被加前缀）。
                     char *renamed_enum = copy_string_or_null(
-                        resolve_type_name(current_module, bindings, arm->enum_name, 1));
+                        resolve_type_name(program, current_module, bindings, arm->enum_name, 1));
                     if (renamed_enum) {
                         free(arm->enum_name);
                         arm->enum_name = renamed_enum;
@@ -1885,7 +1928,7 @@ static int rewrite_call(
 
     // 枚举成员构造 `E.B(...)`：E 是本模块私有枚举时前缀要跟着改名。改完就是
     // 模块内部符号，不需要再走别名解析。
-    char *renamed_member = resolve_enum_member_name(current_module, bindings, call->name);
+    char *renamed_member = resolve_enum_member_name(program, current_module, bindings, call->name);
     if (renamed_member) {
         free(call->name);
         call->name = renamed_member;
@@ -2023,13 +2066,13 @@ static int rewrite_expression(
             StructLiteralNode *literal = (StructLiteralNode *)expression;
             // 结构体名和泛型实参里的类型名都要跟着改名。
             char *renamed = copy_string_or_null(
-                resolve_type_name(current_module, bindings, literal->struct_name, 1));
+                resolve_type_name(program, current_module, bindings, literal->struct_name, 1));
             if (renamed) {
                 free(literal->struct_name);
                 literal->struct_name = renamed;
             }
             for (ASTNode *node = literal->type_arguments; node; node = node->next) {
-                rewrite_var_type(current_module, bindings, (VarTypeNode *)node);
+                rewrite_var_type(program, current_module, bindings, (VarTypeNode *)node);
             }
             for (ASTNode *node = literal->fields; node; node = node->next) {
                 StructInitFieldNode *field = (StructInitFieldNode *)node;
@@ -2042,13 +2085,13 @@ static int rewrite_expression(
         case NODE_SIZEOF:
             // sizeof(SomeType) 里的类型名同样要跟着改名。
             rewrite_var_type(
-                current_module, bindings, ((SizeofNode *)expression)->operand_type);
+                program, current_module, bindings, ((SizeofNode *)expression)->operand_type);
             return 0;
         case NODE_CAST:
             // `value as Type` 的内层表达式可能包含模块函数调用；目标标量类型本身
             // 通常无需改名，但仍递归处理完整类型以覆盖泛型实例化阶段。
             rewrite_var_type(
-                current_module, bindings, ((CastNode *)expression)->target_type);
+                program, current_module, bindings, ((CastNode *)expression)->target_type);
             return rewrite_expression(
                 program, ((CastNode *)expression)->expression,
                 current_module, bindings);
@@ -2056,13 +2099,13 @@ static int rewrite_expression(
             FunctionCallNode *call = (FunctionCallNode *)expression;
             // 显式泛型实参里的类型名也要跟着改名。
             for (ASTNode *type = call->type_arguments; type; type = type->next) {
-                rewrite_var_type(current_module, bindings, (VarTypeNode *)type);
+                rewrite_var_type(program, current_module, bindings, (VarTypeNode *)type);
             }
             // `Result<Vec<String>, String>.Ok(...)` 这种**显式枚举类型实参**同样要改。
             // 这块以前漏了没暴露：pub 类型那时保持裸名，不改也对得上；类型带上模块前缀
             // 之后不改就会报 `undefined generic struct type`。
             for (ASTNode *type = call->enum_type_arguments; type; type = type->next) {
-                rewrite_var_type(current_module, bindings, (VarTypeNode *)type);
+                rewrite_var_type(program, current_module, bindings, (VarTypeNode *)type);
             }
             for (ASTNode *argument = call->arguments; argument; argument = argument->next) {
                 int result = rewrite_expression(program, argument, current_module, bindings);
@@ -2081,7 +2124,7 @@ static int rewrite_expression(
                 MatchArmNode *arm = (MatchArmNode *)arm_node;
                 // 模式里的枚举名要跟着改名（本模块私有枚举会被加前缀）。
                 char *renamed_enum = copy_string_or_null(
-                    resolve_type_name(current_module, bindings, arm->enum_name, 1));
+                    resolve_type_name(program, current_module, bindings, arm->enum_name, 1));
                 if (renamed_enum) {
                     free(arm->enum_name);
                     arm->enum_name = renamed_enum;
@@ -2121,7 +2164,7 @@ static int rewrite_expression(
             // 必须放在下面那些提前 return 之前。
             for (ASTNode *type = identifier->enum_type_arguments;
                  type; type = type->next) {
-                rewrite_var_type(current_module, bindings, (VarTypeNode *)type);
+                rewrite_var_type(program, current_module, bindings, (VarTypeNode *)type);
             }
 
             // 不带点的裸名：可能是本模块导出的常量。导出时声明已经被改写成
@@ -2144,7 +2187,7 @@ static int rewrite_expression(
             // 枚举成员 `Foo.Bar`：Foo 是本模块的私有枚举时前缀要跟着改名，否则
             // 后面按别名解析会找不到符号。改完就是最终形态，不用再往下走。
             char *renamed_member =
-                resolve_enum_member_name(current_module, bindings, identifier->name);
+                resolve_enum_member_name(program, current_module, bindings, identifier->name);
             if (renamed_member) {
                 free(identifier->name);
                 identifier->name = renamed_member;
@@ -2195,9 +2238,9 @@ static int rewrite_functions(
         FunctionNode *function = (FunctionNode *)node;
         // 签名里的类型名也要跟着改名，否则函数签名会引用到不存在的类型。
         for (ASTNode *type = function->param_types; type; type = type->next) {
-            rewrite_var_type(current_module, bindings, (VarTypeNode *)type);
+            rewrite_var_type(program, current_module, bindings, (VarTypeNode *)type);
         }
-        rewrite_var_type(current_module, bindings, function->return_type);
+        rewrite_var_type(program, current_module, bindings, function->return_type);
 
         int result = rewrite_statement_list(program, function->body, current_module, bindings);
         if (result != 0) return result;

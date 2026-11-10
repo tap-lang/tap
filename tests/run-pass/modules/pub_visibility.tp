@@ -1,16 +1,19 @@
-// 模块导出按 pub 过滤：pub 的函数和常量走 `别名.名字`，pub 的**类型名可以裸写**，
-// 不写 pub 的符号在模块外看不到（只影响外部，模块内部照常可用）。
+// 模块导出按 pub 过滤：pub 的函数、常量、类型都走 `别名.名字`，不写 pub 的符号在模块外
+// 看不到（只影响外部，模块内部照常可用）。
 //
-// 类型名现在也带模块前缀（`__tap_module_N.PubStruct`），裸名 `PubStruct` 靠三级查找的
-// 第③级（命名空间导入的模块里唯一导出这个名字的那个）解析回来。
+// 类型名带模块前缀（`__tap_module_N.PubStruct`），命名空间导入**不带裸名**，所以裸名
+// `PubStruct` 得靠 `import modules.visibility.PubStruct;` 显式引入。
 import modules.visibility as v;
+import modules.visibility.PubStruct;
 
 fn main(): i32 {
-    // 命名空间导入会把 pub 类型名带进裸名作用域，所以类型标注和结构体字面量都能直接写。
+    // 显式导入之后，类型标注和结构体字面量都能直接写。
     let s: PubStruct = PubStruct { x: 0 };
+    // 限定写法同时可用，两种写法指向同一个类型。
+    let t: v.PubStruct = v.PubStruct { x: 0 };
 
     // pub_fn=1、PUB_CONST=10、uses_private=2+20+3=25。
-    return v.pub_fn() + v.PUB_CONST + v.uses_private() + s.x;
+    return v.pub_fn() + v.PUB_CONST + v.uses_private() + s.x + t.x;
 }
 
 /** -- test

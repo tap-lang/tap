@@ -1,6 +1,7 @@
 // std.json 的字符串转义：输出侧转义、输入侧反转义、代理对与非法输入。
 import std.json;
 import std.string_builder as sb;
+import std.string_builder.StringBuilder;
 
 fn main(): i32 {
     print("quoted: %s\n", json.escape_quoted("hi"));

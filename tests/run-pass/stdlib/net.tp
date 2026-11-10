@@ -3,6 +3,7 @@
 //
 // 服务器绑端口 0，由内核分配，再用 local_port 取回来——这样测试并行跑也不会抢端口。
 import std.net as net;
+import std.net.Socket;
 
 fn main(): i32 {
     // 1. IPv4 字面量解析与各种非法输入。

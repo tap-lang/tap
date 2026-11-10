@@ -1,7 +1,7 @@
 // 限定类型名 `alias.Type`：模块别名 + 类型名，中间一个点。
 //
-// 动机：两个命名空间导入的模块都导出 `Point` 时，裸名只能报歧义（见
-// compile-fail/modules/ambiguous_pub_type.tp），唯一能显式消歧的写法就是 `a.Point`。
+// 动机：命名空间导入不带裸名，两个模块都导出 `Point` 时裸名认不出来（见
+// compile-fail/modules/ambiguous_pub_type.tp），`a.Point` 是不引入裸名的正路写法。
 //
 // 同一条解析路径要覆盖四个位置：类型标注、结构体字面量、泛型实参、match 模式里的枚举名。
 // 它们在 Parser 里是四处不同的代码，最后都落到 module.c 的 resolve_type_name 上。

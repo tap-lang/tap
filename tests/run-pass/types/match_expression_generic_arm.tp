@@ -4,6 +4,7 @@
 // 于是分支里的泛型调用从未被特化，Codegen 找不到那个函数，报
 // `struct expression type mismatch`。这个用例把几种组合都钉住。
 import std.vec as vec;
+import std.vec.Vec;
 
 // 分支值是泛型调用，载荷是非泛型的
 fn from_plain(source: Result<i32, String>): Vec<String> {

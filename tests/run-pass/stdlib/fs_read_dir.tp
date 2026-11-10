@@ -1,7 +1,9 @@
 // std.fs 的目录遍历：read_dir 一次性取回条目名（排序），is_dir 判断目录，
 // open_dir / next_entry / close_dir 是流式版本。
 import std.fs as fs;
+import std.fs.Dir;
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let result: Result<Vec<String>, String> = fs.read_dir("tests/fixtures/dir_sample");

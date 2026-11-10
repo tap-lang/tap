@@ -1,4 +1,5 @@
 import std.byte_vec as bytes;
+import std.byte_vec.ByteVec;
 
 // 基于 ByteVec 的增量字符串构建器。
 //

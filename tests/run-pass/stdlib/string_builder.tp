@@ -1,4 +1,5 @@
 import std.string_builder as builder;
+import std.string_builder.StringBuilder;
 
 fn main(): i32 {
     let output: StringBuilder = builder.with_capacity(1);

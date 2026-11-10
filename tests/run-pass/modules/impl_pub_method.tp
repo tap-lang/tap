@@ -6,6 +6,7 @@
 //   * `pub fn scale(...)` 跨模块可调；
 //   * `fn secret(...)` 只有本模块能调（模块内部由 internal_use 代劳）。
 import modules.impl_visibility as shapes;
+import modules.impl_visibility.Circle;
 
 fn main(): i32 {
     let c: Circle = Circle { r: 3 };

@@ -847,6 +847,7 @@ impl Counter {
 
 ```text
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<String> = vec.new();

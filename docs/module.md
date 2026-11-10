@@ -90,15 +90,15 @@ error: method 'secret' of type 'Circle' is private; add 'pub' to its declaration
 ### 类型的可见性
 
 - **所有类型都带模块前缀**（`__tap_module_N.Name`），pub 与否都一样。
-- **`pub` 类型能从模块外引用**：写裸类型名（`Point`）、限定名（`a.Point`）或走名称空间导入，由四级查找解析
-  回来，见「类型名的解析」。
+- **`pub` 类型能从模块外引用**：写限定名（`a.Point`），或者先 `import a.Point;` 再写裸名，
+  见「类型名的解析」。
 - **非 `pub` 类型只在本模块内可见**，模块外部完全看不到。
 
 所以**两个模块可以各自拥有同名的类型，pub 的也行**——名字各带各的模块前缀，撞不到一起。
 
 ```text
 // modules/a.tp
-pub struct Point { x: i32 }      // 外部写 Point 就能引用
+pub struct Point { x: i32 }      // 外部写 a.Point，或 import a.Point; 后写 Point
 struct Scratch { value: i32 }    // 只有 a 自己看得到
 
 // modules/b.tp
@@ -111,7 +111,7 @@ struct Scratch { value: i32 }    // 和 a 的 Scratch 也不冲突
 - 非 `pub` 的顶层**函数和常量**同样会改名成 `__tap_module_N.name`。这样它们既不导出、
   也不占用全局名字，其他模块不会因为重名而冲突。
 - **类型比它们更彻底：pub 与否一律改名**（`__tap_module_N.Name`）。pub 只决定「能不能从
-  模块外引用」，不决定名字长什么样。引用处靠四级查找解析，见「类型名的解析」。
+  模块外引用」，不决定名字长什么样。引用处靠三级查找解析，见「类型名的解析」。
 - `extern fn` 的符号名就是 C 符号名，加前缀会链接不到，所以它保持原名。代价是
   **模块里的 `extern` 声明会占住那个全局名字**：某个模块写了 `extern fn read(...)` 之后，
   导入它就不能再声明自己的 `read`，即使签名不同。要把它暴露出去，写 `pub extern fn`。
@@ -239,34 +239,45 @@ pub 成员 `square`，同时又存在模块文件 `std/math/square.tp`），`imp
 
 ## 名称空间使用说明
 
-名称空间导入的 `pub` 常量和函数按 `别名.名字` 访问；`pub` **类型名可以裸写**。没有
-`pub` 的符号是模块私有的，外部看不到。Prelude 函数和当前文件函数仍使用普通函数名调用；
-名称空间导入不引入裸的**函数和常量**，所以未限定的 `math.square(...)` 之外的裸调用会按
-未定义函数报错（要裸名调用请用上一节的通配/单成员导入）。
+名称空间导入的 `pub` 成员一律按 `别名.名字` 访问：函数和常量如此，**类型也一样**。没有
+`pub` 的符号是模块私有的，外部看不到。Prelude 函数和当前文件函数仍使用普通函数名调用。
 
-**类型名是这里唯一的例外**：`import std.vec as vec;` 之后可以直接写裸名 `Vec<i32>`。
-类型名走四级查找（见下节），命名空间导入确实会把 pub 类型名带进裸名作用域——但它是
-**兜底**，优先级最低。
+命名空间导入**不引入任何裸名** —— 函数、常量、类型都是这个规则：
+
+```text
+import std.vec as vec;
+
+let v: vec.Vec<i32> = vec.new();   // 类型也要带别名
+let w: Vec<i32> = vec.new();       // error: type 'Vec' is not in scope
+```
+
+要裸写类型就显式导入它，和裸名调用函数是同一套做法：
+
+```text
+import std.vec as vec;
+import std.vec.Vec;
+
+let v: Vec<i32> = vec.new();       // 两行并存不冲突：一行给类型，一行给函数
+```
 
 ## 类型名的解析
 
 `pub` 类型和函数、常量不一样：它**也带模块前缀**（`__tap_module_N.Point`），所以两个包
-各写 `pub struct Point` 不会撞车。引用处按固定的四级顺序把名字解析回来：
+各写 `pub struct Point` 不会撞车。引用处按固定的三级顺序把名字解析回来：
 
-0. **限定名 `alias.Type`** —— 显式写出来的模块前缀（`a.Point`），优先级最高
-1. **本模块自己声明的类型** —— pub 与否都在这一级
-2. **裸名导入明确引入的类型** —— `import m.T;` / `import m.*;`
-3. **命名空间导入的模块里唯一导出这个名字的那个** —— `import std.vec as vec;` 之后写
-   `Vec<i32>` 走的就是这一级
+1. **限定名 `alias.Type`** —— 显式写出来的模块前缀（`a.Point`），优先级最高
+2. **本模块自己声明的类型** —— pub 与否都在这一级
+3. **裸名导入明确引入的类型** —— `import m.T;` / `import m.*;`
 
-第①②③级是「明确来源」，第④级是**兜底**，由此得到两条规则：
+三级都不命中就是「类型不在作用域」。如果某个命名空间导入的模块正好导出这个名字，诊断
+会把它列出来并给出两种改法（`VarTypeNode` 没有行列信息，所以只能把写法写进消息里）：
 
-- **第①②③级有来源时，第④级根本用不到，不构成冲突。** 一个包自己定义 `Point`、又依赖
-  另一个也定义 `Point` 的包，完全正常——这是第三方依赖的基本形态。
-- **第④级要求唯一。** 多个命名空间导入的模块都导出同一个类型名、而前几级都没有来源时，
-  裸名没有确定答案，报歧义（把涉及的两个模块名都列出来，并提示写 `a.Point` / `b.Point`）。
-  这条**用到才报**：导入本身没问题，不写那个裸名（例如靠 `let p = a.make();` 让推断定类型）
-  就完全正常。
+```text
+error: type 'Point' is not in scope
+note: module 'modules.clash_b' exports it, write 'b.Point'
+note: module 'modules.clash_a' exports it, write 'a.Point'
+note: or bring it into scope: `import modules.clash_b.Point;`
+```
 
 第①②③级之间、以及它们和本文件顶层定义之间的重名一律报错，和函数/常量的规则一致。
 
@@ -493,7 +504,10 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 - [`ambiguous_disambiguated.tp`](../tests/run-pass/modules/ambiguous_disambiguated.tp)：重名时改用名称空间导入消歧
 - [`qualified_type_name.tp`](../tests/run-pass/modules/qualified_type_name.tp)：限定类型名在标注、结构体字面量、泛型实参、match 模式四个位置的解析
 - [`qualified_type_name_unknown.tp`](../tests/compile-fail/modules/qualified_type_name_unknown.tp)：限定名前缀认出来但模块里没有该类型
-- [`ambiguous_pub_type.tp`](../tests/compile-fail/modules/ambiguous_pub_type.tp)：裸类型名有歧义，提示改用限定名
+- [`ambiguous_pub_type.tp`](../tests/compile-fail/modules/ambiguous_pub_type.tp)：命名空间导入不带裸名，
+  诊断列出每个模块各自的限定写法
+- [`namespace_import_type_scope.tp`](../tests/run-pass/modules/namespace_import_type_scope.tp)：
+  入口文件自己声明的类型不会被命名空间导入里的同名类型顶掉
 - [`namespace.tp`](../tests/run-pass/modules/namespace.tp)：本地函数与模块函数同名隔离
 - [`alias_conflict.tp`](../tests/compile-fail/modules/alias_conflict.tp)：名称空间别名冲突
 - [`unqualified_call.tp`](../tests/compile-fail/modules/unqualified_call.tp)：未限定导入函数调用诊断
@@ -515,10 +529,10 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 
 **命名空间与可见性**
 
-- `pub` 的顶层函数和常量按 `别名.名字` 访问。`pub` **类型**也带模块前缀（和函数/常量一样
-  改名成 `__tap_module_N.Name`），引用处按四级查找解析（见「类型名的解析」）——所以两个
-  模块可以定义同名的 `pub` 结构体或枚举。限定类型名 `别名.类型名` 也支持了，但只认命名
-  空间导入的别名（单成员 / 通配导入没有前缀可用）。
+- `pub` 的顶层函数、常量、类型一律按 `别名.名字` 访问，命名空间导入不引入裸名。`pub`
+  **类型**也带模块前缀（和函数/常量一样改名成 `__tap_module_N.Name`），引用处按三级查找
+  解析（见「类型名的解析」）——所以两个模块可以定义同名的 `pub` 结构体或枚举。限定类型名
+  `别名.类型名` 只认命名空间导入的别名（单成员 / 通配导入没有前缀可用，它们给的是裸名）。
 - 没有 `pub` 的顶层函数和常量会改名成 `__tap_module_N.name`，既不导出、也不占全局名字，
   模块之间不会因为重名而冲突。
 - `extern fn` 是例外：符号名必须和 C 符号一致，所以它保持原名，**会占住那个全局名字**。
@@ -534,8 +548,7 @@ note: rename one of them, or import the module as a namespace and qualify the ca
   `a/b.tp` 同时存在，并且 `a.b` 有成员 `c`）报歧义错误，不静默偏向；这种重名下同名的那个
   **模块**没有导入语法，只能改名。若 `a.b` 没有成员 `c`，`import a.b.c;` 按整模块导入。
 - 裸名重名检查覆盖「本文件顶层定义 + 其他通配/单成员导入 + **Prelude**」，**类型也算在内**。
-  命名空间导入不参与这个检查：它的 pub 类型名只是四级查找的兜底，本文件自己的定义和单成员/
-  通配导入优先级更高；兜底自己的歧义在**真正用到那个裸名**时才报。
+  命名空间导入不参与这个检查：它不带任何裸名，撞不上。
 - Prelude（`print` / `exit` / `panic` 等）的冲突**单独报**：`import mod.*;` 带进来一个和
   Prelude 同名的 `pub` 成员时，直接报
   `error: import from module 'mod' brings in 'print', which is already provided by the prelude`。

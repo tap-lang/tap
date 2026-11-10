@@ -1,6 +1,7 @@
 // std.env 的环境变量访问。vars() 返回 Vec<String>，元素个数就是真实条目数。
 import std.env;
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<String> = env.vars();

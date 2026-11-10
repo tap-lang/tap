@@ -7,6 +7,7 @@
 // 现在接收者是 AST 里的独立节点，codegen 用 expression_address 求地址：
 // 能求地址的都能当接收者，`&self` / `&mut self` 的自动取地址也跟着走同一条路。
 import std.vec as vec;
+import std.vec.Vec;
 
 struct Point {
     x: i32,

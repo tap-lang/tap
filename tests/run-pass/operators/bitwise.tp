@@ -1,6 +1,7 @@
 // 位运算：& | ^ << >> 与一元 ~。优先级对齐 C —— & 高于 ^ 高于 |，
 // 移位低于加减、高于比较。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let x: i32 = 240;

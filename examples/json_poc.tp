@@ -14,7 +14,9 @@
 import std.json as json;
 import std.parse as parse;
 import std.vec as vec;
+import std.vec.Vec;
 import std.string_builder as sb;
+import std.string_builder.StringBuilder;
 
 // kind: 0=null 1=bool 2=number 3=String 4=array 5=object
 // number 是十进制文本：解析来的保留输入原文，number_of() 构造的用 format_f64 渲染。

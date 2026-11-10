@@ -1,4 +1,5 @@
 import std.vec as vec;
+import std.vec.Vec;
 
 struct Pair { left: i32, right: i32 }
 

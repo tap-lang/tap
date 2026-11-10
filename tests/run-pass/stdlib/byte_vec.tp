@@ -1,4 +1,5 @@
 import std.byte_vec as bytes;
+import std.byte_vec.ByteVec;
 
 fn main(): i32 {
     let buffer: ByteVec = bytes.with_capacity(1);

@@ -1,4 +1,5 @@
 import std.vec as vec;
+import std.vec.Vec;
 
 fn first(values: &Vec<i32>): &i32 {
     return &values.data[0];

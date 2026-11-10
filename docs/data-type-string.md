@@ -236,6 +236,7 @@ let values: [String; 3] = ["empty"; 3];
 
 ```text
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<String> = vec.new();

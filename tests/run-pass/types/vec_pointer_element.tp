@@ -5,6 +5,7 @@
 // （`*i32`），INDEX_EXPRESSION 分支又取一层（`i32`）。`Vec<i32>` 恰好没事，
 // 因为第二层不是指针，走的是「原样返回」的兜底。
 import std.vec as vec;
+import std.vec.Vec;
 import std.memory as memory;
 
 struct Symbol {

@@ -4,6 +4,7 @@
 // **绑定到同一个类型参数**；实参能不能传仍然走引用规则（reference_assignable_to），
 // 所以这条必须在这里被拦住，而不是悄悄放行。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let value: i32 = 1;
@@ -15,7 +16,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: method 'push' argument 1 type mismatch
---> tests/compile-fail/types/reference_element_mutability.tp:11:5
+--> tests/compile-fail/types/reference_element_mutability.tp:12:5
 - .exit
 1
 -- */

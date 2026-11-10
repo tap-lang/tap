@@ -2,6 +2,7 @@
 //
 // 反过来（`&T` → `*T`）是允许的，那是「遗忘借用」：调用方显式放弃检查。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let value: i32 = 1;
@@ -14,7 +15,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: method 'push' argument 1 type mismatch
---> tests/compile-fail/types/reference_element_from_raw_pointer.tp:10:5
+--> tests/compile-fail/types/reference_element_from_raw_pointer.tp:11:5
 - .exit
 1
 -- */

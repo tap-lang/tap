@@ -1,6 +1,7 @@
 // 拿着元素引用去 push：扩容会重新分配缓冲区，引用立刻悬垂。
 // 这是借用检查对 Vec 最实际的一次拦截。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<i32> = vec.new();

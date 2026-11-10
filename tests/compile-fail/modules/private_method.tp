@@ -4,6 +4,7 @@
 // 方法查找是「按接收者类型遍历 program->functions」，不经过模块导出表，所以
 // pub 以前在这条路径上完全没生效过。
 import modules.impl_visibility as shapes;
+import modules.impl_visibility.Circle;
 
 fn main(): i32 {
     let c: Circle = Circle { r: 3 };
@@ -13,7 +14,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 error: method 'secret' of type 'Circle' is private; add 'pub' to its declaration
---> tests/compile-fail/modules/private_method.tp:10:12
+--> tests/compile-fail/modules/private_method.tp:11:12
 - .exit
 1
 -- */

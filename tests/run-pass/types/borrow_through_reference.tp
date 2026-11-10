@@ -8,6 +8,7 @@
 //    compile-fail/borrow/write_borrowed_field_through_reference.tp。
 
 import std.vec as vec;
+import std.vec.Vec;
 
 struct Point { x: i32, y: i32 }
 

@@ -6,7 +6,9 @@
 //   - mode 与 C 的 `fopen` 一致，**务必带 b**（`"rb"` / `"wb"` / `"ab"`）。
 //     少了 b，Windows 上会把 `\n` 翻译成 `\r\n`。
 import std.string_builder as sb;
+import std.string_builder.StringBuilder;
 import std.vec as vec;
+import std.vec.Vec;
 
 // 目录遍历所需的内部 Runtime ABI。
 extern fn __tap_dir_open(path: String): *i8;

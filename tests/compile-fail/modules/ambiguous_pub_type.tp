@@ -1,8 +1,10 @@
-// 两个被命名空间导入的模块都导出 Point，写裸名没有确定答案 —— 必须报歧义，不静默偏向。
-// 想指定其中一个就写限定名 `a.Point` / `b.Point`（见 run-pass/modules/qualified_type_name.tp）。
+// 命名空间导入**不带任何裸名**：`import m as a;` 之后类型只能写 `a.Type`。
+// 两个模块都导出 `Point` 时裸写 `Point` 认不出来，诊断要把两个模块各自的写法都列出来
+// ——只报第一个会让人以为「只有一个模块有」。
 //
-// 报错**不带位置**（VarTypeNode 没有行列信息），所以把涉及的两个模块名都列出来。
-// 另外这条是「用到才报」：导入本身没问题，只有真的写出那个裸名才会触发。
+// 以前这里是「裸名歧义」，因为命名空间导入会把 pub 类型名塞进裸名作用域；那个行为
+// 已经去掉，裸名一律要么显式导入（`import m.Point;`），要么加限定（`a.Point`）。
+// 能用的写法见 run-pass/modules/qualified_type_name.tp。
 import modules.clash_a as a;
 import modules.clash_b as b;
 
@@ -13,8 +15,10 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: type name 'Point' is exported by both 'modules.clash_b' and 'modules.clash_a'; the bare name is ambiguous
-note: write 'b.Point' or 'a.Point' to pick one
+error: type 'Point' is not in scope
+note: module 'modules.clash_b' exports it, write 'b.Point'
+note: module 'modules.clash_a' exports it, write 'a.Point'
+note: or bring it into scope: `import modules.clash_b.Point;`
 - .exit
 1
 -- */

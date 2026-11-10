@@ -8,7 +8,9 @@
 // 触发条件很窄：载荷类型必须来自**其他模块**（名字带 `__tap_module_N.` 前缀），
 // 因为那样 `resolve_type_name` 才会真的去查导入绑定。载荷是标量或本文件的结构体时不崩。
 import std.string_builder as sb;
+import std.string_builder.StringBuilder;
 import std.vec as vec;
+import std.vec.Vec;
 
 enum FromModule {
     Text(StringBuilder),

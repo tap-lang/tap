@@ -7,6 +7,7 @@
 // 单态化键也跟着分开（`r_i32` / `rm_i32` / `p_i32`），
 // 否则 `Vec<&i32>` 和 `Vec<*i32>` 会撞进同一个实例。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn sum(refs: &Vec<&i32>): i32 {
     let total: i32 = 0;

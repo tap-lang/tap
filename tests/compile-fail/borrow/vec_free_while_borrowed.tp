@@ -1,6 +1,7 @@
 // 借用还没结束时释放容器：free 按值接收，等于「这个 Vec 用完了」，
 // 调用方手里那个元素引用马上指向已释放的内存。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<i32> = vec.new();

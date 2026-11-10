@@ -2,6 +2,7 @@
 // 不再有定长数组的空串填充；用完要自己 free。
 import std.env as env;
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<String> = env.args();

@@ -272,6 +272,7 @@ fn main(): i32 {
 ```text
 import std.env as env;
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<String> = env.args();
@@ -324,6 +325,7 @@ fn main(): i32 {
 
 ```text
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<i32> = vec.new();
@@ -361,6 +363,7 @@ values.push(1);      // error: 'values' is already borrowed, so it cannot be bor
 
 ```text
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<String> = vec.new();
@@ -382,6 +385,7 @@ fn main(): i32 {
 
 ```text
 import std.byte_vec as bytes;
+import std.byte_vec.ByteVec;
 
 fn main(): i32 {
     let buffer: ByteVec = bytes.with_capacity(4);
@@ -401,6 +405,7 @@ fn main(): i32 {
 
 ```text
 import std.string_builder as builder;
+import std.string_builder.StringBuilder;
 
 fn main(): i32 {
     let output: StringBuilder = builder.new();
@@ -465,6 +470,7 @@ print("%lld\n", unwrap_or(parsed, 0));
 ```text
 import std.json;
 import std.string_builder as sb;
+import std.string_builder.StringBuilder;
 
 fn main(): i32 {
     // 输出：转义并补上两侧引号，结果可以直接放进 JSON
@@ -499,6 +505,7 @@ fn main(): i32 {
 
 ```text
 import std.fs as fs;
+import std.fs.File;
 
 fn main(): i32 {
     let out: File = fs.open("notes.txt", "wb");
@@ -572,6 +579,7 @@ fn main(): i32 {
 
 ```text
 import std.net as net;
+import std.net.Socket;
 
 fn main(): i32 {
     // 端口 0 交给内核挑一个空闲的，再用 local_port 取回来。

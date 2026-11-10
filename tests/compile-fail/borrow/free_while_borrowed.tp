@@ -1,5 +1,6 @@
 // 最贴近真实代码的一条：`Vec` 的 `free` 按值接收，借用还活着时释放就是 use-after-free。
 import std.vec as vec;
+import std.vec.Vec;
 
 fn main(): i32 {
     let values: Vec<i32> = vec.new();
