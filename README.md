@@ -30,14 +30,15 @@ make
 
 - **带载荷枚举**：tagged union，`match` 按成员解构，分支必须穷尽
 - **泛型**：函数与结构体单态化，类型实参由实参推断，支持 trait 约束
+- **借用检查**：`&T` / `&mut T` 共享与独占借用，字段粒度冲突、NLL 寿命与跨函数签名检查；`*T` 不检查
 - **模块系统**：`pub` 可见性、别名、通配与单成员导入
 - **C 互操作**：`extern fn` 直接绑 libc，`std.net` / `std.fs` 全靠它实现
 - **零导入 Prelude**：`print`、`panic`、`Result<T, E>` 开箱可用
 - **多平台**：macOS、Linux、Windows（MSVC 与 MinGW-w64）
 - **可调试**：`tap -g` 生成 DWARF 行号表，`gdb` / `lldb` 能按 `源码:行号` 断点
 
-各特性的细节见[数据类型](docs/data-types.md#带载荷枚举)、[模块导入](docs/module.md)、
-[标准库](docs/std.md)和 [C 互操作](docs/extern.md)。
+各特性的细节见[数据类型](docs/data-types.md#带载荷枚举)、[借用与引用](docs/borrow.md)、
+[模块导入](docs/module.md)、[标准库](docs/std.md)和 [C 互操作](docs/extern.md)。
 
 ## 文档
 

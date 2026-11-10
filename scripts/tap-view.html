@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TAP 源码查看器</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de; --fg: #1f2328;
+    --muted: #6e7781; --kw: #cf222e; --ty: #0550ae; --str: #0a3069;
+    --num: #0550ae; --cmt: #6e7781; --fn: #8250df;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 13px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header strong { font-size: 13px; }
+  #file-name { font-family: ui-monospace, Consolas, monospace; color: var(--muted); }
+  .spacer { flex: 1; }
+  label.btn {
+    display: inline-block; padding: 5px 12px; border: 1px solid var(--border);
+    border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px;
+  }
+  label.btn:hover { background: #eef1f4; }
+  input[type=file] { display: none; }
+  .hint { font-size: 12px; color: var(--muted); }
+  #wrap { display: flex; overflow: auto; max-height: calc(100vh - 58px); }
+  pre { margin: 0; padding: 14px 12px; font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 4; }
+  .gutter {
+    flex: none; text-align: right; color: #8c959f; background: var(--panel);
+    border-right: 1px solid var(--border); user-select: none; min-width: 52px;
+  }
+  .code { flex: 1; white-space: pre; }
+  .c-comment { color: var(--cmt); font-style: italic; }
+  .c-string  { color: var(--str); }
+  .c-kw      { color: var(--kw); font-weight: 600; }
+  .c-type    { color: var(--ty); }
+  .c-num     { color: var(--num); }
+  .c-fn      { color: var(--fn); }
+  #empty { padding: 48px 24px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <strong>TAP 源码查看器</strong>
+  <span id="file-name">未选择文件</span>
+  <span class="spacer"></span>
+  <span class="hint">可直接拖入 .tp / .tap 文件</span>
+  <label class="btn">选择文件<input type="file" id="picker" accept=".tp,.tap,.txt"></label>
+</header>
+<div id="empty">选择一个 .tp / .tap 文件，或用 <code>tap-preview.py</code> 生成带内嵌源码的预览页。</div>
+<div id="wrap" hidden><pre class="gutter" id="gutter"></pre><pre class="code"><code id="code"></code></pre></div>
+
+<!--TAP_EMBED-->
+
+<script>
+(function () {
+  'use strict';
+  // 顺序决定优先级：注释 > 字符串 > 关键字 > 类型 > 数字 > 函数名。
+  var TOKEN = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(pub|fn|let|const|struct|enum|impl|trait|import|as|if|else|while|for|break|continue|return|match|extern|mut|in|self|true|false|null|void)\b|\b(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|int|uint|f32|f64|bool|char|String|c_string|Vec|Option|Result|ByteVec|StringBuilder|Map|Set|File|Socket)\b|\b(0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*)\b|\b([A-Za-z_]\w*)(?=\s*\()/g;
+
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function highlight(src) {
+    var out = '', last = 0, m;
+    TOKEN.lastIndex = 0;
+    while ((m = TOKEN.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      var cls = m[1] ? 'c-comment' : m[2] ? 'c-string' : m[3] ? 'c-kw'
+              : m[4] ? 'c-type' : m[5] ? 'c-num' : 'c-fn';
+      out += '<span class="' + cls + '">' + esc(m[0]) + '</span>';
+      last = m.index + m[0].length;
+    }
+    return out + esc(src.slice(last));
+  }
+
+  function show(name, text) {
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    document.getElementById('file-name').textContent = name;
+    document.title = name + ' · TAP 查看器';
+    document.getElementById('empty').hidden = true;
+    document.getElementById('wrap').hidden = false;
+    var lines = text.split('\n');
+    var nums = [];
+    for (var i = 1; i <= lines.length; i++) nums.push(i);
+    document.getElementById('gutter').textContent = nums.join('\n');
+    document.getElementById('code').innerHTML = highlight(text);
+  }
+
+  var embed = document.getElementById('tap-embed');
+  if (embed && embed.textContent.trim()) {
+    try {
+      var bin = atob(embed.textContent.trim());
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var payload = JSON.parse(new TextDecoder('utf-8').decode(bytes));
+      show(payload.name, payload.text);
+    } catch (e) {
+      document.getElementById('empty').textContent = '内嵌源码解析失败: ' + e.message;
+    }
+  }
+
+  function load(file) {
+    if (!file) return;
+    file.text().then(function (t) { show(file.name, t); });
+  }
+  document.getElementById('picker').addEventListener('change', function (e) {
+    load(e.target.files[0]);
+  });
+  document.addEventListener('dragover', function (e) { e.preventDefault(); });
+  document.addEventListener('drop', function (e) {
+    e.preventDefault();
+    load(e.dataTransfer.files[0]);
+  });
+})();
+</script>
+</body>
+</html>
