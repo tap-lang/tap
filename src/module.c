@@ -468,7 +468,20 @@ int resolve_package_target(
         free_package_info(&info);
         return 1;
     }
-    char *output = join_path(build_root, info.name);
+    // Windows 上产物必须带 .exe：`tap run` 编译完直接执行这个文件，而
+    // CreateProcess / spawn 不会像 cmd 那样替我们补扩展名。
+    char executable_name[512];
+#ifdef _WIN32
+    int name_length = snprintf(
+        executable_name, sizeof(executable_name), "%s.exe", info.name);
+#else
+    int name_length = snprintf(
+        executable_name, sizeof(executable_name), "%s", info.name);
+#endif
+    char *output = NULL;
+    if (name_length > 0 && (size_t)name_length < sizeof(executable_name)) {
+        output = join_path(build_root, executable_name);
+    }
     free(build_root);
 
     if (!output) {

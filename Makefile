@@ -12,9 +12,11 @@ ifeq ($(SANITIZE),1)
     SANITIZER_FLAGS = -fsanitize=address -fno-omit-frame-pointer
 endif
 
-RUNTIME_INCLUDE = -Iruntime/include
+RUNTIME_INCLUDE = -Iruntime/include -Iruntime/src
 RUNTIME_CFLAGS = -Wall -Wextra -g $(RUNTIME_INCLUDE) -fPIC
 RUNTIME_OBJECT = $(BUILD_DIR)/runtime.o
+# 进程胶水层单独一个编译单元：平台差异（fork/execvp vs CreateProcess）全在那里。
+RUNTIME_SUPPORT_OBJECTS = $(BUILD_DIR)/runtime_process.o
 RUNTIME_STATIC = $(BUILD_DIR)/libtap_runtime.a
 # Windows 的 winsock 符号在 ws2_32 里，共享 Runtime 需要显式链接。
 RUNTIME_SHARED_LIBS =
@@ -97,16 +99,20 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/version.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # Runtime objects are position independent so the same object can back both library forms.
-$(RUNTIME_OBJECT): runtime/src/runtime.c runtime/include/tap_runtime.h | $(BUILD_DIR)
+$(RUNTIME_OBJECT): runtime/src/runtime.c runtime/include/tap_runtime.h runtime/src/runtime_internal.h | $(BUILD_DIR)
+	$(CC) $(RUNTIME_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/runtime_%.o: runtime/src/%.c runtime/include/tap_runtime.h runtime/src/runtime_internal.h | $(BUILD_DIR)
 	$(CC) $(RUNTIME_CFLAGS) -c $< -o $@
 
 # The generated native program links this archive only when Runtime symbols are referenced.
-$(RUNTIME_STATIC): $(RUNTIME_OBJECT)
-	$(AR) rcs $@ $<
+$(RUNTIME_STATIC): $(RUNTIME_OBJECT) $(RUNTIME_SUPPORT_OBJECTS)
+	rm -f $@
+	$(AR) rcs $@ $^
 
 # lli loads this library to resolve extern Runtime declarations.
-$(RUNTIME_SHARED): $(RUNTIME_OBJECT)
-	$(CC) $(RUNTIME_SHARED_FLAGS) -o $@ $< $(RUNTIME_SHARED_LIBS)
+$(RUNTIME_SHARED): $(RUNTIME_OBJECT) $(RUNTIME_SUPPORT_OBJECTS)
+	$(CC) $(RUNTIME_SHARED_FLAGS) -o $@ $^ $(RUNTIME_SHARED_LIBS)
 
 -include $(DEPS)
 

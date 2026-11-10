@@ -39,16 +39,16 @@ option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(TAP_STATIC_LLVM "Link LLVM statically (component archives) instead of libLLVM" OFF)
 
 # Build both Runtime forms: native executables use the archive and lli loads the shared library.
-add_library(tap_runtime STATIC runtime/src/runtime.c)
-target_include_directories(tap_runtime PUBLIC runtime/include)
+add_library(tap_runtime STATIC runtime/src/runtime.c runtime/src/process.c)
+target_include_directories(tap_runtime PUBLIC runtime/include PRIVATE runtime/src)
 set_target_properties(tap_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
     set_property(TARGET tap_runtime PROPERTY MSVC_RUNTIME_LIBRARY
         "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-add_library(tap_runtime_shared SHARED runtime/src/runtime.c)
-target_include_directories(tap_runtime_shared PUBLIC runtime/include)
+add_library(tap_runtime_shared SHARED runtime/src/runtime.c runtime/src/process.c)
+target_include_directories(tap_runtime_shared PUBLIC runtime/include PRIVATE runtime/src)
 target_compile_definitions(tap_runtime_shared PRIVATE TAP_RUNTIME_SHARED=1)
 set_target_properties(tap_runtime_shared PROPERTIES
     OUTPUT_NAME tap_runtime

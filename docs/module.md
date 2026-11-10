@@ -364,7 +364,7 @@ env TAP_MODULE_PATH=/path/to/project:/another/root ./build/tap run app/main.tp
 ### 包模式：`tap build` / `tap run` / `tap check` 不带文件时
 
 ```text
-tap build               # 只编译不运行，产物写到 <包根>/build/<name>
+tap build               # 只编译不运行，产物写到 <包根>/build/<name>（Windows: <name>.exe）
 tap run                 # 编译完接着运行
 tap check               # 只检查，不产出任何文件，也不会创建 build/
 tap run main.tp         # 文件模式：现有行为，完全不变

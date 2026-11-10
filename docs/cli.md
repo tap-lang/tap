@@ -15,7 +15,7 @@ tap new <名字>
 | `tap <源文件>` | 默认：编译为目标文件并链接成可执行文件 |
 | `tap run ...` | 编译为本地可执行文件并运行，返回程序的退出码 |
 | `tap check ...` | 只做编译期检查，不产出文件、不链接 |
-| `tap build` | 包模式：编译当前包，产物放到 `<包根>/build/<name>` |
+| `tap build` | 包模式：编译当前包，产物放到 `<包根>/build/<name>`（Windows 上是 `<name>.exe`） |
 | `tap new <名字>` | 转发给 `tapm new`，新建项目 |
 | `tap -h` / `-V` | 打印帮助 / 版本与 git 提交 |
 
@@ -78,7 +78,8 @@ tap new <名字>
 ## 包模式
 
 `tap run` / `tap check` / `tap build` 不给文件时按**包模式**工作：从当前目录向上找到
-`package.toml`，按里面的 `entry` 编译，产物放到 `<包根>/build/<name>`。`run` 编译完接着
+`package.toml`，按里面的 `entry` 编译，产物放到 `<包根>/build/<name>`（Windows 上加 `.exe`
+后缀，否则 `run` 找不到能执行的文件）。`run` 编译完接着
 运行，`build` 只编译，`check` 只检查（**不会创建 `build/` 目录** —— 检查不该有副作用）。
 包布局的约定见 tapm 仓库的 `docs/design.md`，
 解析细节见[模块导入文档](module.md#包模式tap-build--tap-run--tap-check-不带文件时)。

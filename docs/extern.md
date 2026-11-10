@@ -300,8 +300,10 @@ extern fn __tap_sqlite_open(path: String): i32;
 ```
 
 这正是标准库现在的做法（`std/fs.tp`、`std/net.tp` 全是这个模式），也是
-process 包跨平台改造要走的路线——把 `fork`/`execvp` 的平台差异收进
-`__tap_process_run`，`.tp` 侧只留简单签名。
+process 包跨平台改造走的路线——`fork`/`execvp` 和 `CreateProcessW` 的平台差异收进了
+`runtime/src/process.c` 的 `__tap_process_run` 等 5 个函数，`.tp` 侧只剩简单签名，
+同一份 tap 代码在 POSIX 和 Windows 上都跑。ABI 细节见 [`runtime.md`](runtime.md) 的
+「子进程 ABI」。
 
 | | 优点 | 缺点 |
 |---|---|---|

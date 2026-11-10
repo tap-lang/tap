@@ -25,6 +25,13 @@ extern fn __tap_stream_read(stream: *i8, count: uint): String;
 extern fn __tap_ptr_is_null(pointer: *i8): i32;
 extern fn __tap_process_exit_code(status: i32): i32;
 extern fn __tap_process_was_signaled(status: i32): i32;
+extern fn __tap_platform(): i32;
+
+// 当前平台是不是 Windows。tap 没有条件编译，要按平台换命令（`sh -c` / `cmd /c`）、
+// 换路径分隔符时只能运行时判断。
+pub fn is_windows(): bool {
+    return __tap_platform() == 1;
+}
 
 // 运行一条 shell 命令，返回状态码：0 表示成功，非 0 表示命令不存在 / 非零退出 /
 // 被信号打断。判断「成不成功」用 `status != 0`。

@@ -163,7 +163,13 @@ MinGW 下链接不再经过 gcc 驱动，也就没有 libgcc 了。LLVM 后端�
 （可能被存进 `Vec`），释放会让调用方拿到悬空指针。和 tap 其他 Runtime 字符串一样，
 这些名字活到进程结束。
 
-Windows 走 `_findfirst` / `_findnext`，其余平台走 `opendir` / `readdir`。
+Windows 走 `FindFirstFileW`，其余平台走 `opendir` / `readdir`。
+
+**Windows 侧整条 fs 链路都走 W 版 API**（`_wfopen` / `_wremove` / `_wmkdir` /
+`GetFileAttributesW` / `CreateSymbolicLinkW` / `FindFirstFileW`）：A 版按系统代码页
+（简体中文 Windows 是 GBK）解释参数，而 tap 的 `String` 是 UTF-8，中文路径会直接传错。
+转码只在 `tap_wide_from_utf8` / `tap_string_from_wide` 这两个函数里做（`runtime/src/process.c`
+与 `runtime.c` 共用），字符串里出现内嵌 NUL 会被拒绝而不是静默截断。
 
 ## 文件系统 ABI
 
@@ -172,6 +178,11 @@ Windows 走 `_findfirst` / `_findnext`，其余平台走 `opendir` / `readdir`�
 | `__tap_make_directory(path): i32` | 建目录；已存在也算成功 |
 | `__tap_symlink(target, link_path): i32` | 建符号链接；Windows 需要开发者模式 |
 | `__tap_remove_entry(path): i32` | 删除文件或空目录 |
+| `__tap_make_writable(path): i32` | 去掉只读属性；路径不存在返回 `-1` |
+
+`__tap_make_writable` 是为「递归删除目录树」准备的：Git for Windows 会把
+`.git/objects` 里的松散对象设成只读，不先清属性，删到一半就会「拒绝访问」。
+POSIX 侧对应给所有者加写位，本来就可写时是空操作。
 
 符号链接在 Windows 上要先试 `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE`，
 失败再退回不带该标志（老系统不认）。`tapm` 靠它把 path 依赖接进 `packages/`。
@@ -228,6 +239,37 @@ libc 的 `exit`**，因为那会占住 LLVM 模块里的 `exit` 符号，和 Pre
 并在使用完毕后调用 `std.sys.pclose`。POSIX 使用 `popen` / `pclose`，Windows 使用 `_popen` /
 `_pclose`，平台差异隐藏在 Runtime 中。`capture` 是读取标准输出的一次性便捷封装，最多读取
 1 MiB。
+
+## 子进程 ABI
+
+`process` 包（不带 shell 地起进程、分别捕获 stdout / stderr）不再自己绑 `fork` /
+`execvp`，改用下面这组 ABI。实现分别在 `runtime/src/process.c` 的两个分支里
+（POSIX 用 `fork` + `execvp` + `poll`，Windows 用 `CreateProcessW` + `CreatePipe` +
+`PeekNamedPipe`），`.tp` 侧没有平台分支。
+
+| C ABI | 行为 |
+|---|---|
+| `__tap_process_run(program, arguments, env, working_dir, mode): *void` | 起进程并等它结束；只有「无法建立进程」返回 `NULL` |
+| `__tap_process_status(handle): i32` | 退出码：`0..255` / 被信号或异常终止 `-1` / 程序不存在 `127` |
+| `__tap_process_stdout(handle): String` | 捕获到的标准输出；继承模式或句柄无效时为空串 |
+| `__tap_process_stderr(handle): String` | 捕获到的标准错误 |
+| `__tap_process_free(handle): i32` | 释放整份结果 |
+| `__tap_platform(): i32` | `0` = POSIX，`1` = Windows（`std.sys.is_windows` 的底层） |
+
+`arguments` / `env` 都是 **`'\0'` 分隔的扁平 String**，不是 `Vec<String>`——C 侧没有
+「String 数组」这种 ABI，而扁平表可以直接用 `StringBuilder` 拼、按 `length` 走字节
+（`String` 允许内嵌 NUL）。约定：每个元素后面补一个 `'\0'`，末尾那个空段不计入，
+所以 `"a\0"` 是一个参数、`"a\0\0"` 才是两个（第二个是空串）。
+
+`mode` 为 `0` 时走管道捕获，为 `1` 时子进程直接继承标准流（`status_inherit` 用它做实时的
+进度输出）。三个平台差异点值得记住：
+
+- **程序不存在统一报 127**。POSIX 是子进程 `execvp` 失败后 `_exit(127)`；Windows 的
+  `CreateProcess` 失败发生在父进程，必须手工对齐，否则同一段 tap 代码两端行为不同。
+- **`CREATE_UNICODE_ENVIRONMENT` 不能省**。传了宽字符环境块却不带这个标志，Win32 会把
+  它按 ANSI 解释，环境块立刻变成畸形数据，`CreateProcessW` 直接失败。
+- **`lpCurrentDirectory` 只接受绝对路径**。POSIX 的 `chdir` 接受相对路径，所以 Windows
+  侧先用 `GetFullPathNameW` 解析成绝对路径，`git -C <相对路径>` 这类用法才和 POSIX 一致。
 
 ## 套接字 ABI
 

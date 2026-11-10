@@ -160,6 +160,11 @@ TAP_RUNTIME_API int32_t __tap_make_directory(const String *path);
 // 删除文件或空目录；成功返回 0。
 TAP_RUNTIME_API int32_t __tap_remove_entry(const String *path);
 
+// 去掉只读属性；成功返回 0，路径不存在返回 -1。
+// 递归删除目录树之前要调它：Git for Windows 把 .git/objects 里的文件设成只读，
+// 不清掉属性会在中途「拒绝访问」。
+TAP_RUNTIME_API int32_t __tap_make_writable(const String *path);
+
 // 打印 `panic: <message>` 并以状态 1 终止；不会返回。
 TAP_RUNTIME_API int32_t __tap_panic(const String *message);
 // 以指定状态码终止程序；不会返回。走 libc 的 exit，标准库缓冲区会被刷新。
@@ -190,6 +195,35 @@ TAP_RUNTIME_API int32_t __tap_ptr_is_null(void *pointer);
 TAP_RUNTIME_API int32_t __tap_process_exit_code(int32_t status);
 // 判断进程是否被信号终止；Windows 或状态无效时返回 0。
 TAP_RUNTIME_API int32_t __tap_process_was_signaled(int32_t status);
+
+// ---- 直接 spawn 子进程（跨平台） ----
+//
+// 和上面的 system / popen 不同，这条路径**不经过 shell**：程序名和参数逐项交给
+// 平台 API（POSIX 的 fork+execvp、Windows 的 CreateProcessW），所以空格、引号、
+// 中文路径都不需要调用方操心。平台差异全部收在 runtime/src/process.c。
+//
+// arguments / env 都是 '\0' 分隔的扁平 String（元素内的 NUL 无法表达，C 侧接不了
+// 「String 数组」）：tap 每追加一个元素就补一个 '\0'，末尾那个不计入。
+//   arguments = "-c\0echo hi\0"   → argv = [program, "-c", "echo hi"]
+//   env       = "K=V\0"           → 在父进程环境之上覆盖 K
+// mode：0 = 捕获 stdout/stderr，1 = 继承父进程标准流（实时显示）。
+// 返回不透明结果句柄；只有无法建立进程（内存 / 管道失败）时返回 NULL。
+TAP_RUNTIME_API void *__tap_process_run(const String *program,
+                                        const String *arguments,
+                                        const String *env,
+                                        const String *working_dir,
+                                        int32_t mode);
+// 退出码：正常退出是 0..255，被信号 / 异常终止是 -1，
+// 程序不存在是 127（两平台一致）。
+TAP_RUNTIME_API int32_t __tap_process_status(void *handle);
+// 捕获到的 stdout / stderr；继承模式或句柄无效时返回空串。
+TAP_RUNTIME_API void __tap_process_stdout(String *out, void *handle);
+TAP_RUNTIME_API void __tap_process_stderr(String *out, void *handle);
+// 释放整份结果；句柄随即可失效。成功返回 0。
+TAP_RUNTIME_API int32_t __tap_process_free(void *handle);
+
+// 当前平台：0 = POSIX，1 = Windows。tap 没有条件编译，需要平台分支时只能靠它。
+TAP_RUNTIME_API int32_t __tap_platform(void);
 
 // 浮点幂，指数可为小数或负数；底层是 C 库的 pow（需要 libm）。
 TAP_RUNTIME_API double __tap_pow_f64(double base, double exponent);

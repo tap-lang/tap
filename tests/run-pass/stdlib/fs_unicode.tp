@@ -1,0 +1,58 @@
+// 非 ASCII 路径：Windows 侧 std.fs 全部走 W 版 API（UTF-8 → UTF-16 转码），
+// POSIX 侧就是普通字节路径。两边的行为必须一致，所以这个用例在三个平台都跑。
+import std.fs as fs;
+import std.vec as vec;
+import std.vec.Vec;
+
+fn main(): i32 {
+    let directory: String = "std_fs_中文.tmp";
+    let path: String = directory + "/文件.txt";
+
+    // 上一轮中断时可能留下残骸，先清掉（不存在时返回 -1，忽略）。
+    fs.remove_entry(path);
+    fs.remove_entry(directory);
+
+    print("make_dir=%d\n", fs.make_dir(directory));
+    print("is_dir=%d\n", fs.is_dir(directory));
+
+    print("write=%lld\n", fs.write_text(path, "中文内容"));
+    let loaded: Result<String, String> = fs.read_text(path);
+    let text: String = match (loaded) {
+        Result.Ok(value) => value,
+        Result.Err(reason) => "读取失败",
+    };
+    print("read=%s\n", text);
+
+    let listing: Result<Vec<String>, String> = fs.read_dir(directory);
+    let entries: Vec<String> = match (listing) {
+        Result.Ok(value) => value,
+        Result.Err(reason) => vec.new<String>(),
+    };
+    print("entries=%u\n", entries.len());
+    if (entries.len() > 0) {
+        print("entry=%s\n", entries.get(0));
+    }
+    vec.free(entries);
+
+    print("writable=%d\n", fs.make_writable(path));
+    print("remove=%d\n", fs.remove_entry(path));
+    print("remove_dir=%d\n", fs.remove_entry(directory));
+    print("still_dir=%d\n", fs.is_dir(directory));
+    return 0;
+}
+
+/** -- test
+- .stdout
+make_dir=0
+is_dir=1
+write=12
+read=中文内容
+entries=1
+entry=文件.txt
+writable=0
+remove=0
+remove_dir=0
+still_dir=0
+- .exit
+0
+-- */

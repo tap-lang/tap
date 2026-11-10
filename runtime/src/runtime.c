@@ -1,4 +1,4 @@
-#include "tap_runtime.h"
+#include "runtime_internal.h"
 
 #include <limits.h>
 #include <math.h>
@@ -146,6 +146,73 @@ static const char *require_c_string(String value, const char *purpose) {
     return value.data;
 }
 
+#ifdef _WIN32
+// 文件系统这一层在 Windows 上全部走 W 版 API。A 版按系统代码页解释参数
+// （简体中文 Windows 是 GBK），而 tap 的 String 是 UTF-8 —— 用 A 版会把
+// 中文路径传成乱码，`tapm` 在中文目录下读不到自己的包。转码只在这里做一次。
+wchar_t *tap_wide_from_utf8(const char *data, size_t length) {
+    if (!data || length == 0) {
+        wchar_t *empty = malloc(sizeof(wchar_t));
+        if (!empty) {
+            fprintf(stderr, "failed to allocate wide string\n");
+            exit(1);
+        }
+        empty[0] = L'\0';
+        return empty;
+    }
+    // 内嵌 NUL 会让宽字符串在中间截断，路径和实际文件就对不上了，直接拒绝。
+    if (memchr(data, 0, length) != NULL) {
+        fprintf(stderr, "path cannot contain NUL bytes\n");
+        return NULL;
+    }
+    if (length > (size_t)INT_MAX) {
+        fprintf(stderr, "path is too long\n");
+        return NULL;
+    }
+    int needed = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, data, (int)length, NULL, 0);
+    if (needed <= 0) {
+        fprintf(stderr, "path is not valid UTF-8\n");
+        return NULL;
+    }
+    wchar_t *wide = malloc(sizeof(wchar_t) * ((size_t)needed + 1));
+    if (!wide) {
+        fprintf(stderr, "failed to allocate wide string\n");
+        exit(1);
+    }
+    if (MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, data, (int)length, wide, needed) != needed) {
+        free(wide);
+        fprintf(stderr, "failed to convert path to UTF-16\n");
+        return NULL;
+    }
+    wide[needed] = L'\0';
+    return wide;
+}
+
+// UTF-16 → UTF-8，结果由 Runtime 持有。目录条目名走这条路。
+String tap_string_from_wide(const wchar_t *data, size_t length) {
+    if (!data || length == 0) return empty_string();
+    if (length > (size_t)INT_MAX) return empty_string();
+    int needed = WideCharToMultiByte(
+        CP_UTF8, 0, data, (int)length, NULL, 0, NULL, NULL);
+    if (needed <= 0) return empty_string();
+    char *utf8 = malloc((size_t)needed + 1);
+    if (!utf8) {
+        fprintf(stderr, "failed to allocate utf-8 string\n");
+        exit(1);
+    }
+    if (WideCharToMultiByte(
+            CP_UTF8, 0, data, (int)length, utf8, needed, NULL, NULL) != needed) {
+        free(utf8);
+        return empty_string();
+    }
+    String result = tap_allocate_string_copy(utf8, (size_t)needed);
+    free(utf8);
+    return result;
+}
+#endif // _WIN32
+
 // Runtime 生成的字符串串成单向链表，在进程退出时统一释放。
 typedef struct TapOwnedString {
     struct TapOwnedString *next;
@@ -185,7 +252,7 @@ static char *allocate_owned_string(size_t length) {
 }
 
 // 复制精确的 length 个字节并补尾部 NUL。length 独立保存，所以中间出现 NUL 不会截断内容。
-static String allocate_string_copy(const void *data, size_t length) {
+String tap_allocate_string_copy(const void *data, size_t length) {
     char *result = allocate_owned_string(length);
     if (length > 0) memcpy(result, data, length);
     result[length] = '\0';
@@ -318,7 +385,7 @@ void __tap_string_slice(
     }
 
     size_t slice_length = (size_t)(end - start);
-    *out = allocate_string_copy(value->data + start, slice_length);
+    *out = tap_allocate_string_copy(value->data + start, slice_length);
 }
 
 // 按无符号 UTF-8 字节序比较；共同前缀相同时短串排在前面。
@@ -384,7 +451,7 @@ void __tap_string_replace(
     String *out, const String *value, const String *from, const String *to) {
     // from 为空串：直接复制 value，避免无限循环。
     if (from->length == 0) {
-        *out = allocate_string_copy(value->data, (size_t)value->length);
+        *out = tap_allocate_string_copy(value->data, (size_t)value->length);
         return;
     }
 
@@ -428,7 +495,7 @@ void __tap_format_i64(String *out, int64_t value) {
         fprintf(stderr, "failed to format integer\n");
         exit(1);
     }
-    *out = allocate_string_copy(buffer, (size_t)length);
+    *out = tap_allocate_string_copy(buffer, (size_t)length);
 }
 
 // 把无符号整数格式化为 Runtime 管理的十进制字符串。
@@ -439,7 +506,7 @@ void __tap_format_u64(String *out, uint64_t value) {
         fprintf(stderr, "failed to format integer\n");
         exit(1);
     }
-    *out = allocate_string_copy(buffer, (size_t)length);
+    *out = tap_allocate_string_copy(buffer, (size_t)length);
 }
 
 // 128 位无符号数的四个 32 位小端 limb。手工实现十进制除法和乘法，
@@ -685,7 +752,7 @@ int32_t __tap_string_copy_bytes(
 
 // 复制 ByteVec 的有效字节并补兼容 C API 的尾部 NUL；length 仍保留内嵌 NUL。
 void __tap_bytes_to_string(String *out, const uint8_t *data, size_t length) {
-    *out = allocate_string_copy(data, length);
+    *out = tap_allocate_string_copy(data, length);
 }
 
 // 把 double 渲染成十进制字符串。先用 %.15g，再逐步提高精度直到结果能往返：
@@ -708,7 +775,7 @@ void __tap_format_f64(String *out, double value) {
     }
 
     size_t length = strlen(buffer);
-    *out = allocate_string_copy(buffer, length);
+    *out = tap_allocate_string_copy(buffer, length);
 }
 
 // 与 f64 版本相同，但按 float 的有效精度寻找最短往返表示，避免
@@ -724,7 +791,7 @@ void __tap_format_f32(String *out, float value) {
         }
     }
     size_t length = strlen(buffer);
-    *out = allocate_string_copy(buffer, length);
+    *out = tap_allocate_string_copy(buffer, length);
 }
 
 // 分配堆内存；size 为 0 时仍申请 1 字节，避免不同 C 库对 malloc(0) 的差异。
@@ -843,10 +910,25 @@ static void file_unregister(FILE *file) {
 // 打开文件；失败返回 NULL。mode 与 C 的 fopen 一致，调用方应带 b
 //（"rb" 读 / "wb" 写 / "ab" 追加），否则 Windows 会把 \n 翻译成 \r\n。
 void *__tap_file_open(const String *path, const String *mode) {
-    const char *path_data = require_c_string(*path, "file path");
     const char *mode_data = require_c_string(*mode, "file mode");
-    if (!path_data || !mode_data) return NULL;
+    if (!mode_data) return NULL;
+#ifdef _WIN32
+    wchar_t *wide_path = tap_wide_from_utf8(
+        path->data ? path->data : "", (size_t)path->length);
+    if (!wide_path) return NULL;
+    wchar_t *wide_mode = tap_wide_from_utf8(mode_data, strlen(mode_data));
+    if (!wide_mode) {
+        free(wide_path);
+        return NULL;
+    }
+    FILE *file = _wfopen(wide_path, wide_mode);
+    free(wide_path);
+    free(wide_mode);
+#else
+    const char *path_data = require_c_string(*path, "file path");
+    if (!path_data) return NULL;
     FILE *file = fopen(path_data, mode_data);
+#endif
     if (!file) return NULL;
     if (file_register(file) != 0) {
         fclose(file);
@@ -910,9 +992,18 @@ int32_t __tap_file_eof(void *handle) {
 
 // 删除文件；成功返回 0，失败返回 -1。
 int32_t __tap_file_remove(const String *path) {
+#ifdef _WIN32
+    wchar_t *wide = tap_wide_from_utf8(
+        path->data ? path->data : "", (size_t)path->length);
+    if (!wide) return -1;
+    int result = _wremove(wide);
+    free(wide);
+    return result == 0 ? 0 : -1;
+#else
     const char *path_data = require_c_string(*path, "file path");
     if (!path_data) return -1;
     return remove(path_data) == 0 ? 0 : -1;
+#endif
 }
 
 // popen / pclose 在严格 POSIX 模式下（glibc 不设 _POSIX_C_SOURCE 时）不会通过 <stdio.h>
@@ -1111,9 +1202,6 @@ static int directory_append(
 
 // 打开目录准备遍历；失败返回 NULL。条目里不含 "." 和 ".."。
 void *__tap_dir_open(const String *path) {
-    const char *path_data = require_c_string(*path, "directory path");
-    if (!path_data) return NULL;
-
     TapDirectory *directory = calloc(1, sizeof(TapDirectory));
     if (!directory) return NULL;
 
@@ -1125,34 +1213,57 @@ void *__tap_dir_open(const String *path) {
     }
 
 #ifdef _WIN32
-    size_t path_length = (size_t)path->length;
-    char *pattern = malloc(path_length + 3);
-    if (!pattern) {
+    wchar_t *directory_path = tap_wide_from_utf8(
+        path->data ? path->data : "", (size_t)path->length);
+    if (!directory_path) {
         free_directory(directory, 0);
         return NULL;
     }
-    memcpy(pattern, path_data, path_length);
-    pattern[path_length] = '\\';
-    pattern[path_length + 1] = '*';
-    pattern[path_length + 2] = '\0';
+    size_t wide_length = wcslen(directory_path);
+    // 末尾已经带分隔符时不再补一个，否则会拼出 "...\\*" 这种双分隔符。
+    int needs_separator = wide_length == 0 ||
+        (directory_path[wide_length - 1] != L'\\' &&
+         directory_path[wide_length - 1] != L'/');
+    wchar_t *pattern = malloc(sizeof(wchar_t) * (wide_length + 3));
+    if (!pattern) {
+        free(directory_path);
+        free_directory(directory, 0);
+        return NULL;
+    }
+    memcpy(pattern, directory_path, sizeof(wchar_t) * wide_length);
+    free(directory_path);
+    if (needs_separator) pattern[wide_length++] = L'\\';
+    pattern[wide_length++] = L'*';
+    pattern[wide_length] = L'\0';
 
-    struct _finddata_t entry;
-    intptr_t handle = _findfirst(pattern, &entry);
+    WIN32_FIND_DATAW entry;
+    HANDLE handle = FindFirstFileW(pattern, &entry);
     free(pattern);
-    if (handle == -1) {
+    if (handle == INVALID_HANDLE_VALUE) {
         free_directory(directory, 0);
         return NULL;
     }
     do {
-        if (strcmp(entry.name, ".") == 0 || strcmp(entry.name, "..") == 0) continue;
-        if (directory_append(directory, &capacity, entry.name) != 0) {
-            _findclose(handle);
+        if (wcscmp(entry.cFileName, L".") == 0 ||
+            wcscmp(entry.cFileName, L"..") == 0) {
+            continue;
+        }
+        String name = tap_string_from_wide(
+            entry.cFileName, wcslen(entry.cFileName));
+        if (name.length == 0 ||
+            directory_append(directory, &capacity, name.data) != 0) {
+            FindClose(handle);
             free_directory(directory, 0);
             return NULL;
         }
-    } while (_findnext(handle, &entry) == 0);
-    _findclose(handle);
+    } while (FindNextFileW(handle, &entry));
+    FindClose(handle);
 #else
+    const char *path_data = require_c_string(*path, "directory path");
+    if (!path_data) {
+        free_directory(directory, 0);
+        return NULL;
+    }
     DIR *handle = opendir(path_data);
     if (!handle) {
         free_directory(directory, 0);
@@ -1201,13 +1312,17 @@ int32_t __tap_dir_close(void *handle) {
 
 // path 是不是目录；不存在或不是目录都返回 0。
 int32_t __tap_path_is_directory(const String *path) {
-    const char *path_data = require_c_string(*path, "path");
-    if (!path_data) return 0;
 #ifdef _WIN32
-    DWORD attributes = GetFileAttributesA(path_data);
+    wchar_t *wide = tap_wide_from_utf8(
+        path->data ? path->data : "", (size_t)path->length);
+    if (!wide) return 0;
+    DWORD attributes = GetFileAttributesW(wide);
+    free(wide);
     if (attributes == INVALID_FILE_ATTRIBUTES) return 0;
     return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? 1 : 0;
 #else
+    const char *path_data = require_c_string(*path, "path");
+    if (!path_data) return 0;
     struct stat info;
     if (stat(path_data, &info) != 0) return 0;
     return S_ISDIR(info.st_mode) ? 1 : 0;
@@ -1217,45 +1332,109 @@ int32_t __tap_path_is_directory(const String *path) {
 // 建符号链接：link_path 指向 target。成功返回 0。
 // Windows 上需要管理员权限或开启开发者模式，失败时调用方应回退到复制。
 int32_t __tap_symlink(const String *target, const String *link_path) {
+#ifdef _WIN32
+    wchar_t *wide_target = tap_wide_from_utf8(
+        target->data ? target->data : "", (size_t)target->length);
+    wchar_t *wide_link = tap_wide_from_utf8(
+        link_path->data ? link_path->data : "", (size_t)link_path->length);
+    if (!wide_target || !wide_link) {
+        free(wide_target);
+        free(wide_link);
+        return -1;
+    }
+    // Windows 的参数顺序和 POSIX 相反，目录链接还要额外标志。
+    DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    DWORD attributes = GetFileAttributesW(wide_target);
+    if (attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        flags |= SYMBOLIC_LINK_FLAG_DIRECTORY;
+    }
+    int32_t result = CreateSymbolicLinkW(wide_link, wide_target, flags) ? 0 : -1;
+    // 老系统不认 ALLOW_UNPRIVILEGED_CREATE，退回不带该标志再试一次。
+    if (result != 0) {
+        result = CreateSymbolicLinkW(
+            wide_link, wide_target,
+            flags & ~SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) ? 0 : -1;
+    }
+    free(wide_target);
+    free(wide_link);
+    return result;
+#else
     const char *target_data = require_c_string(*target, "symlink target");
     const char *link_data = require_c_string(*link_path, "symlink path");
     if (!target_data || !link_data) return -1;
-#ifdef _WIN32
-    // Windows 的参数顺序和 POSIX 相反，目录链接还要额外标志。
-    DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
-    if (GetFileAttributesA(target_data) != INVALID_FILE_ATTRIBUTES &&
-        (GetFileAttributesA(target_data) & FILE_ATTRIBUTE_DIRECTORY)) {
-        flags |= SYMBOLIC_LINK_FLAG_DIRECTORY;
-    }
-    if (CreateSymbolicLinkA(link_data, target_data, flags)) return 0;
-    // 老系统不认 ALLOW_UNPRIVILEGED_CREATE，退回不带该标志再试一次。
-    return CreateSymbolicLinkA(link_data, target_data,
-               flags & ~SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) ? 0 : -1;
-#else
     return symlink(target_data, link_data) == 0 ? 0 : -1;
 #endif
 }
 
 // 建目录（已存在算成功）。成功返回 0。
 int32_t __tap_make_directory(const String *path) {
+#ifdef _WIN32
+    wchar_t *wide = tap_wide_from_utf8(
+        path->data ? path->data : "", (size_t)path->length);
+    if (!wide) return -1;
+    int created = _wmkdir(wide);
+    free(wide);
+    return created == 0 ? 0 : (errno == EEXIST ? 0 : -1);
+#else
     const char *path_data = require_c_string(*path, "directory path");
     if (!path_data) return -1;
-#ifdef _WIN32
-    if (_mkdir(path_data) == 0) return 0;
-#else
     if (mkdir(path_data, 0755) == 0) return 0;
-#endif
     return errno == EEXIST ? 0 : -1;
+#endif
+}
+
+// 去掉只读属性，方便调用方递归删除目录树。成功返回 0。
+//
+// 存在的理由很具体：Git for Windows 会把松散对象（.git/objects/**）设成只读，
+// 于是删一个 clone 会在中途报「拒绝访问」，`tapm` 清理旧依赖就卡在这里。
+// POSIX 侧对应的动作是给所有者加写位。
+int32_t __tap_make_writable(const String *path) {
+#ifdef _WIN32
+    wchar_t *wide = tap_wide_from_utf8(
+        path->data ? path->data : "", (size_t)path->length);
+    if (!wide) return -1;
+    DWORD attributes = GetFileAttributesW(wide);
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        free(wide);
+        return -1;
+    }
+    int32_t result = 0;
+    if ((attributes & FILE_ATTRIBUTE_READONLY) != 0) {
+        result = SetFileAttributesW(wide, attributes & ~FILE_ATTRIBUTE_READONLY)
+                     ? 0 : -1;
+    }
+    free(wide);
+    return result;
+#else
+    const char *path_data = require_c_string(*path, "path");
+    if (!path_data) return -1;
+    struct stat info;
+    if (stat(path_data, &info) != 0) return -1;
+    // 只在缺少写位时才改，避免无谓地把 setuid / 执行位一起改掉。
+    if ((info.st_mode & S_IWUSR) != 0) return 0;
+    return chmod(path_data, info.st_mode | S_IWUSR) == 0 ? 0 : -1;
+#endif
 }
 
 // 删除一个条目：文件用 remove，空目录也能删掉。成功返回 0。
 int32_t __tap_remove_entry(const String *path) {
+#ifdef _WIN32
+    wchar_t *wide = tap_wide_from_utf8(
+        path->data ? path->data : "", (size_t)path->length);
+    if (!wide) return -1;
+    if (RemoveDirectoryW(wide)) {
+        free(wide);
+        return 0;
+    }
+    int result = _wremove(wide);
+    free(wide);
+    return result == 0 ? 0 : -1;
+#else
     const char *path_data = require_c_string(*path, "path");
     if (!path_data) return -1;
-#ifdef _WIN32
-    if (RemoveDirectoryA(path_data)) return 0;
-#endif
     return remove(path_data) == 0 ? 0 : -1;
+#endif
 }
 
 // 打印错误信息并以状态 1 终止程序，用于调用方无法合理恢复的情况。
@@ -1276,6 +1455,16 @@ int32_t __tap_panic(const String *message) {
 int32_t __tap_exit(int32_t code) {
     exit((int)code);
     return 0;
+}
+
+// 当前平台：0 = POSIX（含 Cygwin），1 = Windows。
+// tap 源码没有条件编译，需要区分平台的调用方只能问 Runtime。
+int32_t __tap_platform(void) {
+#ifdef _WIN32
+    return 1;
+#else
+    return 0;
+#endif
 }
 
 // ---------------------------------------------------------------------------

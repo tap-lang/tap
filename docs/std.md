@@ -227,6 +227,7 @@ fn main(): i32 {
 | `std.fs` | `make_dir(path): i32` | 建目录（已存在算成功） |
 | `std.fs` | `symlink(target, link_path): i32` | 建符号链接；Windows 需开发者模式 |
 | `std.fs` | `remove_entry(path): i32` | 删除文件或空目录 |
+| `std.fs` | `make_writable(path): i32` | 去掉只读属性；递归删目录树前用（Git for Windows 把 `.git/objects` 设成只读） |
 | `std.fs` | `write_text(path, data): i64` | 覆盖写入，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `append_text(path, data): i64` | 追加到末尾，返回写入字节数；打不开返回 `-1` |
 | `std.fs` | `exists(path): bool` | 能否以只读方式打开；不存在或无权限返回 `false` |
@@ -253,6 +254,7 @@ fn main(): i32 {
 | `std.sys` | `was_signaled(status): bool` | 判断进程是否被信号终止；Windows 始终返回 `false` |
 | `std.sys` | `is_open(stream): bool` | 判断管道句柄是否为非空指针 |
 | `std.sys` | `capture(command): String` | 执行命令并捕获标准输出；单次最多读取 1 MiB |
+| `std.sys` | `is_windows(): bool` | 当前平台是不是 Windows（tap 没有条件编译，平台分支只能运行时判断） |
 
 `std.random` 示例：
 

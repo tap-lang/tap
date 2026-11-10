@@ -19,6 +19,7 @@ extern fn __tap_path_is_directory(path: String): i32;
 extern fn __tap_make_directory(path: String): i32;
 extern fn __tap_symlink(target: String, link_path: String): i32;
 extern fn __tap_remove_entry(path: String): i32;
+extern fn __tap_make_writable(path: String): i32;
 
 // 文件读写所需的内部 Runtime ABI。
 extern fn __tap_file_open(path: String, mode: String): *i8;
@@ -160,6 +161,15 @@ pub fn symlink(target: String, link_path: String): i32 {
 // 删除文件或空目录；成功返回 0。
 pub fn remove_entry(path: String): i32 {
     return __tap_remove_entry(path);
+}
+
+// 去掉只读属性；成功返回 0，路径不存在返回 -1。
+//
+// 递归删除目录树之前要先在每一项上调用它：Git for Windows 会把 `.git/objects`
+// 里的文件设成只读，直接删会在中途报「拒绝访问」。POSIX 上对应给所有者加写位，
+// 已经可写时是空操作。
+pub fn make_writable(path: String): i32 {
+    return __tap_make_writable(path);
 }
 
 // 列出目录里的条目名，不含 "." 和 ".."，**按名字排序**（readdir 的顺序未定义，
