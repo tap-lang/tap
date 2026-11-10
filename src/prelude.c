@@ -179,13 +179,10 @@ int load_prelude(ProgramNode *program, const char *compiler_path) {
     }
 
     ProgramNode *prelude = parse_program(parser);
-    // Prelude 是**自动注入**的：它的符号对所有文件可见，不经过模块导出表。
-    // 标成 pub 就是这个意思 —— 方法查找的可见性检查（codegen 的 method_visible_at）
-    // 靠它放行 `good.is_ok()` 这类「拿自由函数当方法」的写法，否则整个 std 都会
-    // 变成「模块私有」，因为 prelude.tp 和调用点永远不是同一个文件。
-    for (ASTNode *node = prelude->functions; node; node = node->next) {
-        if (node->type == NODE_FUNCTION) ((FunctionNode *)node)->is_pub = 1;
-    }
+    // Prelude 的可见性**写在源码里**（std/prelude.tp 里每个 `fn` 都是 `pub fn`），
+    // 这里不再统一改写 is_pub。它们对所有文件可见（不经过模块导出表），而方法查找的
+    // 可见性检查（codegen 的 method_visible_at）只看 is_pub —— 漏写一个 pub，
+    // `good.is_ok()` 这类「拿自由函数当方法」的写法就会报「模块私有」，测试会抓到。
     FunctionNode *duplicate = find_internal_duplicate(program->functions);
     if (!duplicate) duplicate = find_internal_duplicate(prelude->functions);
     if (!duplicate) duplicate = find_cross_duplicate(prelude->functions, program->functions);

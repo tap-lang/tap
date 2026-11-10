@@ -15,6 +15,11 @@ tap 标准库由两部分组成：
 `std/prelude.tp` 会在普通编译、`run`、`-ir`、`-emit-obj`、`-run-lli`
 流程中自动加载，用户源码无需导入即可调用其中的公共函数。
 
+Prelude 里每个 tap 层的函数在源码中都显式写着 `pub fn`：它们对所有文件可见（不经过
+模块导出表），而方法查找的可见性检查只看 `pub` 标志 —— 漏写一个，`parsed.is_ok()`
+这类「拿自由函数当方法」的写法就会被判成模块私有。新加 Prelude 函数时照抄这个形态
+（`extern fn` 是 Runtime 内部 ABI，不写 `pub`）。
+
 当前 Prelude 导出：
 
 | 函数 | 说明 |
