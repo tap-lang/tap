@@ -6,7 +6,7 @@ fn main(): i32 {
 
 /** -- test
 - .stdout
-Array index out of bounds: index=3, length=3
+Array index out of bounds: index=3, length=3 at tests/run-fail/arrays/out_of_bounds.tp:3:19
 - .exit
 1
 -- */

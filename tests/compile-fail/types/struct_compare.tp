@@ -1,0 +1,22 @@
+// 结构体不能直接比较。以前这种写法会一路走到 LLVM 的 icmp 上，以
+// 「LLVM IR verification failed: Invalid operand types for ICmp instruction」加一段
+// IR 的形式漏出来；现在在前端拦掉，并指出要逐字段比较。
+
+struct Point { x: i32, y: i32 }
+
+fn main(): i32 {
+    let a: Point = Point { x: 1, y: 2 };
+    let b: Point = Point { x: 1, y: 2 };
+    if (a == b) {
+        print("eq\n");
+    }
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: struct values cannot be compared directly; compare their fields one by one
+--> tests/compile-fail/types/struct_compare.tp:10:9
+- .exit
+1
+-- */

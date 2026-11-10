@@ -1,0 +1,20 @@
+// 空指针守卫走下标路径时也要带源码位置。
+//
+// `p[0]` 单独用时位置来自 parse_expression 给最外层节点补的章；但 `p[0].value`
+// 的最外层是字段访问，下标节点是内层，以前从来没盖过章，消息里只有
+// "Null pointer dereference" 一句话。现在建下标节点时用接收者的位置盖章。
+
+struct Node { value: i32 }
+
+fn main(): i32 {
+    let p: *Node = null;
+    print("%d\n", p[0].value);
+    return 0;
+}
+
+/** -- test
+- .stdout
+Null pointer dereference at tests/run-fail/types/null_index_field.tp:11:19
+- .exit
+1
+-- */

@@ -1087,7 +1087,17 @@ static int pointer_assignable(const VarTypeNode *source,
 // 判断源表达式是否可以写入目标声明类型。
 static int expression_assignable_to(CodeGenContext *context, ASTNode *expression,
                                     const VarTypeNode *target_type) {
-    if (!target_type || target_type->is_array) return 0;
+    if (!target_type) return 0;
+    // 数组目标按完整类型比较：元素类型和长度都必须一致。数组字面量、数组变量、
+    // 数组字段、返回数组的函数调用都能给出完整类型，所以这里不需要按表达式种类
+    // 开特例。整体数组赋值（`a = b`）在 generate_assignment 里另有更早的拦截，
+    // 走不到这里。
+    if (target_type->is_array) {
+        VarTypeNode *source_type = expression_full_type(context, expression);
+        int result = source_type && tap_type_equal(source_type, target_type);
+        free_ast((ASTNode *)source_type);
+        return result;
+    }
     // match 表达式在这里不做分支值的校验：分支的载荷绑定要到生成阶段才写进符号表，
     // 提前查会查不到。类型检查交给 generate_match_expression，那时绑定已经可见。
     if (expression && expression->type == NODE_MATCH_STATEMENT &&
@@ -2182,9 +2192,21 @@ static LLVMValueRef generate_index_address(
     LLVMBuildCondBr(context->builder, in_bounds, pass_block, fail_block);
 
     LLVMPositionBuilderAtEnd(context->builder, fail_block);
+    // 运行时消息带上源码位置，和空指针守卫保持一致：只有一句 "Array index out of
+    // bounds" 时用户还得自己找是哪个下标。
+    char bounds_message[1024];
+    if (index_expression && index_expression->base.loc.file) {
+        snprintf(bounds_message, sizeof(bounds_message),
+                 "Array index out of bounds: index=%%lld, length=%%llu at %s:%u:%u\n",
+                 index_expression->base.loc.file,
+                 (unsigned)index_expression->base.loc.line,
+                 (unsigned)index_expression->base.loc.column);
+    } else {
+        snprintf(bounds_message, sizeof(bounds_message),
+                 "Array index out of bounds: index=%%lld, length=%%llu\n");
+    }
     LLVMValueRef printf_arguments[3] = {
-        LLVMBuildGlobalStringPtr(context->builder,
-            "Array index out of bounds: index=%lld, length=%llu\n", "array_bounds_format"), // 中文：数组下标越界：下标、长度
+        LLVMBuildGlobalStringPtr(context->builder, bounds_message, "array_bounds_format"), // 中文：数组下标越界：下标、长度
         index,
         LLVMConstInt(LLVMInt64TypeInContext(context->context), array_type->array_length, 0)
     };
@@ -3721,6 +3743,29 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             if (is_null_literal(binary->left) || is_null_literal(binary->right)) {
                 return generate_null_comparison(context, binary);
             }
+            // 结构体（含降级后的载荷枚举）不能直接参与二元运算。不拦的话会一路走到
+            // icmp/add 上，最后以「LLVM IR verification failed: Invalid operand types」
+            // 的形式漏出来，用户看不到任何有用的信息。String 不是具名结构体类型
+            // （LITERAL_STRING），不受这条影响，它的比较在下面单独处理。
+            {
+                VarTypeNode *left_full =
+                    expression_full_type(context, binary->left);
+                VarTypeNode *right_full =
+                    expression_full_type(context, binary->right);
+                int left_aggregate = left_full && left_full->struct_name;
+                int right_aggregate = right_full && right_full->struct_name;
+                free_ast((ASTNode *)left_full);
+                free_ast((ASTNode *)right_full);
+                if (left_aggregate || right_aggregate) {
+                    if (binary->op_type == OP_EQUAL ||
+                        binary->op_type == OP_NOT_EQUAL) {
+                        report_error((const ASTNode *)binary,
+                            "struct values cannot be compared directly; compare their fields one by one"); // 中文：结构体不能直接比较，逐字段比较
+                    }
+                    report_error((const ASTNode *)binary,
+                        "struct values do not support arithmetic or bitwise operators"); // 中文：结构体不支持算术/位运算
+                }
+            }
             enum LiteralType left_type = expression_type(context, binary->left);
             enum LiteralType right_type = expression_type(context, binary->right);
             if (left_type == LITERAL_STRING || right_type == LITERAL_STRING) {
@@ -4105,6 +4150,19 @@ static LLVMValueRef generate_array_value(
                               address, "array_slice_value");
     }
 
+    // 数组字面量出现在**要求数组值**的位置（结构体字段、枚举载荷实参、return）。
+    // 变量初始化不走这里 —— 那条路径直接往变量的槽位里逐元素写，所以以前只有
+    // 字面量能初始化变量、不能当值用。这里给一个字面量开临时槽位，复用同一套
+    // 逐元素写入逻辑，再整体 load 出来。
+    if (expression && expression->type == NODE_ARRAY_LITERAL) {
+        LLVMValueRef storage =
+            create_entry_alloca(context, llvm_array_type, "array_literal");
+        generate_array_initializer(context, storage, expected_type,
+                                   (ArrayLiteralNode *)expression);
+        return LLVMBuildLoad2(context->builder, llvm_array_type, storage,
+                              "array_literal_value");
+    }
+
     report_error((const ASTNode *)expression, "expression does not produce an array value"); // 中文：表达式不产生数组值
 }
 
@@ -4336,6 +4394,21 @@ static const VarTypeNode *expression_var_type(
     }
     if (expression->type == NODE_INDEX_EXPRESSION) {
         return indexed_value_type(context, expression);
+    }
+    // 字段访问：`match (h.e)` 这类写法要能拿到字段的完整类型。
+    //
+    // 这个函数是**借用**版（返回的指针归调用方之外的某处所有），而
+    // expression_full_type 返回的是调用方拥有的副本，所以让它把类型落进节点的
+    // resolved_type 缓存，再把缓存借出去。顺手归一化一次：解析期把枚举类型名存在
+    // enum_name 里，带载荷的枚举降级后是同名结构体，match 靠 struct_name 找内部
+    // 结构体，不归一化就会一路走到「requires a payload enum type」。
+    if (expression->type == NODE_FIELD_ACCESS) {
+        VarTypeNode *owned = expression_full_type(context, expression);
+        free_ast((ASTNode *)owned);
+        if (expression->resolved_type) {
+            validate_var_type(context, expression->resolved_type);
+        }
+        return expression->resolved_type;
     }
     return NULL;
 }
@@ -5566,6 +5639,80 @@ static void validate_statement_types(CodeGenContext *context, ASTNode *statement
     }
 }
 
+// 按值递归检测：结构体的字段图里如果存在一条**全按值**的环，类型大小就依赖自身。
+//
+// 指针和引用会打断这条环（`struct Node { next: *Node }` 完全正常），数组不会
+// （`struct S { a: [S; 2] }` 同样无限大）。以前这种声明在 declare_struct_types 里
+// LLVMStructSetBody 会静默失败，产出 `%Node = type opaque`、`sizeof(Node)` 变 0，
+// 只有真的写构造时才在字段类型检查里报一条误导的 "field 'next' type mismatch"。
+//
+// 带载荷枚举降级后就是同名结构体，所以枚举按值递归也走这条检查。
+#define RECURSIVE_STRUCT_DEPTH_MAX 64
+
+// 从 type 出发沿按值边（结构体字段、数组元素）能否回到 target。
+// stack 记录当前路径上的结构体，用来避免在「与 target 无关的环」里无限递归。
+static int value_path_reaches(ProgramNode *program, const VarTypeNode *type,
+                              StructNode *target, StructNode *stack[],
+                              unsigned depth) {
+    if (!type) return 0;
+    // 指针 / 引用 / 函数指针都是定长句柄，不参与按值展开。
+    if (type->is_pointer || type->is_reference || type->is_function_pointer) {
+        return 0;
+    }
+    if (type->is_array) {
+        return value_path_reaches(program, type->element_type, target, stack, depth);
+    }
+    if (!type->struct_name) return 0;
+
+    StructNode *next = tap_find_struct(program, type->struct_name);
+    if (!next) return 0;
+    if (next == target) return 1;
+    if (depth >= RECURSIVE_STRUCT_DEPTH_MAX) return 0;
+    for (unsigned index = 0; index < depth; index++) {
+        if (stack[index] == next) return 0;
+    }
+
+    stack[depth] = next;
+    for (ASTNode *field = next->fields; field; field = field->next) {
+        if (value_path_reaches(program, ((StructFieldNode *)field)->field_type,
+                               target, stack, depth + 1)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// 报告第一个让类型大小依赖自身的字段。
+static void validate_struct_is_sized(
+    CodeGenContext *context, ProgramNode *program, StructNode *struct_node) {
+    StructNode *stack[RECURSIVE_STRUCT_DEPTH_MAX];
+    for (ASTNode *field = struct_node->fields; field; field = field->next) {
+        StructFieldNode *struct_field = (StructFieldNode *)field;
+        if (!value_path_reaches(program, struct_field->field_type, struct_node,
+                                stack, 0)) {
+            continue;
+        }
+        // 带载荷枚举的内部字段名是载荷下标（"0"、"1"），对用户没有意义，换一种说法。
+        // 位置也报在**枚举声明**上：降级出来的结构体是合成的，没有源码位置。
+        if (struct_node->is_tagged_enum) {
+            EnumNode *enum_node = struct_node->tagged_enum_name
+                ? tap_find_enum(context->program, struct_node->tagged_enum_name)
+                : NULL;
+            codegen_error(context, (const ASTNode *)(enum_node
+                               ? (const ASTNode *)enum_node
+                               : (const ASTNode *)struct_node),
+                          "recursive type '%s' has infinite size; wrap the payload in a pointer ('*%s')", // 中文：递归类型无限大，载荷要包一层指针
+                          struct_node->name, struct_node->name);
+        } else {
+            codegen_error(context, (const ASTNode *)struct_node,
+                          "recursive type '%s' has infinite size; field '%s' must be a pointer ('*%s')", // 中文：递归类型无限大，字段要改成指针
+                          struct_node->name, struct_field->name, struct_node->name);
+        }
+        // 一个类型只报第一条：后面的字段是同一个根因，报多了反而淹没重点。
+        return;
+    }
+}
+
 // 逐个检查结构体声明、枚举声明和函数/变量中引用的命名类型。
 static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
     for (ASTNode *node = program->enums; node; node = node->next) {
@@ -5618,6 +5765,14 @@ static void validate_user_types(CodeGenContext *context, ProgramNode *program) {
                 }
             }
         }
+        // 字段类型都归一化完之后再查按值递归，否则字段上还是解析期的 enum_name。
+        // 这一步放到下面单独一轮做：环检测会遍历**别的**结构体，那些字段也得先归一化。
+    }
+
+    // 按值递归检测单独一轮：上面已经把所有结构体的字段类型都 validate 过，
+    // 枚举名统一归一成了降级后的结构体名，遍历时不会漏掉「经由枚举载荷」的环。
+    for (ASTNode *node = program->structs; node; node = node->next) {
+        validate_struct_is_sized(context, program, (StructNode *)node);
     }
 
     for (ASTNode *constant = program->constants; constant; constant = constant->next) {

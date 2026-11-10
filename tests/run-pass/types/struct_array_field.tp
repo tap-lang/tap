@@ -1,0 +1,44 @@
+// 数组类型的结构体字段：以前 expression_assignable_to 对所有数组目标一律返回 0，
+// 于是 `struct Buf { data: [i32; 4] }` 的任何字面量都报 field type mismatch ——
+// 布局本身是对的（sizeof 正常），只是初始化被拦死。现在按完整类型（元素 + 长度）比较。
+
+struct P { x: i32 }
+struct Buf { data: [i32; 4], n: i32 }
+struct Grid { rows: [[i32; 2]; 2], pts: [P; 2] }
+
+fn main(): i32 {
+    // 1. 字面量直接初始化
+    let b: Buf = Buf { data: [1, 2, 3, 4], n: 4 };
+    print("%d %d\n", b.data[2], b.n);
+
+    // 2. 元素写入
+    b.data[0] = 42;
+    print("%d\n", b.data[0]);
+
+    // 3. 整个数组字段赋值（先绑变量）
+    let arr: [i32; 4] = [9, 8, 7, 6];
+    b.data = arr;
+    print("%d\n", b.data[3]);
+
+    // 4. 重复字面量 + 嵌套数组字段 + 结构体数组字段
+    let g: Grid = Grid { rows: [[0; 2]; 2], pts: [P { x: 5 }, P { x: 6 }] };
+    print("%d %d %d\n", g.rows[1][1], g.pts[0].x, g.pts[1].x);
+    g.rows[0][1] = 3;
+    print("%d\n", g.rows[0][1]);
+
+    // 5. sizeof 包含数组字段的实际布局
+    print("%llu %llu\n", sizeof(Buf), sizeof(Grid));
+    return 0;
+}
+
+/** -- test
+- .stdout
+3 4
+42
+6
+0 5 6
+3
+20 24
+- .exit
+0
+-- */

@@ -1,0 +1,19 @@
+// 带载荷枚举按值递归同样无限大。降级后的内部结构体字段名是载荷下标（"0"、"1"），
+// 所以诊断改用「把载荷包进指针」的说法，位置报在枚举声明上。
+
+enum Node {
+    Leaf(i32),
+    Pair(Node, Node),
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: recursive type 'Node' has infinite size; wrap the payload in a pointer ('*Node')
+--> tests/compile-fail/types/recursive_enum.tp:4:1
+- .exit
+1
+-- */

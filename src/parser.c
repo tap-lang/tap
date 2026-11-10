@@ -1566,6 +1566,11 @@ static ASTNode *parse_factor_inner(Parser *parser) {
             OP_BITWISE_XOR, factor, (ASTNode *)create_int_literal((uint64_t)-1));
     }
 
+    // 后缀链的起点：`p[0].f` 里 `[0]` 的下标节点是内层节点，parse_expression 的
+    // 收尾盖章只会盖到最外层的字段访问，所以下标节点必须在这里自己盖章 ——
+    // 否则空指针守卫从下标路径进来时拿不到源码位置，消息只有一句
+    // "Null pointer dereference"，没有 `--> file:line:col`。
+    SourceLoc receiver_loc = current_location(parser);
     ASTNode *expression = parse_primary(parser);
     for (;;) {
         // 后缀 `?`：Result 传播，失败时从当前函数提前返回 Err。
@@ -1586,7 +1591,11 @@ static ASTNode *parse_factor_inner(Parser *parser) {
             consume(parser, TOKEN_LBRACKET);
             ASTNode *index = parse_expression(parser);
             consume(parser, TOKEN_RBRACKET);
-            expression = (ASTNode *)create_index_expression(expression, index);
+            IndexExpressionNode *index_expression =
+                create_index_expression(expression, index);
+            // 用接收者的起点盖章：空指针守卫和越界检查都报这个位置。
+            stamp_location((ASTNode *)index_expression, receiver_loc);
+            expression = (ASTNode *)index_expression;
             continue;
         }
 

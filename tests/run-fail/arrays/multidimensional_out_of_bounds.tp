@@ -7,7 +7,7 @@ fn main(): i32 {
 
 /** -- test
 - .stdout
-Array index out of bounds: index=2, length=2
+Array index out of bounds: index=2, length=2 at tests/run-fail/arrays/multidimensional_out_of_bounds.tp:4:11
 - .exit
 1
 -- */

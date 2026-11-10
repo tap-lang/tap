@@ -1,0 +1,22 @@
+// 按值递归的结构体：类型大小依赖自身，编译期必须报错。
+//
+// 以前这条声明会静默通过，IR 里是 `%Node = type opaque`，sizeof 变成 0；只有真的
+// 写构造时才在字段类型检查里报一条误导的 "field 'next' type mismatch"。
+// 指针能打断这条环（`next: *Node` 完全正常），数组不能。
+
+struct Node {
+    value: i32,
+    next: Node,
+}
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: recursive type 'Node' has infinite size; field 'next' must be a pointer ('*Node')
+--> tests/compile-fail/types/recursive_struct.tp:7:1
+- .exit
+1
+-- */

@@ -9,7 +9,7 @@ fn main(): i32 {
 
 /** -- test
 - .stdout
-Array index out of bounds: index=5, length=3
+Array index out of bounds: index=5, length=3 at tests/run-fail/arrays/reference_out_of_bounds.tp:6:19
 - .exit
 1
 -- */

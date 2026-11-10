@@ -12,7 +12,7 @@
 | 2 | 泛型类型不能 impl | `impl for a generic type is not supported yet` | 高 | 大 |
 | 3 | ~~限定类型名 `vec.Vec<i32>`~~ | ✅ 已支持（2026-11-09），见下 | 中 | 小 |
 | 4 | match 无嵌套模式、无分支守卫 | `expected '(' but got 'identifier'` | 中 | 中 |
-| 5 | 载荷枚举不能按值递归 | `struct` 报类型不匹配；`enum` 直接炸 LLVM IR 校验 | 中 | 中 |
+| 5 | ~~载荷枚举不能按值递归~~ | ✅ 诊断已落地（2026-11-10）；按值递归本身仍不支持 | 中 | 中 |
 | 6 | 没有 for-each | `expected '(' but got 'identifier'` | 高 | 大 |
 | 7 | ~~表达式结果上不能调方法~~ | ✅ 已支持（2026-11-08），见下 | 高 | 中 |
 | 8 | `if` 不是表达式 | 无 `let x = if (c) { 1 } else { 2 }` | 低 | 小 |
@@ -226,6 +226,27 @@ let r: i32 = match s {
 
 ## 5. 载荷枚举不能按值递归
 
+### ✅ 诊断已落地（2026-11-10）
+
+按值递归仍然**不支持**（那是类型系统的事，要所有权模型才能自动装箱），但检测补上了：
+`validate_user_types` 里按「全按值边」做环检测（`value_path_reaches`），环上出现
+指针 / 引用 / 函数指针就断开，数组不打断。命中时报：
+
+```text
+error: recursive type 'Node' has infinite size; field 'next' must be a pointer ('*Node')
+```
+
+枚举版本的说法是「把载荷包进指针」，位置报在**枚举声明**上（降级出来的结构体是合成的、
+没有源码位置）。每个类型只报第一条。
+
+以前这里更糟：`struct Node { next: Node }` 声明期**静默通过**，IR 是 `%Node = type opaque`、
+`sizeof(Node)` 变成 0，只有真的写构造时才在字段类型检查里报一条误导的
+`struct 'Node' field 'next' type mismatch`；枚举版本则漏到 LLVM 校验才炸。
+
+用例：`compile-fail/types/recursive_struct.tp`、`compile-fail/types/recursive_enum.tp`。
+
+### 原始分析
+
 先澄清一件事：**用指针递归已经是能用的**，两条都实测通过：
 
 ```text
@@ -436,4 +457,4 @@ error: expected token `;` but got `]`
 | 1 | **4 嵌套模式 + 守卫** | 枚举套结构体的常见形状；中等代价 |
 | 2 | **6a for-each（内建版）** | 覆盖数组和 Vec 的主流场景 |
 | 3 | **2 具体实例化的 impl** | 泛型形式留到关联类型那一期 |
-| 4 | 5 / 8 / 9 | 各有前置依赖 |
+| 4 | 8 / 9 | 各有前置依赖；5 的诊断已经落地 |

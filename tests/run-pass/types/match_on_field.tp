@@ -1,0 +1,57 @@
+// match 的被匹配值可以是字段访问。
+//
+// expression_var_type 原来只认标识符 / 函数调用 / 下标，字段访问会掉到
+// 「match requires a value of a payload enum type」——可文档写的是「变量或表达式」。
+// 现在补了 NODE_FIELD_ACCESS 分支，并且顺手把解析期的 enum_name 归一成降级后的
+// 结构体名（不归一化同样找不到内部结构体）。
+
+enum Shape { Dot, Line(i32), Rect(i32, i32) }
+
+struct Canvas { shape: Shape, label: String }
+struct Frame { canvas: Canvas }
+
+fn area(c: Canvas): i32 {
+    // 参数上的字段也能直接 match
+    match (c.shape) {
+        Shape.Dot => { return 0; }
+        Shape.Line(len) => { return len; }
+        Shape.Rect(w, h) => { return w * h; }
+    }
+}
+
+fn main(): i32 {
+    let c: Canvas = Canvas { shape: Shape.Rect(3, 4), label: "c" };
+    match (c.shape) {
+        Shape.Dot => { print("dot\n"); }
+        Shape.Line(len) => { print("line %d\n", len); }
+        Shape.Rect(w, h) => { print("rect %d %d\n", w, h); }
+    }
+    print("%d\n", area(c));
+
+    // 嵌套字段
+    let f: Frame = Frame { canvas: Canvas { shape: Shape.Line(7), label: "f" } };
+    match (f.canvas.shape) {
+        Shape.Dot => { print("dot\n"); }
+        Shape.Line(len) => { print("nested line %d\n", len); }
+        Shape.Rect(w, h) => { print("rect\n"); }
+    }
+
+    // 指针链上的字段
+    let p: *Frame = &f;
+    match (p[0].canvas.shape) {
+        Shape.Dot => { print("dot\n"); }
+        Shape.Line(len) => { print("ptr line %d\n", len); }
+        Shape.Rect(w, h) => { print("rect\n"); }
+    }
+    return 0;
+}
+
+/** -- test
+- .stdout
+rect 3 4
+12
+nested line 7
+ptr line 7
+- .exit
+0
+-- */
