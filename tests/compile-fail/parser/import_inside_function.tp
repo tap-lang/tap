@@ -1,0 +1,14 @@
+// import 是文件级声明：写在函数体里既不会被装载，也没有语义。
+// 要给出专门诊断，而不是「expected assignment, ...」。
+fn main(): i32 {
+    import modules.math;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: `import` is only allowed at the top level, not inside a function
+--> tests/compile-fail/parser/import_inside_function.tp:4:5
+- .exit
+1
+-- */

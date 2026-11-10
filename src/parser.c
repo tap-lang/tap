@@ -742,6 +742,15 @@ static ASTNode *parse_statement(Parser *parser) {
     SourceLoc start = current_location(parser);
     ASTNode *node = NULL;
 
+    if (parser->current_token->type == TOKEN_IMPORT) {
+        // import 只有顶层一种位置：模块别名是文件级绑定，挂在 ProgramNode 的 imports
+        // 链表上，写在函数体里既不会被装载，也没有任何语义。不单独拦的话会一路走到
+        // 「expected assignment, increment, ...」——那句话对用户毫无指向性。
+        parser_error(parser,
+            "`import` is only allowed at the top level, not inside a function"); // 中文：import 只能出现在顶层
+        return NULL;
+    }
+
     if (parser->current_token->type == TOKEN_LET ||
         parser->current_token->type == TOKEN_CONST) {
         node = (ASTNode *)parse_var_decl(parser, 1);

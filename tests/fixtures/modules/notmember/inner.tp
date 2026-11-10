@@ -1,0 +1,4 @@
+// 与 modules/notmember.tp 同名成对：整条路径是模块时应该能正常导入。
+pub fn other(): i32 {
+    return 4;
+}

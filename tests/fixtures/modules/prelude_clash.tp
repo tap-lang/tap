@@ -1,0 +1,5 @@
+// 故意和 Prelude 的 print 同名：通配导入会把它带到裸名作用域，
+// 编译器必须在导入处拦下，而不是静默替换掉 Prelude 的 print。
+pub fn print(format: String): i32 {
+    return 0;
+}

@@ -1,0 +1,5 @@
+// 与 fixtures/extprec.tap 配对：两个搜索根各有一个同名模块，扩展名不同。
+// 搜索根优先级是 fixtures 先于 fixtures-extra，所以应该用 fixtures/extprec.tap。
+pub fn value(): i32 {
+    return 2;
+}

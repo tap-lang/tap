@@ -1,0 +1,17 @@
+// 通配导入的裸名不能盖住 Prelude：Prelude 是隐式注入的，用户没写任何 import
+// 就默认拥有 print/panic/exit，静默换掉它是「编译能过、行为变了」。
+import modules.prelude_clash.*;
+
+fn main(): i32 {
+    print("这条不该出现\n");
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: import from module 'modules.prelude_clash' brings in 'print', which is already provided by the prelude
+--> tests/compile-fail/modules/import_shadows_prelude.tp:3:8
+note: rename it, or call it as 'modules.prelude_clash.print(...)' with a namespace import
+- .exit
+1
+-- */

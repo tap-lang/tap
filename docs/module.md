@@ -5,7 +5,8 @@ tap 使用 `import` 导入其他 `.tp` 源文件。每个导入在当前文件�
 
 ## 语法
 
-模块名由点分隔的路径段组成，导入声明以分号结束：
+模块名由点分隔的路径段组成，导入声明以分号结束。`import` **只能出现在文件顶层**，
+写在函数体里会直接报错（它不是语句，是文件级的名称绑定）：
 
 ```text
 import std.math;                 // 名称空间导入，按 math.square(5) 访问
@@ -218,7 +219,11 @@ import std.math.square;  // 按 square(4) 访问
 - 整条点分路径能解析成模块 → 当作整模块导入（`import std.math` 就是模块 `std.math`）。
 - 否则去掉最后一段、前缀能解析成模块 → 最后一段当成员名（`import std.math.square` →
   模块 `std.math` 的成员 `square`）。
-- **两者都能解析成模块 → 报歧义错误**，不静默偏向任何一侧。
+- **两者都能解析成模块，并且前缀模块确实有这个成员 → 报歧义错误**，不静默偏向任何一侧。
+- 两者都能解析成模块、但前缀模块**没有**这个成员 → 最后一段只能是模块路径的一段，按整
+  模块导入。`import a.b.c;` 不会因为恰好存在一个 `a/b.tp` 就被挡住。
+
+判据是成员的**存在性**，不是同名文件的存在性 —— 只有「两条路都真的能走通」才叫歧义。
 
 ```text
 error: ambiguous import 'modules.ambig.inner': both module 'modules.ambig.inner' and member 'inner' of module 'modules.ambig' exist
@@ -226,8 +231,9 @@ error: ambiguous import 'modules.ambig.inner': both module 'modules.ambig.inner'
 note: import the namespace form 'import modules.ambig;' and qualify the call, or rename one of them
 ```
 
-也就是说，成员名和某个模块文件重名时（例如模块 `std.math` 有 pub 成员 `square`，同时又存在
-模块文件 `std/math/square.tp`），`import std.math.square;` 会**编译报错**。消歧办法是改用
+也就是说，成员名和某个模块文件重名、**并且那个成员真的存在**时（例如模块 `std.math` 有
+pub 成员 `square`，同时又存在模块文件 `std/math/square.tp`），`import std.math.square;`
+会**编译报错**。消歧办法是改用
 名称空间导入（`import std.math;` 后写 `math.square(...)`），或者给其中一个改名 —— 注意这种
 重名下那个同名**模块**没有语法可以导入，只能改名。
 
@@ -307,6 +313,11 @@ error: 'make' in module 'modules.a' is not a type
 
 ## 路径查找
 
+**扩展名在每个搜索根内部判断**：同一个根里先试 `.tp` 再试 `.tap`，两者都有时以 `.tp` 为准。
+这个顺序不跨根 —— 高优先级根的 `.tap` 胜过低优先级根的 `.tp`。早期实现是先把 `.tp`
+在所有根上扫一遍，结果别处一个同名 `.tp` 就会悄悄抢走导入文件同目录的 `.tap`，而且
+没有任何诊断。
+
 普通模块按以下顺序查找：
 
 1. 导入声明所在文件的目录
@@ -329,8 +340,9 @@ env TAP_MODULE_PATH=/path/to/project:/another/root ./build/tap run app/main.tp
 2. 按包边界 → 若 `<根>/foo/package.toml` 存在，说明 `foo` 是一个包，源码在它的
    `src/` 下，于是试 `<根>/foo/src/lib.tp`
 
-两条都命中时报歧义错（和「成员名与模块文件重名」的处理一致）。都没有的目录按原路径解析，
-行为不变。
+两条都命中时报歧义错（和「成员名与模块文件重名」的处理一致），诊断带 import 语句的
+位置：`error: ambiguous module 'pkg.lib': both '.../pkg/lib.tp' and '.../pkg/src/lib.tp' exist`。
+都没有的目录按原路径解析，行为不变。
 
 **包边界只对第一段判定**：`import foo.internal.util` 里只有 `foo` 会去探测 `package.toml`，
 `internal/util` 不再逐层探测。
@@ -488,6 +500,14 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 - [`unknown_namespace.tp`](../tests/compile-fail/modules/unknown_namespace.tp)：未导入名称空间诊断
 - [`missing_export.tp`](../tests/compile-fail/modules/missing_export.tp)：模块导出函数不存在诊断
 - [`self_import.tp`](../tests/compile-fail/modules/self_import.tp)：入口文件自导入诊断
+- [`extension_precedence.tp`](../tests/run-pass/modules/extension_precedence.tp)：扩展名在搜索根
+  内部判断，高优先级根的 `.tap` 不会被别处的 `.tp` 抢走
+- [`member_name_collision_without_member.tp`](../tests/run-pass/modules/member_name_collision_without_member.tp)：
+  同名模块文件存在、但前缀模块没有该成员时按整模块导入
+- [`import_shadows_prelude.tp`](../tests/compile-fail/modules/import_shadows_prelude.tp)：
+  通配导入的裸名不能盖住 Prelude
+- [`import_inside_function.tp`](../tests/compile-fail/parser/import_inside_function.tp)：
+  `import` 只能出现在文件顶层
 
 完整的测试目录结构、用例格式和运行方式见[测试文档](test.md)。
 
@@ -510,22 +530,25 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 - 顶层常量只能用字面量初始化，不能写成引用其他模块符号的表达式。
 - 支持名称空间、通配（`mod.*`）和单成员（`mod.member [as name]`）三种导入；不支持模块再导出
   （模块不能把导入的符号转出去）。
-- 成员名与模块文件重名时（`import a.b.c` 里 `a/b/c.tp` 和 `a/b.tp` 同时存在）报歧义错误，
-  不静默偏向；这种重名下同名的那个**模块**没有导入语法，只能改名。
-- 裸名重名检查覆盖「本文件顶层定义 + 其他通配/单成员导入」，**类型也算在内**。命名空间导入
-  不参与这个检查：它的 pub 类型名只是四级查找的兜底，本文件自己的定义和单成员/通配导入
-  优先级更高；兜底自己的歧义在**真正用到那个裸名**时才报。
-  Prelude（`print` / `exit` / `panic` 等）是模块加载完之后才注入的，不在检查范围内：模块若
-  有一个和 Prelude 同名的 `pub` 成员并被通配/单成员导入，裸名会**静默指向模块成员**而不是
-  Prelude。
+- 成员名与模块文件重名、**且前缀模块确实导出该成员**时（`import a.b.c` 里 `a/b/c.tp` 和
+  `a/b.tp` 同时存在，并且 `a.b` 有成员 `c`）报歧义错误，不静默偏向；这种重名下同名的那个
+  **模块**没有导入语法，只能改名。若 `a.b` 没有成员 `c`，`import a.b.c;` 按整模块导入。
+- 裸名重名检查覆盖「本文件顶层定义 + 其他通配/单成员导入 + **Prelude**」，**类型也算在内**。
+  命名空间导入不参与这个检查：它的 pub 类型名只是四级查找的兜底，本文件自己的定义和单成员/
+  通配导入优先级更高；兜底自己的歧义在**真正用到那个裸名**时才报。
+- Prelude（`print` / `exit` / `panic` 等）的冲突**单独报**：`import mod.*;` 带进来一个和
+  Prelude 同名的 `pub` 成员时，直接报
+  `error: import from module 'mod' brings in 'print', which is already provided by the prelude`。
+  Prelude 是隐式注入的，用户没写任何 import 就默认拥有这些名字，静默换掉它是语义变化 ——
+  所以只报错，不提供「导入优先」的选项。名称空间导入不受影响（裸名仍然指 Prelude）。
 - 名称空间目前只能用于限定函数调用，不能作为值传递。
 - 入口文件不能把自身再次作为模块导入。
 
 **诊断**
 
-- 模块符号被改名成 `__tap_module_N.name` 之后，部分诊断会把这个内部符号名直接打给用户，
-  例如 `error: function '__tap_module_0.f' expects 1 arguments, but got 2`。非 `pub` 符号
-  现在一律改名，所以这条更容易撞上。
+- 模块符号被改名成 `__tap_module_N.name` 之后，诊断里的**函数名**统一改用原名（`original_name`）
+  显示，不再泄漏内部符号。仍可能看到内部名的是极少数没有 `FunctionNode` 可用的位置，例如
+  结构体/枚举名走 `function_base_name` 剥前缀 —— 那一层输出的是源名，不是 `__tap_module_N.`。
 - 两个模块定义同名的 `pub` 类型**不再报错**（类型现在也带模块前缀）。裸类型名有歧义时报
   `type name 'P' is exported by both 'a' and 'b'`，**不带位置信息**（`VarTypeNode` 没有行列）。
   `struct expression type mismatch` 同样没有位置信息（后者是通用问题，非模块特有）。
@@ -538,5 +561,9 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 
 - `TAP_MODULE_PATH` 支持多个根（Unix `:`、Windows `;`）；`TAP_STD_PATH` 仍是单个目录——
   标准库天然只有一个根。
-- 模块文件后缀接受 `.tp` 和 `.tap`，解析顺序是先 `.tp` 再 `.tap`；同一目录下两者同名时
-  以 `.tp` 为准。
+- 模块文件后缀接受 `.tp` 和 `.tap`。扩展名在**每个搜索根内部**判断：同一个根里先试 `.tp`
+  再试 `.tap`，两者都有时以 `.tp` 为准；这个顺序不跨根，高优先级根的 `.tap` 胜过低优先级
+  根的 `.tp`。
+- **Windows 上模块去重不区分大小写**：文件系统本身大小写不敏感，`import mod;` 和
+  `import Mod;` 指向同一个 `mod.tp`，只装载一次、共用一个模块前缀。非 Windows 平台按
+  字面路径比较（大小写敏感文件系统上它们是两个不同的文件）。

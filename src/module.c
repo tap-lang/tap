@@ -20,6 +20,7 @@
 #include "parser.h"
 #include "helpers.h"
 #include "generics.h"
+#include "prelude.h"
 
 typedef struct ModuleExport {
     char *name;      // 源语言里写的名字
@@ -60,6 +61,12 @@ typedef struct {
     const char *compiler_path;
     const char *root_path;
     unsigned next_module_id;
+    // 路径解析阶段的致命错误消息。解析层拿不到 import 语句的位置，只把消息带回来，
+    // 由 build_bindings 按语句位置打印 —— 保证和别的诊断一个格式。
+    char *error;
+    // Prelude 已经提供的顶层名字。通配/单成员导入不许盖住它们：Prelude 在所有模块
+    // 装载完之后才注入，不在这里拦就会静默换掉 `print`（编译通过、行为变了）。
+    const PreludeNames *prelude_names;
 } ModuleContext;
 
 static char *copy_string(const char *value) {
@@ -222,9 +229,10 @@ static char *package_scoped_relative(const char *root, const char *relative) {
 }
 
 // 在一个搜索根下找模块：先按原路径，再按包边界。
-// 两条都命中时报歧义错，不静默偏向——和「成员名与模块文件重名」的处理一致。
-static char *resolve_under_root(
-    const char *root, const char *relative, const char *module_name) {
+// 两条都命中时不静默偏向——和「成员名与模块文件重名」的处理一致。但这里是纯路径
+// 解析，拿不到 import 语句的位置，所以只把消息写进 *error，交给 build_bindings 打印。
+static char *resolve_under_root(const char *root, const char *relative,
+                                const char *module_name, char **error) {
     char *plain = join_path(root, relative);
     int plain_exists = plain && file_exists(plain);
 
@@ -233,10 +241,19 @@ static char *resolve_under_root(
     int scoped_exists = scoped_path && file_exists(scoped_path);
 
     if (plain_exists && scoped_exists) {
-        fprintf(stderr,
-            "error: ambiguous module '%s': both '%s' and '%s' exist\n",
-            module_name, plain, scoped_path); // 中文：模块歧义
-        exit(1);
+        size_t size = strlen(module_name) + strlen(plain) +
+                      strlen(scoped_path) + 64;
+        char *message = malloc(size);
+        if (message) {
+            snprintf(message, size,
+                "ambiguous module '%s': both '%s' and '%s' exist",
+                module_name, plain, scoped_path); // 中文：模块歧义
+            *error = message;
+        }
+        free(scoped);
+        free(plain);
+        free(scoped_path);
+        return NULL;
     }
     free(scoped);
 
@@ -248,30 +265,6 @@ static char *resolve_under_root(
     }
     free(scoped_path);
     return existing_canonical_path(plain);
-}
-
-// 按分隔符切分 TAP_MODULE_PATH，逐个根查找。
-static char *resolve_under_module_path(
-    const char *module_path, const char *relative, const char *module_name) {
-    const char *start = module_path;
-    for (;;) {
-        const char *end = strchr(start, MODULE_PATH_SEPARATOR);
-        size_t length = end ? (size_t)(end - start) : strlen(start);
-        if (length > 0) {
-            char *root = malloc(length + 1);
-            if (!root) {
-                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-                exit(1);
-            }
-            memcpy(root, start, length);
-            root[length] = '\0';
-            char *resolved = resolve_under_root(root, relative, module_name);
-            free(root);
-            if (resolved) return resolved;
-        }
-        if (!end) return NULL;
-        start = end + 1;
-    }
 }
 
 // 从某个目录向上找到含 package.toml 的那一层，即包根；找不到返回 NULL。
@@ -490,107 +483,145 @@ int resolve_package_target(
     return 0;
 }
 
-static char *resolve_module_path_with_extension(
-    const char *module_name, const char *filename, const char *compiler_path,
-    const char *extension) {
+// 一个搜索根：root 是目录（"." 表示当前工作目录），module_name 是这个根上使用的
+// 模块名。std 根要把 `std.` 前缀去掉，其余与源码里写的一致。
+typedef struct {
+    char *root;
+    const char *module_name;
+} ModuleSearchRoot;
+
+typedef struct {
+    ModuleSearchRoot *items;
+    int count;
+    int capacity;
+} ModuleSearchRoots;
+
+static void add_search_root(ModuleSearchRoots *roots, char *root,
+                            const char *module_name) {
+    if (!root) return; // copy_string / join_path 失败时已经报过 OOM
+    if (roots->count == roots->capacity) {
+        int capacity = roots->capacity ? roots->capacity * 2 : 8;
+        ModuleSearchRoot *items =
+            realloc(roots->items, sizeof(ModuleSearchRoot) * (size_t)capacity);
+        if (!items) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            exit(1);
+        }
+        roots->items = items;
+        roots->capacity = capacity;
+    }
+    roots->items[roots->count].root = root;
+    roots->items[roots->count].module_name = module_name;
+    roots->count++;
+}
+
+static void free_search_roots(ModuleSearchRoots *roots) {
+    for (int index = 0; index < roots->count; index++) {
+        free(roots->items[index].root);
+    }
+    free(roots->items);
+    roots->items = NULL;
+    roots->count = 0;
+    roots->capacity = 0;
+}
+
+// TAP_MODULE_PATH 的每一段都是一个搜索根。
+static void add_module_path_roots(ModuleSearchRoots *roots,
+                                  const char *module_path,
+                                  const char *module_name) {
+    const char *start = module_path;
+    for (;;) {
+        const char *end = strchr(start, MODULE_PATH_SEPARATOR);
+        size_t length = end ? (size_t)(end - start) : strlen(start);
+        if (length > 0) {
+            char *root = malloc(length + 1);
+            if (!root) {
+                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                exit(1);
+            }
+            memcpy(root, start, length);
+            root[length] = '\0';
+            add_search_root(roots, root, module_name);
+        }
+        if (!end) return;
+        start = end + 1;
+    }
+}
+
+// 在一个根上按给定扩展名找。
+static char *resolve_in_root(const char *root, const char *module_name,
+                             const char *extension, char **error) {
     char *relative = module_relative_path(module_name, extension);
     if (!relative) return NULL;
+    if (strcmp(root, ".") == 0) {
+        // 当前工作目录：相对路径直接交给 existing_canonical_path，它负责释放 relative。
+        return existing_canonical_path(relative);
+    }
+    char *resolved = resolve_under_root(root, relative, module_name, error);
+    free(relative);
+    return resolved;
+}
 
+// 按「搜索根优先、扩展名次之」解析模块路径。
+//
+// 顺序很关键：扩展名必须在**每个根内部**判断，不能先把 .tp 在所有根上跑一遍。
+// 早期实现是后者，结果低优先级根上的 foo.tp 会抢走导入文件同目录的 foo.tap，
+// 与「同一目录下 .tp 优先」的承诺相反，而且没有任何诊断。
+static char *resolve_module_path(const char *module_name, const char *filename,
+                                 const char *compiler_path, char **error) {
+    static const char *extensions[] = {".tp", ".tap"};
+    ModuleSearchRoots roots = {NULL, 0, 0};
+
+    // 1. 标准库专用根：`std.` 前缀去掉，且优先于所有普通根。
     if (is_std_module(module_name)) {
         const char *std_path = getenv("TAP_STD_PATH");
         if (std_path && std_path[0] != '\0') {
-            char *std_relative =
-                module_relative_path(module_name + 4, extension);
-            char *candidate = std_relative ? join_path(std_path, std_relative) : NULL;
-            free(std_relative);
-            char *resolved = existing_canonical_path(candidate);
-            if (resolved) {
-                free(relative);
-                return resolved;
-            }
+            add_search_root(&roots, copy_string(std_path), module_name + 4);
         }
     }
 
-    // 1. 导入声明所在文件的目录。
-    char *importer_directory = path_directory(filename);
-    char *resolved = importer_directory
-        ? resolve_under_root(importer_directory, relative, module_name)
-        : NULL;
-    free(importer_directory);
-    if (resolved) {
-        free(relative);
-        return resolved;
-    }
+    // 2. 导入声明所在文件的目录。
+    add_search_root(&roots, path_directory(filename), module_name);
 
-    // 2. TAP_MODULE_PATH，支持多个根（Unix 冒号分隔，Windows 分号）。
+    // 3. TAP_MODULE_PATH，支持多个根（Unix 冒号分隔，Windows 分号）。
     const char *module_path = getenv("TAP_MODULE_PATH");
     if (module_path && module_path[0] != '\0') {
-        resolved = resolve_under_module_path(module_path, relative, module_name);
-        if (resolved) {
-            free(relative);
-            return resolved;
-        }
+        add_module_path_roots(&roots, module_path, module_name);
     }
 
-    // 3. 包根下的 packages/：依赖装在这里，编译器自己认，不依赖 tapm 设环境变量。
+    // 4. 包根下的 packages/：依赖装在这里，编译器自己认，不依赖 tapm 设环境变量。
     char *package_root = package_root_of(filename);
     if (package_root) {
         char *dependencies = join_path(package_root, "packages");
         free(package_root);
-        resolved = dependencies
-            ? resolve_under_root(dependencies, relative, module_name)
-            : NULL;
-        free(dependencies);
-        if (resolved) {
-            free(relative);
-            return resolved;
-        }
+        add_search_root(&roots, dependencies, module_name);
     }
 
-    // 4. 当前工作目录。
-    resolved = existing_canonical_path(copy_string(relative));
-    if (resolved) {
-        free(relative);
-        return resolved;
-    }
+    // 5. 当前工作目录。
+    add_search_root(&roots, copy_string("."), module_name);
 
-    // 5. 编译器相邻的源码目录，以及 6. 安装前缀下的 share/tap。
+    // 6. 编译器相邻的源码目录，以及安装前缀下的 share/tap。
     char *directory = compiler_directory(compiler_path);
     if (directory) {
-        char *source_root = join_path(directory, "..");
-        resolved = source_root
-            ? resolve_under_root(source_root, relative, module_name) : NULL;
-        free(source_root);
-        if (resolved) {
-            free(directory);
-            free(relative);
-            return resolved;
-        }
-
-        char *install_root = join_path(directory, "../share/tap");
-        resolved = install_root
-            ? resolve_under_root(install_root, relative, module_name) : NULL;
-        free(install_root);
+        add_search_root(&roots, join_path(directory, ".."), module_name);
+        add_search_root(&roots, join_path(directory, "../share/tap"), module_name);
         free(directory);
-        if (resolved) {
-            free(relative);
-            return resolved;
+    }
+
+    char *resolved = NULL;
+    for (int index = 0; index < roots.count && !resolved && !*error; index++) {
+        for (size_t extension = 0;
+             extension < sizeof(extensions) / sizeof(extensions[0]);
+             extension++) {
+            resolved = resolve_in_root(roots.items[index].root,
+                                       roots.items[index].module_name,
+                                       extensions[extension], error);
+            if (resolved || *error) break;
         }
     }
 
-    free(relative);
-    return NULL;
-}
-
-// 源文件后缀同时支持 .tp 和 .tap。先找 .tp：同一目录下两者同名时以 .tp 为准，
-// 这样给已有模块补一个 .tap 副本不会悄悄改变解析结果。
-static char *resolve_module_path(
-    const char *module_name, const char *filename, const char *compiler_path) {
-    char *resolved = resolve_module_path_with_extension(
-        module_name, filename, compiler_path, ".tp");
-    if (resolved) return resolved;
-    return resolve_module_path_with_extension(
-        module_name, filename, compiler_path, ".tap");
+    free_search_roots(&roots);
+    return resolved;
 }
 
 static FunctionNode *find_function(ASTNode *functions, const char *name) {
@@ -626,9 +657,24 @@ static int report_duplicate(FunctionNode *duplicate, FunctionNode *previous) {
     return 1;
 }
 
+// 比较两个模块路径是否指向同一个文件。
+//
+// Windows 的文件系统大小写不敏感，`_fullpath` 却保留传入的大小写：同一个 `mod2.tp`
+// 写成 `Mod2.tp` 会得到两个不同的字符串，去重就失效了 —— 结果是一份源码被当成两个
+// 模块，各自改名、各自生成函数（`std.Math` 和 `std.math` 就会撞出
+// `duplicate function definition '__tap_pow_f64'` 这种看不懂的错）。
+// 所以去重按「是不是同一个文件」判断，忽略大小写；显示和存储仍用原始路径。
+static int path_equal(const char *left, const char *right) {
+#ifdef _WIN32
+    return _stricmp(left, right) == 0;
+#else
+    return strcmp(left, right) == 0;
+#endif
+}
+
 static LoadedModule *find_loaded_module(LoadedModule *modules, const char *path) {
     for (; modules; modules = modules->next) {
-        if (strcmp(modules->path, path) == 0) return modules;
+        if (path_equal(modules->path, path)) return modules;
     }
     return NULL;
 }
@@ -757,8 +803,8 @@ static int register_type_export(
 //   - 常量、普通函数：一律改名成 `__tap_module_N.name`。**非 pub 的也要改名** ——
 //     否则它仍然占着全局名字，会和其他模块的同名符号撞。
 //   - `extern` 函数：符号名就是 C 符号名，加前缀会链接不到，所以保持原名。
-//   - 类型：pub 的保持裸名，非 pub 的改名成模块私有。两个模块因此可以各自拥有
-//     同名私有类型，互不干扰。
+//   - 类型：**一律**改名成 `__tap_module_N.Name`，pub 的也一样。pub 只决定「能不能从
+//     模块外引用」，不决定名字长什么样 —— 两个模块因此可以各自拥有同名的 pub 类型。
 // 只有 pub 的会被 find_public_export 放行给其他模块。
 static int register_exports(LoadedModule *module, ProgramNode *program) {
     FunctionNode *previous = NULL;
@@ -1125,7 +1171,8 @@ static int load_module(
 typedef enum {
     IMPORT_RESOLVE_OK,          // 成功，*path_out 是模块文件路径
     IMPORT_RESOLVE_NOT_FOUND,   // 整条路径和前缀都找不到模块
-    IMPORT_RESOLVE_AMBIGUOUS    // 整条路径和前缀都是模块，最后一段无法确定是模块段还是成员名
+    IMPORT_RESOLVE_AMBIGUOUS,   // 整条路径和前缀都是模块，最后一段无法确定是模块段还是成员名
+    IMPORT_RESOLVE_ERROR        // 解析阶段已经报过致命错误（消息在 context->error）
 } ImportResolveStatus;
 
 // 把点分路径拆成「模块名 + 成员名」。整条路径优先当模块名解析（`import std.math`
@@ -1143,7 +1190,9 @@ static ImportResolveStatus resolve_import_target(
     *path_out = NULL;
 
     char *full = resolve_module_path(
-        import_node->module_name, import_node->filename, context->compiler_path);
+        import_node->module_name, import_node->filename, context->compiler_path,
+        &context->error);
+    if (context->error) return IMPORT_RESOLVE_ERROR;
 
     // 通配导入没有成员段，`mod.*` 的模块名就是整条路径。
     if (import_node->is_wildcard) {
@@ -1169,14 +1218,35 @@ static ImportResolveStatus resolve_import_target(
     prefix[prefix_length] = '\0';
 
     char *prefix_path = resolve_module_path(
-        prefix, import_node->filename, context->compiler_path);
+        prefix, import_node->filename, context->compiler_path, &context->error);
+    if (context->error) {
+        free(full);
+        free(prefix);
+        return IMPORT_RESOLVE_ERROR;
+    }
 
     if (full && prefix_path) {
-        // 整条路径和前缀都是模块 —— 重名歧义，交回调用方报错。
-        free(full);
+        // 整条路径和前缀都是模块。光是「有个同名文件」不算歧义 —— 还得前缀模块里
+        // 确实有这个成员，否则 `import a.b.c;`（本意是模块 a.b.c）会被一个无关的
+        // a/b.tp 永久挡住。只有两边都成立时，最后一段才真的无法确定是模块段还是成员名。
+        LoadedModule *prefix_module = NULL;
+        if (load_module(context, prefix_path, &prefix_module) != 0) {
+            free(full);
+            free(prefix_path);
+            free(prefix);
+            return IMPORT_RESOLVE_ERROR;
+        }
+        if (find_export(prefix_module, last_dot + 1)) {
+            free(full);
+            free(prefix_path);
+            free(prefix);
+            return IMPORT_RESOLVE_AMBIGUOUS;
+        }
+        // 前缀模块没有这个成员，最后一段只能是模块路径的一段。
         free(prefix_path);
         free(prefix);
-        return IMPORT_RESOLVE_AMBIGUOUS;
+        *path_out = full;
+        return IMPORT_RESOLVE_OK;
     }
 
     if (full) {
@@ -1318,20 +1388,49 @@ static int report_bare_name_conflict(
     return 1;
 }
 
-// 校验通配/单成员导入引入的裸名：不能和本文件顶层定义重名，也不能和其他导入重名。
-// 重名一律报错，不静默偏向任何一侧 —— 这条取代了原来「本地定义优先于通配导入」的规则。
+// 导入的裸名和 Prelude 冲突。比普通的「重名」严重：Prelude 是隐式注入的，用户
+// 没写任何 import 就默认拥有 `print` / `panic` / `exit`，静默换掉它是**语义变化**，
+// 编译能过、行为却变了。所以这里只报错，不提供「本地优先」的选项。
+static int report_prelude_conflict(
+    const ImportNode *import_node, const char *name, int is_type) {
+    print_diagnostic(stderr, "error", import_node->filename, import_node->line,
+                     import_node->column,
+                     "import from module '%s' brings in '%s', which is already provided by the prelude",
+                     import_node->module_name, name); // 中文：导入的裸名与 Prelude 重名
+    if (is_type) {
+        print_diagnostic(stderr, "note", import_node->filename, import_node->line,
+                         import_node->column,
+                         "rename it, or use a namespace import and write the qualified type name"); // 中文：改名，或改用名称空间导入并写限定名
+    } else {
+        print_diagnostic(stderr, "note", import_node->filename, import_node->line,
+                         import_node->column,
+                         "rename it, or call it as '%s.%s(...)' with a namespace import",
+                         import_node->module_name, name); // 中文：改名，或改用名称空间导入按别名调用
+    }
+    return 1;
+}
+
+// 校验通配/单成员导入引入的裸名：不能和本文件顶层定义重名，也不能和其他导入重名，
+// 更不能盖住 Prelude。重名一律报错，不静默偏向任何一侧 —— 这条取代了原来
+// 「本地定义优先于通配导入」的规则。
 // **类型同样参与**：类型名现在也带模块前缀，撞了就必须说清楚，不能靠全局唯一侥幸过关。
 //
 // 命名空间导入不在这里查：它的 pub 类型名只是三级查找的兜底，本文件自己的定义和单成员/
 // 通配导入优先级更高，在场时兜底用不到，不构成冲突。第③级自己的歧义由
 // `find_namespace_type_import` 在真正用到那个裸名时报（见那里的注释）。
 static int validate_bare_names(
-    ProgramNode *program, LoadedModule *module, ImportBinding *bindings) {
+    ModuleContext *context, ProgramNode *program, LoadedModule *module,
+    ImportBinding *bindings) {
     for (ImportBinding *binding = bindings; binding; binding = binding->next) {
         if (binding->kind == IMPORT_NAMESPACE) continue;
 
         if (binding->kind == IMPORT_MEMBER) {
             const char *name = binding->import_node->alias;
+            int prelude_type = 0;
+            if (context->prelude_names &&
+                prelude_provides_name(context->prelude_names, name, &prelude_type)) {
+                return report_prelude_conflict(binding->import_node, name, prelude_type);
+            }
             if (count_bare_name_sources(program, module, bindings, name) > 1) {
                 ModuleExport *export = find_public_export(
                     binding->module, binding->import_node->member);
@@ -1344,6 +1443,11 @@ static int validate_bare_names(
         for (ModuleExport *export = binding->module->exports;
              export; export = export->next) {
             if (!export->is_pub) continue;
+            if (context->prelude_names &&
+                prelude_provides_name(context->prelude_names, export->name, NULL)) {
+                return report_prelude_conflict(
+                    binding->import_node, export->name, export->is_type);
+            }
             if (count_bare_name_sources(program, module, bindings, export->name) > 1) {
                 return report_bare_name_conflict(
                     binding->import_node, export->name, export->is_type);
@@ -1363,13 +1467,24 @@ static int build_bindings(
         if (status == IMPORT_RESOLVE_AMBIGUOUS) {
             return report_ambiguous_import(import_node);
         }
+        if (status == IMPORT_RESOLVE_ERROR) {
+            // 解析阶段拿不到源码位置，消息在这里补上位置再打印。
+            if (context->error) {
+                print_diagnostic(stderr, "error", import_node->filename,
+                                 import_node->line, import_node->column,
+                                 "%s", context->error);
+                free(context->error);
+                context->error = NULL;
+            }
+            return 1;
+        }
         if (status != IMPORT_RESOLVE_OK) {
             print_diagnostic(stderr, "error", import_node->filename,
                              import_node->line, import_node->column,
                              "module '%s' not found", import_node->module_name); // 中文：找不到模块
             return 1;
         }
-        if (context->root_path && strcmp(path, context->root_path) == 0) {
+        if (context->root_path && path_equal(path, context->root_path)) {
             print_diagnostic(stderr, "error", import_node->filename,
                              import_node->line, import_node->column,
                              "entry file cannot import itself"); // 中文：入口文件不能导入自身
@@ -1409,7 +1524,7 @@ static int build_bindings(
         if (add_binding(bindings, import_node, module, kind) != 0) return 1;
     }
 
-    return validate_bare_names(program, current_module, *bindings);
+    return validate_bare_names(context, program, current_module, *bindings);
 }
 
 static int rewrite_expression(
@@ -2125,7 +2240,8 @@ static int load_module(
     return result;
 }
 
-int load_modules(ProgramNode *program, const char *input_file, const char *compiler_path) {
+int load_modules(ProgramNode *program, const char *input_file,
+                 const char *compiler_path, const PreludeNames *prelude_names) {
     FunctionNode *previous = NULL;
     FunctionNode *duplicate = find_internal_duplicate(program->functions, &previous);
     if (duplicate) return report_duplicate(duplicate, previous);
@@ -2137,7 +2253,9 @@ int load_modules(ProgramNode *program, const char *input_file, const char *compi
         .modules = NULL,
         .compiler_path = compiler_path,
         .root_path = root_path,
-        .next_module_id = 0
+        .next_module_id = 0,
+        .error = NULL,
+        .prelude_names = prelude_names
     };
 
     ImportBinding *bindings = NULL;
@@ -2154,6 +2272,7 @@ int load_modules(ProgramNode *program, const char *input_file, const char *compi
     free_bindings(bindings);
     free_modules(context.modules);
     free(root_path);
+    free(context.error);
     free_ast((ASTNode *)module_functions);
     return result;
 }

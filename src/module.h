@@ -3,7 +3,11 @@
 
 #include "ast.h"
 
-int load_modules(ProgramNode *program, const char *input_file, const char *compiler_path);
+// Prelude 的名字表（定义在 prelude.h）。绑定阶段用它拦住「导入的裸名盖住 Prelude」。
+typedef struct PreludeNames PreludeNames;
+
+int load_modules(ProgramNode *program, const char *input_file, const char *compiler_path,
+                 const PreludeNames *prelude_names);
 
 // 包模式：从 start_directory 向上找 package.toml，按 [package] 的 entry 和 name 解析出
 // 入口文件路径和构建产物路径（都是 malloc 的）。失败返回非 0 并打印诊断。

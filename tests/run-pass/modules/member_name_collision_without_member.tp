@@ -1,0 +1,16 @@
+// 歧义判定的条件是「前缀模块确实有这个成员」，不是「两个路径都像模块」。
+// modules/notmember.tp 存在，但它没有 inner 成员，所以 `modules.notmember.inner`
+// 只能是模块路径，直接导入即可。早期实现会因为「两个文件都在」直接报歧义。
+import modules.notmember.inner;
+
+fn main(): i32 {
+    print("%d\n", inner.other());
+    return 0;
+}
+
+/** -- test
+- .stdout
+4
+- .exit
+0
+-- */

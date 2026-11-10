@@ -206,6 +206,9 @@ static const char *literal_type_name(enum LiteralType type) {
 // 剥掉模块前缀（`__tap_module_N.`），留下源语言里的名字。定义在文件后部。
 static const char *function_base_name(const char *name);
 
+// 诊断里显示的函数名，优先用改名前的原名。定义在文件后部。
+static const char *function_display_name(const FunctionNode *function);
+
 // 把类型渲染成源码里能写出来的样子，供诊断消息使用。
 //
 // 诊断要说「你这个值的类型是 X」，而 X 必须和用户写的一致 —— 直接打
@@ -557,7 +560,7 @@ static void collect_variadic_forwards(CodeGenContext *context) {
                             function->line, function->column,
                             "variadic function '%s' must forward its arguments in a single call, "
                             "for example `return printf(format, ...);`",
-                            function->name); // 中文：变参函数体必须是一句纯转发
+                            function_display_name(function)); // 中文：变参函数体必须是一句纯转发
         }
 
         VariadicForward *forward = malloc(sizeof(VariadicForward));
@@ -1371,7 +1374,7 @@ static const VarTypeNode *indexed_value_type(CodeGenContext *context, ASTNode *e
             return return_type->element_type;
         }
         if (!return_type || !return_type->is_array) {
-            report_error((const ASTNode *)expression, "function '%s' does not return an array or pointer", call->name); // 中文：函数不返回数组或指针
+            report_error((const ASTNode *)expression, "function '%s' does not return an array or pointer", function_display_name(function)); // 中文：函数不返回数组或指针
         }
         return return_type;
     }
@@ -1630,11 +1633,16 @@ static void report_field_access_error(CodeGenContext *context, const ASTNode *no
     FieldAccessNode *access = (FieldAccessNode *)node;
     VarTypeNode *object_type = expression_full_type(context, access->object);
     // 多级字段里出错的是最内层那一环：`p.a.b` 的 `a` 不存在时，`b` 的类型同样推不出来。
-    // 递归到那一环再报，消息才指向真正的问题，而不是在最外层说「类型是 ?」。
-    if (!object_type && access->object &&
-        access->object->type == NODE_FIELD_ACCESS) {
-        report_field_access_error(context, access->object);
+    // 沿着 object 下移到那一环再报，消息才指向真正的问题，而不是在最外层说「类型是 ?」。
+    // 用循环而不是递归：每层都要调一次 expression_full_type，边界条件就在这个循环里，
+    // 递归版本还会让编译器把「所有路径都报错退出」误判成无限递归。
+    while (!object_type && access->object &&
+           access->object->type == NODE_FIELD_ACCESS) {
+        access = (FieldAccessNode *)access->object;
+        object_type = expression_full_type(context, access->object);
     }
+    node = (const ASTNode *)access;
+
     char rendered[256];
     describe_var_type(object_type, rendered, sizeof(rendered));
 
@@ -2242,7 +2250,7 @@ static LLVMValueRef generate_index_address(
             array_address = create_entry_alloca(context, llvm_array_type, "array_return_tmp");
             LLVMBuildStore(context->builder, generate_function_call(context, call), array_address);
         } else {
-            report_error((const ASTNode *)index_expression, "function '%s' does not return an array or pointer", call->name); // 中文：函数不返回数组或指针
+            report_error((const ASTNode *)index_expression, "function '%s' does not return an array or pointer", function_display_name(function)); // 中文：函数不返回数组或指针
         }
     } else if (index_expression->array &&
                index_expression->array->type == NODE_FIELD_ACCESS) {

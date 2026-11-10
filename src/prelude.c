@@ -158,6 +158,119 @@ static void prepend_declarations(ProgramNode *program, ProgramNode *prelude) {
     prepend_list(&program->functions, &prelude->functions);
 }
 
+// Prelude 的名字表。只记「裸名 + 是不是类型」，够模块绑定阶段判断冲突了。
+struct PreludeNames {
+    char **names;
+    unsigned char *is_type;
+    int count;
+    int capacity;
+};
+
+void prelude_names_free(PreludeNames *names);
+
+static int add_prelude_name(PreludeNames *names, const char *name, int is_type) {
+    if (!name || !name[0]) return 0;
+    for (int index = 0; index < names->count; index++) {
+        if (strcmp(names->names[index], name) == 0) {
+            if (is_type) names->is_type[index] = 1;
+            return 0;
+        }
+    }
+
+    if (names->count == names->capacity) {
+        int capacity = names->capacity ? names->capacity * 2 : 32;
+        char **strings =
+            realloc(names->names, sizeof(char *) * (size_t)capacity);
+        if (!strings) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            return 1;
+        }
+        names->names = strings;
+        unsigned char *flags = realloc(names->is_type, (size_t)capacity);
+        if (!flags) {
+            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+            return 1;
+        }
+        names->is_type = flags;
+        names->capacity = capacity;
+    }
+
+    char *copy = copy_string(name);
+    if (!copy) return 1;
+    names->names[names->count] = copy;
+    names->is_type[names->count] = (unsigned char)(is_type ? 1 : 0);
+    names->count++;
+    return 0;
+}
+
+PreludeNames *collect_prelude_names(const char *compiler_path) {
+    char *path = resolve_prelude_path(compiler_path);
+    if (!path) return NULL; // load_prelude 会给出「找不到 prelude.tp」的完整提示
+
+    Lexer *lexer = create_lexer(path);
+    if (!lexer) {
+        free(path);
+        return NULL;
+    }
+    Parser *parser = create_parser(lexer);
+    if (!parser) {
+        free_lexer(lexer);
+        free(path);
+        return NULL;
+    }
+
+    ProgramNode *prelude = parse_program(parser);
+    PreludeNames *names = calloc(1, sizeof(PreludeNames));
+    int failed = names == NULL;
+    if (!failed) {
+        for (ASTNode *node = prelude->functions; node && !failed; node = node->next) {
+            failed = add_prelude_name(names, ((FunctionNode *)node)->name, 0);
+        }
+        for (ASTNode *node = prelude->constants; node && !failed; node = node->next) {
+            failed = add_prelude_name(names, ((VarDeclNode *)node)->name, 0);
+        }
+        for (ASTNode *node = prelude->structs; node && !failed; node = node->next) {
+            failed = add_prelude_name(names, ((StructNode *)node)->name, 1);
+        }
+        for (ASTNode *node = prelude->enums; node && !failed; node = node->next) {
+            failed = add_prelude_name(names, ((EnumNode *)node)->name, 1);
+        }
+    }
+
+    free_ast((ASTNode *)prelude);
+    free_parser(parser);
+    free_lexer(lexer);
+    free(path);
+
+    if (failed) {
+        prelude_names_free(names);
+        return NULL;
+    }
+    return names;
+}
+
+int prelude_provides_name(const PreludeNames *names, const char *name,
+                          int *is_type) {
+    if (!names || !name) return 0;
+    for (int index = 0; index < names->count; index++) {
+        if (strcmp(names->names[index], name) == 0) {
+            if (is_type) *is_type = names->is_type[index];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void prelude_names_free(PreludeNames *names) {
+    if (!names) return;
+    for (int index = 0; index < names->count; index++) {
+        free(names->names[index]);
+    }
+    free(names->names);
+    free(names->is_type);
+    free(names);
+}
+
 int load_prelude(ProgramNode *program, const char *compiler_path) {
     char *path = resolve_prelude_path(compiler_path);
     if (!path) {

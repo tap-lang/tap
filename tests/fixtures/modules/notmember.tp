@@ -1,0 +1,5 @@
+// 与 notmember/inner.tp 同名成对：用来验证「模块文件重名但成员不存在」不算歧义。
+// 这个模块故意不导出 inner 成员。
+pub fn ok(): i32 {
+    return 3;
+}

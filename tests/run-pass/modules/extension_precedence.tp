@@ -1,0 +1,17 @@
+// 扩展名优先级的判据是「搜索根优先、扩展名次之」：
+// TAP_MODULE_PATH 里 fixtures 排在 fixtures-extra 前面，所以 fixtures/extprec.tap
+// 应该胜过 fixtures-extra/extprec.tp。早期实现先把 .tp 在所有根上跑一遍，
+// 这里会错误地取到 2。
+import extprec;
+
+fn main(): i32 {
+    print("%d\n", extprec.value());
+    return 0;
+}
+
+/** -- test
+- .stdout
+1
+- .exit
+0
+-- */

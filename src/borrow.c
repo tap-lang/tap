@@ -395,6 +395,18 @@ static const char *function_base_name(const char *name) {
     return dot ? dot + 1 : name;
 }
 
+// 诊断里用的名字：去掉模块前缀（`__tap_module_0.peek`）和单态化后缀（`peek$r_i32`）。
+// 两者都是编译器造的，用户源码里写的只有 `peek`。
+static const char *diagnostic_name(const char *name, char *buffer, size_t size) {
+    const char *base = function_base_name(name);
+    const char *suffix = strchr(base, '$');
+    size_t length = suffix ? (size_t)(suffix - base) : strlen(base);
+    if (length >= size) length = size - 1;
+    memcpy(buffer, base, length);
+    buffer[length] = '\0';
+    return buffer;
+}
+
 static FunctionNode *find_named_function(ProgramNode *program, const char *name) {
     if (!program || !name) return NULL;
     for (ASTNode *node = program->functions; node; node = node->next) {
@@ -837,9 +849,11 @@ static void check_method_receiver_borrow(BorrowContext *context,
         collect_overlapping_borrows(context, holder, receiver.path, 0, 1,
                                     &has_mutable, &has_shared);
         if (has_mutable || has_shared) {
+            char display[128];
             report_error_soft(expression,
                               "cannot call method '%s' on '%s' while it is borrowed",
-                              call->name, holder->name);
+                              diagnostic_name(call->name, display, sizeof(display)),
+                              holder->name);
             // 中文：接收者还被借用着，不能调用按值接收的方法
         }
         return;

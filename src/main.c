@@ -307,15 +307,22 @@ int main(int argc, char *argv[]) {
     // 而不是 Codegen 自己的缓存。排查「某个类型问题是不是 Sema 引入的」时也用它。
     const char *skip_sema = getenv("TAP_NO_SEMA");
 
-    if (load_modules(program, input_file, argv[0]) != 0 
+    // Prelude 的名字要在模块绑定**之前**拿到：通配/单成员导入的裸名一旦盖住
+    // `print` 这类名字，编译能过、行为却变了。Prelude 本身仍然等模块合并完再注入
+    // （注入顺序决定「裸名解析到谁」，不能提前）。
+    PreludeNames *prelude_names = collect_prelude_names(argv[0]);
+
+    if (load_modules(program, input_file, argv[0], prelude_names) != 0 
         || load_prelude(program, argv[0]) != 0
         || lower_payload_enums(program) != 0
     ) {
+        prelude_names_free(prelude_names);
         free_ast((ASTNode *)program);
         free_parser(parser);
         free_lexer(lexer);
         return 1;
     }
+    prelude_names_free(prelude_names);
 
     // 名字归一：把「根是局部变量」的点号标识符改写成字段访问 / 字段赋值 / 方法调用节点。
     //
