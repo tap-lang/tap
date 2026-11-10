@@ -1,6 +1,21 @@
 #ifndef PARSER_H
 #define PARSER_H
 
+// mingw-w64 在 x86_64 上默认把 `setjmp` 展开成 `_setjmp(buf, __builtin_sponentry())`：
+// 缓冲里记一个栈帧地址，`longjmp` 走 `RtlUnwindEx` 做 SEH 展开回到那个帧。
+//
+// 这条路在本项目里会把编译器打崩 —— Release（`-O3`）下 `parse_program` 的帧地址和
+// `RtlVirtualUnwind` 期望的边界对不上，展开时走进垃圾 pdata，SIGSEGV（Debug 的 `-g`
+// 无优化构建不会）。六个环境里只有 MINGW64 的 Release 会中，因为它用 msvcrt + SEH
+// 版的 setjmp；Linux / macOS / MSVC 的 setjmp 不走这条路。
+//
+// `__USE_MINGW_SETJMP_NON_SEH` 是 mingw-w64 自己给的开关：定义了它就退回
+// `_setjmp(buf, NULL)` + 普通的寄存器恢复，完全不碰 SEH 展开。tap 是纯 C，没有
+// C++ 析构、没有 `__try`，跳过去不需要展开任何东西 —— 这正是这个开关的适用场景。
+#if defined(__MINGW32__) || defined(__MINGW64__)
+#define __USE_MINGW_SETJMP_NON_SEH 1
+#endif
+
 #include <setjmp.h>
 
 #include "lexer.h"
