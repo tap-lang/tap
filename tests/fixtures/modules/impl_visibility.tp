@@ -1,0 +1,32 @@
+// impl 方法可见性测试用的模块。
+//
+// 固有 impl（`impl Type { }`）的方法默认模块私有，写 pub 才能跨模块调用；
+// trait impl（`impl Trait for Type { }`）的方法是 trait 契约的一部分，可见性跟着
+// trait 走 —— Rust 里这种 impl 根本不允许写可见性修饰符，这里写了也当冗余。
+pub struct Circle { r: i32 }
+
+pub trait Area {
+    fn area(&self): i32;
+}
+
+impl Area for Circle {
+    fn area(&self): i32 {
+        return self.r * self.r;
+    }
+}
+
+impl Circle {
+    pub fn scale(&self, factor: i32): i32 {
+        return self.r * factor;
+    }
+
+    fn secret(&self): i32 {
+        return self.r + 100;
+    }
+}
+
+// 私有方法在模块内部照常可用 —— pub 只影响外部。
+pub fn internal_use(): i32 {
+    let c: Circle = Circle { r: 2 };
+    return c.secret();
+}

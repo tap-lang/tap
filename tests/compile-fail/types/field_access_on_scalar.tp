@@ -1,0 +1,18 @@
+// 接收者根本不是结构体时，字段访问要说清接收者的实际类型。
+//
+// 回归点：以前不管接收者是 `i32`、`String` 还是结构体，都只有同一句
+// `field 'x' is not accessible here (the receiver may not be a struct)` —— 连
+// 「到底哪个类型」都要用户自己猜。现在把类型渲染出来（`describe_var_type`）。
+fn main(): i32 {
+    let count: i32 = 1;
+    print("%d\n", count.value);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: cannot access field 'value' on a value of type 'i32'
+--> tests/compile-fail/types/field_access_on_scalar.tp:8:25
+- .exit
+1
+-- */

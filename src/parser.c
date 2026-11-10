@@ -421,7 +421,19 @@ static VarTypeNode *parse_function_pointer_type(Parser *parser) {
     return create_function_pointer_type(parameter_types, parse_type(parser));
 }
 
+// 类型节点的位置由外层包装统一盖章：`validate_var_type` 报「未知类型名」时要指到
+// 源码里的那一段。递归调用（`[T; N]`、`*T`、`&T`、泛型实参）走的还是 parse_type，
+// 内层先盖章，外层的 stamp_location 看到已有位置就跳过，留下的都是各自最内层的起点。
+static VarTypeNode *parse_type_inner(Parser *parser);
+
 static VarTypeNode *parse_type(Parser *parser) {
+    SourceLoc start = current_location(parser);
+    VarTypeNode *type = parse_type_inner(parser);
+    stamp_location((ASTNode *)type, start);
+    return type;
+}
+
+static VarTypeNode *parse_type_inner(Parser *parser) {
     // `&&T`：词法层把两个 `&` 合并成 `&&`（表达式里它是逻辑与），所以类型位置要自己
     // 拆开。等价于 `&(&T)` —— 外层固定是共享借用，`mut` 属于内层。
     //
@@ -1681,6 +1693,9 @@ static ASTNode *parse_factor_inner(Parser *parser) {
             }
 
             FieldAccessNode *access = create_field_access(expression, member_name);
+            // 位置盖在**字段名**上：`p.y` 报「没有字段 y」时指到 y，而不是整条链的起点。
+            // 内层节点（`p.y.z` 里的 `p.y`）以前从没盖过章，诊断报到它头上就没有 `-->`。
+            stamp_location((ASTNode *)access, member_loc);
             access->filename = strdup(parser->lexer->filename);
             access->line = line;
             access->column = column;
@@ -2041,10 +2056,21 @@ static ImplNode *parse_impl(Parser *parser, ProgramNode *program) {
 
     consume(parser, TOKEN_LBRACE);
     while (parser->current_token->type != TOKEN_RBRACE) {
+        // `pub` 只对**固有 impl** 有意义（`impl Type { pub fn m() }`）。trait impl 的
+        // 方法是 trait 契约的一部分，可见性跟着 trait 走，所以那里写 pub 是冗余的。
+        int is_pub = 0;
+        if (parser->current_token->type == TOKEN_PUB) {
+            is_pub = 1;
+            consume(parser, TOKEN_PUB);
+        }
         if (parser->current_token->type != TOKEN_FN) {
             parser_error(parser, "expected method definition in impl"); // 中文：期望 impl 里的方法定义
         }
         FunctionNode *method = parse_function(parser, 0, impl_node->type_name);
+        // 可见性：trait impl 的方法随 trait 一起可见（trait 本身是 pub 才导得进来），
+        // 固有 impl 的方法默认模块私有，写 pub 才跨模块。以前这里根本没看 is_pub ——
+        // 写 `pub fn` 反而语法错误，不写的反而哪都能调，正好反了。
+        method->is_pub = impl_node->trait_name ? 1 : is_pub;
         // 记下源语言里的方法名：函数名随后会被改成 `show$Point`，诊断要用原名。
         method->original_name = strdup(method->name);
         add_impl_method(impl_node, method);

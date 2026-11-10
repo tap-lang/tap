@@ -1,0 +1,24 @@
+// 访问结构体上不存在的字段：要说清是哪个结构体没有哪个字段，并指到字段名上。
+//
+// 回归点：以前这里只有一句 `field 'y' is not accessible here (the receiver may not
+// be a struct)` 加 exit(1) —— 不区分「接收者不是结构体」和「结构体没这个字段」，
+// 也没有 `--> file:line:col`。现在和结构体字面量那条消息同一口径。
+//
+// 位置盖在**字段名**上（parser 的后缀链用 member_loc 盖章，names.c 的链按段偏移
+// 算列），所以 `o.inner.w` 指到 `w`，而不是整条链的起点 `o`。
+struct Inner { value: i32 }
+struct Outer { inner: Inner }
+
+fn main(): i32 {
+    let outer: Outer = Outer { inner: Inner { value: 1 } };
+    print("%d\n", outer.inner.nope);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: struct 'Inner' has no field 'nope'
+--> tests/compile-fail/types/field_access_missing_field.tp:14:31
+- .exit
+1
+-- */

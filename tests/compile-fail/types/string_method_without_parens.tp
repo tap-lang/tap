@@ -1,0 +1,17 @@
+// 字符串内建方法是**方法**，必须带括号调用：`s.len` 是字段访问，`s.len()` 才是内建。
+//
+// 回归点：以前 `s.len` 只说一句「字段不可访问（接收者可能不是结构体）」，看着像是
+// 类型系统出了问题；实际上只差一对括号。现在直接提示补括号。
+fn main(): i32 {
+    let text = "hello";
+    print("%d\n", text.len);
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: string method 'len' must be called with parentheses
+--> tests/compile-fail/types/string_method_without_parens.tp:7:24
+- .exit
+1
+-- */

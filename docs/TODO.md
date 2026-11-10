@@ -16,10 +16,10 @@
     `append_quoted` / `unescape`，覆盖控制字符、`\uXXXX` 和代理对）。
 11. [x] format_f64：`std.parse` 的 `format_f64` 通过 Runtime 的 `__tap_format_f64` 调用
     C 库转换，输出最短可往返的十进制字符串（精确展开需要大整数算法）。
-12. 递归载荷枚举：**用指针递归已经可用**（`enum Node { Pair(*Node, *Node) }` 能编译），
-    不行的只是按值递归（`Pair(Node, Node)`），而且会漏到 LLVM 才炸出
-    `Cannot allocate unsized type`。实际要做的是补一条前端诊断，见
-    [`todo/language.md`](todo/language.md) 第 5 条。
+12. [x] 按值递归的**诊断**：`struct Node { next: Node }` / `enum Node { Pair(Node, Node) }`
+    现在报 `error: recursive type 'Node' has infinite size; ...`（带源码位置），不再漏到
+    LLVM 才炸出 `Cannot allocate unsized type`。按值递归本身仍不支持，要用 `*Node`；
+    分析见 [`todo/language.md`](todo/language.md) 第 5 条。
 
 ## 深度待办（`docs/todo/`）
 

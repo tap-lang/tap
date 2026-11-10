@@ -1,0 +1,17 @@
+// 字段赋值目标不存在时，走和读路径同一套诊断（`generate_field_assignment` 以前
+// 只报一句 `cannot assign to this field`，还指在整条赋值语句上）。
+struct Point { x: i32, y: i32 }
+
+fn main(): i32 {
+    let p: Point = Point { x: 1, y: 2 };
+    p.z = 3;
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: struct 'Point' has no field 'z'
+--> tests/compile-fail/types/field_assign_missing_field.tp:7:7
+- .exit
+1
+-- */

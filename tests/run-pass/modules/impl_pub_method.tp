@@ -1,0 +1,20 @@
+// impl 方法的可见性：固有 impl 的方法默认模块私有，pub 才跨模块；
+// trait impl 的方法不需要 pub（可见性跟着 trait 走）。
+//
+// 回归点：以前 `impl` 里写 `pub fn` 是**语法错误**（`expected method definition in
+// impl`），不写的反而哪个模块都能调 —— 正好反了。现在两条都对：
+//   * `pub fn scale(...)` 跨模块可调；
+//   * `fn secret(...)` 只有本模块能调（模块内部由 internal_use 代劳）。
+import modules.impl_visibility as shapes;
+
+fn main(): i32 {
+    let c: Circle = Circle { r: 3 };
+    // area=3*3=9，scale(2)=3*2=6，internal_use=2+100=102。
+    return c.area() + c.scale(2) + shapes.internal_use();
+}
+
+/** -- test
+- .stdout
+- .exit
+117
+-- */

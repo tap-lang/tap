@@ -5,7 +5,7 @@ fn main(): i32 {
 
 /** -- test
 - .stderr
-error: undefined enum type 'Missing'
+error: unknown type 'Missing'
 - .exit
 1
 -- */

@@ -108,11 +108,16 @@ static ASTNode *build_field_chain(ASTNode *source, const char *name,
         memcpy(buffer, rest, length);
         buffer[length] = '\0';
         FieldAccessNode *access = create_field_access(chain, buffer);
-        access->base.loc = source->loc;
         // 空指针守卫和诊断要用；names 造出来的链和 parser 造的一样带上位置。
+        //
+        // 列号按段在整串里的偏移算：整串是一个标识符 token，不可能跨行，所以
+        // `源列 + (rest - name)` 就是这一段自己的列。不这么算的话，`p.y` 报
+        // 「没有字段 y」时会指到 `p` 上，多级链里每一环也都指向同一个列。
+        access->base.loc = source->loc;
+        access->base.loc.column = source->loc.column + (unsigned)(rest - name);
         access->filename = source->loc.file ? strdup(source->loc.file) : NULL;
-        access->line = (int)source->loc.line;
-        access->column = (int)source->loc.column;
+        access->line = (int)access->base.loc.line;
+        access->column = (int)access->base.loc.column;
         chain = (ASTNode *)access;
         rest = dot ? dot + 1 : limit;
     }

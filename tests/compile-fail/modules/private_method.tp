@@ -1,0 +1,19 @@
+// 固有 impl 里不写 pub 的方法是模块私有的：跨模块调用要被拦下，而且要说清
+// 「方法存在、只是私有」，不能报成「类型没有这个方法」。
+//
+// 方法查找是「按接收者类型遍历 program->functions」，不经过模块导出表，所以
+// pub 以前在这条路径上完全没生效过。
+import modules.impl_visibility as shapes;
+
+fn main(): i32 {
+    let c: Circle = Circle { r: 3 };
+    return c.secret();
+}
+
+/** -- test
+- .stderr
+error: method 'secret' of type 'Circle' is private; add 'pub' to its declaration
+--> tests/compile-fail/modules/private_method.tp:10:12
+- .exit
+1
+-- */

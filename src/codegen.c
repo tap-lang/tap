@@ -203,6 +203,56 @@ static const char *literal_type_name(enum LiteralType type) {
     }
 }
 
+// 剥掉模块前缀（`__tap_module_N.`），留下源语言里的名字。定义在文件后部。
+static const char *function_base_name(const char *name);
+
+// 把类型渲染成源码里能写出来的样子，供诊断消息使用。
+//
+// 诊断要说「你这个值的类型是 X」，而 X 必须和用户写的一致 —— 直接打
+// `literal_type_name` 会把 `*P` 说成 `int`、把 `[i32; 3]` 说成 `i32`。这里只覆盖
+// 诊断里真会出现的形态，认不出的回落到 "?"：宁可少说，也不猜一个错的名字。
+static void describe_var_type(const VarTypeNode *type, char *buffer, size_t size) {
+    if (!buffer || size == 0) return;
+    if (!type) {
+        snprintf(buffer, size, "?");
+        return;
+    }
+    // 具名类型优先：泛型实参不展开（`Box<i32>` 打成 `Box`），诊断里够用。
+    // 名字要剥掉模块前缀 —— 跨模块的结构体内部名是 `__tap_module_0.Circle`，
+    // 直接打出来用户根本对不上自己写的 `Circle`。
+    if (type->struct_name) {
+        snprintf(buffer, size, "%s", function_base_name(type->struct_name));
+        return;
+    }
+    if (type->enum_name) {
+        snprintf(buffer, size, "%s", function_base_name(type->enum_name));
+        return;
+    }
+    if (type->is_function_pointer) {
+        snprintf(buffer, size, "fn pointer");
+        return;
+    }
+    if (type->is_array && type->element_type) {
+        char element[128];
+        describe_var_type(type->element_type, element, sizeof(element));
+        snprintf(buffer, size, "[%s; %llu]", element,
+                 (unsigned long long)type->array_length);
+        return;
+    }
+    if (type->is_pointer && type->element_type) {
+        char element[128];
+        describe_var_type(type->element_type, element, sizeof(element));
+        if (type->is_reference) {
+            snprintf(buffer, size, "&%s%s",
+                     type->reference_mutable ? "mut " : "", element);
+        } else {
+            snprintf(buffer, size, "*%s", element);
+        }
+        return;
+    }
+    snprintf(buffer, size, "%s", literal_type_name(type->type));
+}
+
 // 返回整数类型对应的位宽。
 static unsigned integer_type_bits(enum LiteralType type) {
     switch (type) {
@@ -817,6 +867,8 @@ static LLVMValueRef zero_value(CodeGenContext *context, enum LiteralType type);
 static LLVMValueRef zero_var_value(
     CodeGenContext *context, const VarTypeNode *type, enum LiteralType scalar_type);
 static const char *index_base_name(ASTNode *expression);
+// 字段访问失败（字段不存在 / 接收者不是结构体）的统一诊断，带源码位置。
+static void report_field_access_error(CodeGenContext *context, const ASTNode *node);
 
 // 将形如 base.field 的限定名拆成两个部分；调用方负责释放输出字符串。
 static int split_field_access_name(
@@ -899,10 +951,31 @@ static int method_name_matches(const char *function_name, const char *method_nam
     return strlen(method_name) == length && strncmp(base, method_name, length) == 0;
 }
 
+// 方法在**这个调用点**是否可见。
+//
+// impl 里的方法脱糖成顶层函数，而方法查找是「按接收者类型遍历 program->functions」，
+// 不经过模块导出表 —— 所以 `pub` 从来没在这里生效过：别的模块里不写 pub 的方法照样
+// 能调，写 `pub fn` 反而在解析期就是语法错误。这条补上「可见性」这一维：
+// 定义处和调用点不在同一个文件（一个模块就是一个文件）且方法不是 pub，就当它不存在。
+//
+// trait impl 的方法在解析期就被标成 pub（见 parser.c 的 parse_impl），可见性跟着
+// trait 走 —— Rust 里 trait impl 的方法本来也不允许写可见性修饰符。
+static int method_visible_at(const FunctionNode *function,
+                             const FunctionCallNode *call) {
+    if (!function || !call) return 1;
+    if (function->is_pub) return 1;
+    if (!function->filename || !call->filename) return 1;
+    return strcmp(function->filename, call->filename) == 0;
+}
+
 // 根据接收者完整类型和方法名查找可作为方法调用的函数。
-static FunctionNode *find_method_function(
+//
+// `include_private` 只给诊断用：主查找会跳过当前调用点看不见的私有方法，报错时再
+// 带上它查一次，好把「方法就在那儿，只是没写 pub」和「压根没有这个方法」分开。
+static FunctionNode *find_method_function_impl(
     CodeGenContext *context, const VarTypeNode *receiver_type,
-    const char *method_name, const FunctionCallNode *call) {
+    const char *method_name, const FunctionCallNode *call,
+    int include_private) {
     if (!context->program || !receiver_type) return NULL;
     FunctionNode *fallback = NULL;
     for (ASTNode *node = context->program->functions; node; node = node->next) {
@@ -910,6 +983,7 @@ static FunctionNode *find_method_function(
         FunctionNode *function = (FunctionNode *)node;
         // 泛型模板本身没有可调用的 LLVM 签名；单态化后生成的具体函数才参与匹配。
         if (function->type_params) continue;
+        if (!include_private && !method_visible_at(function, call)) continue;
         const VarTypeNode *first_param = function_param_var_type(function, 0);
         if (first_param && tap_receiver_type_matches(first_param, receiver_type) &&
             method_name_matches(function->name, method_name)) {
@@ -948,6 +1022,13 @@ static FunctionNode *find_method_function(
         }
     }
     return fallback;
+}
+
+// 主查找：只看当前调用点可见的方法。
+static FunctionNode *find_method_function(
+    CodeGenContext *context, const VarTypeNode *receiver_type,
+    const char *method_name, const FunctionCallNode *call) {
+    return find_method_function_impl(context, receiver_type, method_name, call, 0);
 }
 
 // 解析一次方法调用：接收者优先用 `call->receiver`（显式节点），没有才按名字拆点号。
@@ -1355,6 +1436,11 @@ static VarTypeNode *infer_reference_type(
         // `&p.x`：取字段本身的类型。parser 不再把 `p.x` 拼成字符串之后，这条是
         // 字段借用的主路径；以前它走的是「带点标识符」那条分支。
         inferred_scalar = expression_full_type(context, target);
+        if (!inferred_scalar) {
+            // 字段不存在 / 接收者不是结构体。以前这里会落到下面那句
+            // 「reference target is not addressable」，对 `&p.不存在` 是误导。
+            report_field_access_error(context, target);
+        }
         target_type = inferred_scalar;
     }
 
@@ -1517,6 +1603,59 @@ static VarTypeNode *expression_full_type(CodeGenContext *context, ASTNode *expre
     VarTypeNode *type = compute_expression_full_type(context, expression);
     if (type) expression->resolved_type = tap_type_clone(type);
     return type;
+}
+
+// 字符串内建方法的公开名字。清单要和 parser.c 后缀链里那串 strcmp 保持一致 ——
+// 这里只用来把「忘了写括号」的字段访问翻译成人话，不参与语义。
+static int is_string_method_name(const char *name) {
+    static const char *const names[] = {
+        "len", "char_count", "byte_at", "slice",
+        "contains", "starts_with", "ends_with", "replace",
+    };
+    for (size_t index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+        if (strcmp(name, names[index]) == 0) return 1;
+    }
+    return 0;
+}
+
+// 字段访问失败的诊断。调用点约定：只有在**确定**这次访问拿不到类型时才调。
+//
+// 以前这里只有一句 `field '%s' is not accessible here (the receiver may not be a
+// struct)` 加 exit(1)：既不区分「接收者不是结构体」和「结构体没这个字段」，也没有
+// 源码位置。现在分三种情形，都用 report_error 指到源码里的那一段：
+//   1. 接收者是具名结构体、但结构体没有该字段 —— 和结构体字面量那条消息同一口径；
+//   2. 接收者是 String、字段名是个内建方法 —— 提示要写括号；
+//   3. 其余（接收者根本不是结构体，比如 `i32`、`String`、枚举、类型参数）。
+static void report_field_access_error(CodeGenContext *context, const ASTNode *node) {
+    FieldAccessNode *access = (FieldAccessNode *)node;
+    VarTypeNode *object_type = expression_full_type(context, access->object);
+    // 多级字段里出错的是最内层那一环：`p.a.b` 的 `a` 不存在时，`b` 的类型同样推不出来。
+    // 递归到那一环再报，消息才指向真正的问题，而不是在最外层说「类型是 ?」。
+    if (!object_type && access->object &&
+        access->object->type == NODE_FIELD_ACCESS) {
+        report_field_access_error(context, access->object);
+    }
+    char rendered[256];
+    describe_var_type(object_type, rendered, sizeof(rendered));
+
+    if (object_type && object_type->struct_name) {
+        StructNode *struct_node =
+            tap_find_struct(context->program, object_type->struct_name);
+        // 查不到结构体说明名字是泛型参数或类型本身没加载，落到下面的通用消息。
+        if (struct_node) {
+            report_error(node, "struct '%s' has no field '%s'",
+                         function_base_name(struct_node->name),
+                         access->field); // 中文：结构体没有该字段
+        }
+    }
+    if (object_type && object_type->type == LITERAL_STRING &&
+        is_string_method_name(access->field)) {
+        report_error(node,
+                     "string method '%s' must be called with parentheses: '.%s(...)'", // 中文：字符串方法要加括号调用
+                     access->field, access->field);
+    }
+    report_error(node, "cannot access field '%s' on a value of type '%s'", // 中文：该类型没有字段
+                 access->field, rendered);
 }
 
 // 无类型标注的 `let` 用的版本：标量返回 NULL，让调用方继续走原来的标量路径
@@ -1775,7 +1914,7 @@ static void validate_struct_literal_fields(
         StructFieldNode *field = tap_find_struct_field(struct_node, init->name, NULL);
         if (!field) {
             report_error((const ASTNode *)init_node, "struct '%s' has no field '%s'",
-                    struct_node->name, init->name); // 中文：结构体没有该字段
+                    function_base_name(struct_node->name), init->name); // 中文：结构体没有该字段
         }
         // 初始化值必须和字段类型匹配。不查的话宽度不符的值会按错误布局写进去，**静默冲掉
         // 相邻字段**：`struct P { x: i32, y: i32 }` 写 `P { x: "hello", y: 7 }`，
@@ -1785,7 +1924,7 @@ static void validate_struct_literal_fields(
         if (field->field_type && !is_generic_type_parameter(struct_node, field->field_type) &&
             !expression_assignable_to(context, init->expression, field->field_type)) {
             report_error((const ASTNode *)init_node, "struct '%s' field '%s' type mismatch",
-                    struct_node->name, init->name); // 中文：结构体字段类型不匹配
+                    function_base_name(struct_node->name), init->name); // 中文：结构体字段类型不匹配
         }
         for (ASTNode *other = init_node->next; other; other = other->next) {
             if (strcmp(init->name, ((StructInitFieldNode *)other)->name) == 0) {
@@ -2279,7 +2418,12 @@ static LLVMValueRef expression_address(
                                       object_address, "field_access_base");
                 // 裸指针可能是 null；引用构造上非空，且借用体系承诺零运行时开销。
                 if (!object_type->is_reference) {
-                    emit_null_guard(context, base, (const ASTNode *)expression);
+                    // 位置指**接收者**：空指针是 `p` 的事，不是 `.x` 的事。字段访问
+                    // 节点的章盖在字段名上（「没有这个字段」要用它），所以这里显式
+                    // 换成接收者的位置，取不到再退回本节点。
+                    const ASTNode *guard_node = (access->object && access->object->loc.file)
+                        ? access->object : (const ASTNode *)expression;
+                    emit_null_guard(context, base, guard_node);
                 }
             }
             free_ast((ASTNode *)object_type);
@@ -3450,9 +3594,20 @@ static LLVMValueRef generate_function_call(CodeGenContext *context, FunctionCall
                     ? receiver_type->struct_name
                     : receiver_type->enum_name)
                 : NULL;
+            // 方法存在、但对这个调用点不可见（别的模块里的方法没写 pub）：报「类型没有
+            // 这个方法」会让人对着源码里明明写着的方法名发愣。位置报在调用点，定义处靠
+            // 类型名 + 方法名就能找到 —— 不把绝对路径塞进消息里，测试和 CI 都受不了。
+            FunctionNode *hidden = find_method_function_impl(
+                context, receiver_type, call->name, call, 1);
+            if (hidden) {
+                report_error_at(call->filename, call->line, call->column,
+                                "method '%s' of type '%s' is private; add 'pub' to its declaration", // 中文：该方法是模块私有的
+                                call->name,
+                                type_name ? function_base_name(type_name) : "?");
+            }
             report_error_at(call->filename, call->line, call->column,
                             "type '%s' has no method '%s'",
-                            type_name ? type_name : "?",
+                            type_name ? function_base_name(type_name) : "?",
                             call->name); // 中文：类型没有该方法
         }
 
@@ -3678,13 +3833,18 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             // `接收者.字段`：先取字段地址（接收者是右值时由 expression_address 开临时槽），
             // 再按字段类型 load。
             VarTypeNode *field_type = expression_full_type(context, expression);
+            if (!field_type) {
+                // 类型都推不出来说明字段本身不存在（或接收者不是结构体），
+                // 交给统一的诊断，它会把原因和实际类型说清楚。
+                report_field_access_error(context, expression);
+            }
             LLVMValueRef address = expression_address(context, expression);
-            if (!field_type || !address) {
+            if (!address) {
+                // 字段存在但拿不到地址（接收者不是可寻址的表达式）。
                 free_ast((ASTNode *)field_type);
-                fprintf(stderr,
-                    "error: field '%s' is not accessible here (the receiver may not be a struct)\n",
-                    ((FieldAccessNode *)expression)->field); // 中文：无法访问该字段
-                exit(1);
+                report_error((const ASTNode *)expression,
+                             "field '%s' is not addressable here", // 中文：该字段不可寻址
+                             ((FieldAccessNode *)expression)->field);
             }
             LLVMValueRef value = LLVMBuildLoad2(
                 context->builder, get_llvm_var_type(context, field_type),
@@ -4003,8 +4163,8 @@ static void generate_field_assignment(CodeGenContext *context,
     VarTypeNode *field_type =
         expression_full_type(context, (ASTNode *)assignment->target);
     if (!field_type) {
-        report_error((const ASTNode *)assignment, "cannot assign to this field"); // 中文：不能给这个字段赋值
-        return;
+        // 字段不存在 / 接收者不是结构体：交给统一的诊断，别再给一句泛化消息。
+        report_field_access_error(context, (const ASTNode *)assignment->target);
     }
 
     LLVMValueRef address =
@@ -4464,7 +4624,8 @@ static void validate_match_statement(
         if (!variant) {
             report_error_at(arm->filename, arm->line, arm->column,
                             "enum '%s' has no variant '%s'",
-                            enum_node->name, arm->variant_name); // 中文：枚举没有该成员
+                            function_base_name(enum_node->name),
+                            arm->variant_name); // 中文：枚举没有该成员
         }
         unsigned bindings = 0;
         for (ASTNode *binding = arm->bindings; binding; binding = binding->next) {
@@ -5586,12 +5747,20 @@ static void validate_var_type(CodeGenContext *context, VarTypeNode *type) {
         }
     }
     if (type->enum_name && !tap_find_enum(context->program, type->enum_name)) {
-        codegen_error(context, NULL, "undefined enum type '%s'",
-                      type->enum_name); // 中文：未定义的枚举类型
+        // 解析期把**所有**标识符类型都暂存成 enum_name，所以走到这里说明这个名字
+        // 既不是枚举也不是结构体 —— 以前统一报 "undefined enum type"，用户打错一个
+        // 结构体名会被指向一个根本没写的 enum。位置来自 parse_type 的盖章。
+        const char *name = type->enum_name;
+        if (strcmp(name, "string") == 0) {
+            codegen_error(context, (const ASTNode *)type,
+                          "unknown type '%s'; the string type is spelled 'String'", // 中文：未知类型名；字符串类型写作 String
+                          name);
+        }
+        codegen_error(context, (const ASTNode *)type, "unknown type '%s'", name); // 中文：未知类型名
     }
     if (type->struct_name && !tap_find_struct(context->program, type->struct_name)) {
-        codegen_error(context, NULL, "undefined struct type '%s'",
-                      type->struct_name); // 中文：未定义的结构体类型
+        codegen_error(context, (const ASTNode *)type,
+                      "unknown type '%s'", type->struct_name); // 中文：未知类型名
     }
     if (type->is_array) validate_var_type(context, type->element_type);
     if (type->is_pointer) validate_var_type(context, type->element_type);
@@ -5702,11 +5871,13 @@ static void validate_struct_is_sized(
                                ? (const ASTNode *)enum_node
                                : (const ASTNode *)struct_node),
                           "recursive type '%s' has infinite size; wrap the payload in a pointer ('*%s')", // 中文：递归类型无限大，载荷要包一层指针
-                          struct_node->name, struct_node->name);
+                          function_base_name(struct_node->name),
+                          function_base_name(struct_node->name));
         } else {
             codegen_error(context, (const ASTNode *)struct_node,
                           "recursive type '%s' has infinite size; field '%s' must be a pointer ('*%s')", // 中文：递归类型无限大，字段要改成指针
-                          struct_node->name, struct_field->name, struct_node->name);
+                          function_base_name(struct_node->name), struct_field->name,
+                          function_base_name(struct_node->name));
         }
         // 一个类型只报第一条：后面的字段是同一个根因，报多了反而淹没重点。
         return;

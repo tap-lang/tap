@@ -829,6 +829,10 @@ impl Counter {
 - **目标类型必须存在**：固有 impl 没有 trait 声明可以对照，所以这里额外查一次类型名 ——
   `impl Piont { }` 报 `error: no type named 'Piont' for inherent impl`，不会让方法一声不响
   地变成谁都调不到的 `get$Piont`。
+- **方法默认模块私有**：写 `pub fn get(...)` 才跨模块可调，跨模块调用私有方法报
+  `error: method 'get' of type 'Counter' is private; add 'pub' to its declaration`。
+  trait impl 的方法不需要 `pub` —— 那是 trait 契约的一部分，可见性跟着 trait 走。
+  详见 [module.md 的「impl 方法的可见性」](module.md#impl-方法的可见性)。
 
 **注意**：没有接收者的关联函数（`fn new(): Point`）现在不能通过 `Point.new()` 调用 —— 这条
 调用语法还不存在，与 impl 是固有还是 trait 无关。

@@ -48,12 +48,43 @@ fn main(): i32 {
 }
 ```
 
-`pub` 可以修饰函数、`extern fn`、常量和类型（`struct` / `enum`），只能出现在顶层。
+`pub` 可以修饰函数、`extern fn`、常量和类型（`struct` / `enum`），也可以修饰 `impl`
+块里的固有方法。顶层之外只有 `impl` 里那一处合法 —— `pub` 不能出现在 `impl` 块本身上。
 访问没有 `pub` 的符号会被明确拦下，而不是报「找不到」：
 
 ```text
 error: 'priv_fn' is private to module 'std.net'
 ```
+
+### impl 方法的可见性
+
+`pub` 也可以修饰 `impl` 块里的**固有方法**：
+
+```text
+// shapes.tp
+pub struct Circle { r: i32 }
+
+impl Circle {
+    pub fn scale(&self, factor: i32): i32 { return self.r * factor; }  // 跨模块可调
+    fn secret(&self): i32 { return self.r + 100; }                     // 模块私有
+}
+```
+
+- **固有 impl**（`impl Type { }`）的方法默认模块私有，写 `pub` 才能跨模块调用。
+- **trait impl**（`impl Trait for Type { }`）的方法是 trait 契约的一部分，可见性跟着
+  trait 走 —— 那里写 `pub` 是冗余的，不写也一样对外可见（trait 本身得是 `pub`，
+  否则导入方连 trait 名都看不到）。
+- **Prelude 注入的函数**（`std/prelude.tp`）对所有文件可见，不受这条限制。
+
+跨模块调用一个私有方法会被明确拦下，而不是报「类型没有这个方法」：
+
+```text
+error: method 'secret' of type 'Circle' is private; add 'pub' to its declaration
+```
+
+> 方法查找是「按接收者类型遍历全部函数」，不经过模块导出表 —— 所以这条可见性检查
+> 是在 `find_method_function` 里单独做的（`method_visible_at`），判据是「定义处和
+> 调用点不在同一个文件」：一个模块就是一个文件。
 
 ### 类型的可见性
 
