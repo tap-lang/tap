@@ -902,6 +902,11 @@ LiteralNode *create_int_literal_text(const char *value) {
 
 // 创建字符串字面量节点
 LiteralNode *create_string_literal(char *value) {
+    return create_string_literal_bytes(value, strlen(value));
+}
+
+// 带显式长度的字符串字面量。字符串转义可以产出 NUL，长度不能靠 strlen 推。
+LiteralNode *create_string_literal_bytes(const char *value, size_t length) {
     LiteralNode *literal = (LiteralNode *)calloc(1, sizeof(LiteralNode));
     if (!literal) {
         fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
@@ -911,7 +916,15 @@ LiteralNode *create_string_literal(char *value) {
     literal->base.next = NULL;
     literal->literal_type = LITERAL_STRING;
     literal->integer_text = NULL;
-    literal->value.string_value = strdup(value);
+    // 多留一字节给结尾 NUL：`string_value` 有些地方（调试打印、错误消息）当 C 字符串用。
+    literal->value.string_value = (char *)malloc(length + 1);
+    if (!literal->value.string_value) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+    if (length) memcpy(literal->value.string_value, value, length);
+    literal->value.string_value[length] = '\0';
+    literal->string_length = length;
     return literal;
 }
 

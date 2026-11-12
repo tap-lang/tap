@@ -1,0 +1,12 @@
+fn main(): i32 {
+    let bad: String = "\u4E2D";
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: \u escape needs braces, write \u{4E2D}
+unicode_escape_needs_braces.tp:2:25
+- .exit
+1
+-- */

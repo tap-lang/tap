@@ -1,0 +1,12 @@
+fn main(): i32 {
+    let bad: String = "\u{D800}";
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: \u escape cannot encode a surrogate half (0xD800-0xDFFF)
+unicode_escape_surrogate.tp:2:25
+- .exit
+1
+-- */

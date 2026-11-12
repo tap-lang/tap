@@ -6,7 +6,7 @@ fn main(): i32 {
 /** -- test
 - .stderr
 String operations require two String values
-string_add_mixed.tp:2:21
+string_add_mixed.tp:2:19
 - .exit
 1
 -- */

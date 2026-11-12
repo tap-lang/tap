@@ -327,7 +327,8 @@ static ASTNode *clone_expression(ASTNode *source, FunctionNode *template,
             LiteralNode *literal = (LiteralNode *)source;
             LiteralNode *copy = NULL;
             if (literal->literal_type == LITERAL_STRING) {
-                copy = create_string_literal(literal->value.string_value);
+                copy = create_string_literal_bytes(
+                    literal->value.string_value, literal->string_length);
             } else if (literal->literal_type == LITERAL_FLOAT ||
                        literal->literal_type == LITERAL_F32 ||
                        literal->literal_type == LITERAL_F64) {

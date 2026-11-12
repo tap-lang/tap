@@ -2,6 +2,7 @@
 #define AST_H
 
 #include <stdio.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -275,6 +276,9 @@ typedef struct {
     ASTNode base;
     enum LiteralType literal_type;
     char *integer_text;       // 十进制整数文本（0x/0o/0b 原文已归一化），用于构造 i128/u128 常量
+    // 只有 LITERAL_STRING 用它：`value.string_value` 的字节数。
+    // 字符串转义可以产出 NUL（`\0`、`\x00`、`\u{0}`），所以不能用 strlen 量长度。
+    size_t string_length;
     union {
         uint64_t int_value;
         uint32_t char_value;
@@ -532,6 +536,8 @@ VarTypeNode *create_function_pointer_type(ASTNode *parameter_types,
 LiteralNode *create_int_literal(uint64_t value);
 LiteralNode *create_int_literal_text(const char *value);
 LiteralNode *create_string_literal(char *value);
+// 和 create_string_literal 一样复制 value，但长度由调用方给出 —— 字符串里可能有 NUL。
+LiteralNode *create_string_literal_bytes(const char *value, size_t length);
 LiteralNode *create_float_literal(double value);
 LiteralNode *create_bool_literal(int value);
 // 创建 null 字面量。它没有自己的类型，只能出现在有 *T 目标类型的上下文里

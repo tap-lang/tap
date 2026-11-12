@@ -1,6 +1,7 @@
 #ifndef TOKEN_H
 #define TOKEN_H
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
 
@@ -109,6 +110,10 @@ typedef struct {
     char *lexeme;      // 标记的文本内容
     int line;          // 行号
     int column;        // 列号
+
+    // 只有 TOKEN_STRING 用它：解码转义之后的字节数。
+    // 转义可以产出 NUL（`\0`、`\x00`、`\u{0}`），所以 string_value 不能用 strlen 量长度。
+    size_t string_length;
 
     // 根据标记类型存储不同的值
     union {

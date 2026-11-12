@@ -144,6 +144,7 @@ static Token *create_token(Lexer *lexer, enum TokenType type, const char *start,
     token->type = type;
     token->line = lexer->line;
     token->column = lexer->column - length;
+    token->string_length = 0;
     memset(&token->value, 0, sizeof(token->value));
     
     return token;
@@ -256,6 +257,139 @@ static size_t decode_utf8_char(const unsigned char *text, size_t length,
     return width;
 }
 
+// 数字字符在指定进制下的值；不是该进制的合法数字时返回 -1。
+static int digit_value(char c, int base);
+
+// 一个转义序列最多展开成 4 个字节（`\u{10FFFF}` 的 UTF-8 编码）。
+#define ESCAPE_MAX_BYTES 4
+
+// 把 Unicode 码点按 UTF-8 编码写入 out，返回写入的字节数。
+// 码点的合法性（<= 0x10FFFF、不是代理区）由调用方保证。
+static int encode_utf8(uint32_t codepoint, char *out) {
+    if (codepoint <= 0x7F) {
+        out[0] = (char)codepoint;
+        return 1;
+    }
+    if (codepoint <= 0x7FF) {
+        out[0] = (char)(0xC0 | (codepoint >> 6));
+        out[1] = (char)(0x80 | (codepoint & 0x3F));
+        return 2;
+    }
+    if (codepoint <= 0xFFFF) {
+        out[0] = (char)(0xE0 | (codepoint >> 12));
+        out[1] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (codepoint & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (codepoint >> 18));
+    out[1] = (char)(0x80 | ((codepoint >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (codepoint & 0x3F));
+    return 4;
+}
+
+// 解码反斜杠之后的转义序列，把结果写进 out，返回产出的字节数。
+//
+// 返回 0 是**唯一**的「不产出字节」情况：`\` 紧跟换行的续行写法，它把换行和下一行
+// 开头的空白一起吞掉。字符字面量里出现它没有意义，由调用方另行报错。
+//
+// 调用前 lexer 必须已经越过反斜杠。未知转义一律报错 —— 以前是「原样保留字符」，
+// 于是 `"\d"` 静默变成 `"d"`、`"\x1b"` 静默变成 `"x1b"`，写错了完全看不出来。
+static int decode_escape(Lexer *lexer, char *out) {
+    // 反斜杠后面那个字符的列：诊断指这里，比指反斜杠本身好定位。
+    int column = lexer->column;
+    char escape = advance(lexer);
+
+    switch (escape) {
+        case 'n': out[0] = '\n'; return 1;
+        case 'r': out[0] = '\r'; return 1;
+        case 't': out[0] = '\t'; return 1;
+        case 'b': out[0] = '\b'; return 1;
+        case 'f': out[0] = '\f'; return 1;
+        case 'v': out[0] = '\v'; return 1;
+        case '0': out[0] = '\0'; return 1;
+        case '\\': out[0] = '\\'; return 1;
+        case '\'': out[0] = '\''; return 1;
+        case '"': out[0] = '"'; return 1;
+        // JSON 允许把 `/` 写成 `\/`，顺手认下来，写 JSON 字面量时不用改。
+        case '/': out[0] = '/'; return 1;
+        case 'x': {
+            // `\xNN`：恰好两位十六进制，值 0x00-0xFF。逐位读，避免读到源码缓冲区外。
+            int high = digit_value(peek(lexer), 16);
+            int low = -1;
+            if (high >= 0) {
+                advance(lexer);
+                low = digit_value(peek(lexer), 16);
+                if (low >= 0) advance(lexer);
+            }
+            if (high < 0 || low < 0) {
+                print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                                 "\\x escape needs two hexadecimal digits, write \\x41");
+                exit(1);
+            }
+            out[0] = (char)(high * 16 + low);
+            return 1;
+        }
+        case 'u': {
+            // `\u{...}`：1 到 6 位十六进制码点，按 UTF-8 展开。
+            if (peek(lexer) != '{') {
+                print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                                 "\\u escape needs braces, write \\u{4E2D}");
+                exit(1);
+            }
+            advance(lexer); // '{'
+
+            uint32_t codepoint = 0;
+            int digits = 0;
+            while (digit_value(peek(lexer), 16) >= 0) {
+                if (digits == 6) {
+                    print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                                     "\\u escape takes at most 6 hexadecimal digits");
+                    exit(1);
+                }
+                codepoint = codepoint * 16 + (uint32_t)digit_value(peek(lexer), 16);
+                advance(lexer);
+                digits++;
+            }
+            if (digits == 0) {
+                print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                                 "\\u escape needs 1 to 6 hexadecimal digits");
+                exit(1);
+            }
+            if (peek(lexer) != '}') {
+                print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                                 "\\u escape is missing the closing '}'");
+                exit(1);
+            }
+            advance(lexer); // '}'
+
+            if (codepoint > 0x10FFFF) {
+                print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                                 "\\u escape value must be at most 0x10FFFF");
+                exit(1);
+            }
+            // 代理区（U+D800..U+DFFF）不是合法码点，UTF-8 里不能出现它们的编码。
+            if (codepoint >= 0xD800 && codepoint <= 0xDFFF) {
+                print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                                 "\\u escape cannot encode a surrogate half (0xD800-0xDFFF)");
+                exit(1);
+            }
+            return encode_utf8(codepoint, out);
+        }
+        case '\n': {
+            // 续行：吞掉换行和下一行开头的空白，不产出字节。
+            lexer->line++;
+            lexer->column = 1;
+            while (peek(lexer) == ' ' || peek(lexer) == '\t') advance(lexer);
+            return 0;
+        }
+        default:
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line, column,
+                             "unknown escape sequence '\\%c'", escape);
+            exit(1);
+    }
+}
+
 // 解析单引号 Unicode 字符字面量，例如 'a'、'中'、'😀' 和 '\\n'。
 static Token *character(Lexer *lexer) {
     const char *start = lexer->current;
@@ -274,21 +408,20 @@ static Token *character(Lexer *lexer) {
                              "unterminated character literal");
             exit(1);
         }
-        switch (advance(lexer)) {
-            case 'n': value = '\n'; break;
-            case 'r': value = '\r'; break;
-            case 't': value = '\t'; break;
-            case 'b': value = '\b'; break;
-            case 'f': value = '\f'; break;
-            case '0': value = 0; break;
-            case '\\': value = '\\'; break;
-            case '\'': value = '\''; break;
-            case '"': value = '"'; break;
-            default:
-                print_diagnostic(stderr, "error", lexer->filename,
-                                 lexer->line, lexer->column - 1,
-                                 "unknown character escape");
-                exit(1);
+        char bytes[ESCAPE_MAX_BYTES];
+        int count = decode_escape(lexer, bytes);
+        if (count == 0) {
+            // 续行只对字符串有意义；字符字面量里它不产出任何字符。
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+                             "a character literal cannot be continued onto the next line");
+            exit(1);
+        }
+        // `\xNN` 和 `\u{...}` 都要能当字符用：前者只接受单字节（< 0x80）或合法的
+        // UTF-8 首字节组合，后者已经是编码好的 UTF-8，统一交给解码器验证。
+        if (!decode_utf8_char((const unsigned char *)bytes, (size_t)count, &value)) {
+            print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+                             "escape sequence is not a valid UTF-8 character");
+            exit(1);
         }
     } else {
         size_t width = decode_utf8_char(
@@ -512,148 +645,79 @@ static Token *number(Lexer *lexer) {
     return token;
 }
 
-// 解析字符串
+// 解析字符串字面量。转义在这里一次性解码，`value.string_value` 直接就是最终字节，
+// 长度另记在 `token->string_length` —— 转义可以产出 NUL（`\0`、`\x00`、`\u{0}`），
+// 下游按 strlen 量长度会在第一个 NUL 处截断。
 static Token *string(Lexer *lexer) {
+    // token 的位置要指向开引号，不能沿用 create_token 的「当前列 - 片段长度」——
+    // 字符串里可以有换行，那个算式在多行字面量上会算到别的行去。
+    int start_line = lexer->line;
+    int start_column = lexer->column;
+
     advance(lexer); // 跳过开头的引号
     const char *start = lexer->current;
-    
-    // 计算字符串长度，处理转义字符
-    int length = 0;
-    char *buffer = NULL;
-    int buffer_size = 0;
-    
+
+    // 输出永远不长于源码片段（每个转义至少两个字符才产出最多 4 字节），
+    // 但仍然按需扩容，省得为长字符串预分配一大块。
+    size_t capacity = 64;
+    size_t length = 0;
+    char *buffer = (char *)malloc(capacity);
+    if (!buffer) {
+        fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+        exit(1);
+    }
+
     while (peek(lexer) != '"' && !is_at_end(lexer)) {
+        char bytes[ESCAPE_MAX_BYTES];
+        int count;
         if (peek(lexer) == '\\') {
-            // 处理转义字符
             advance(lexer); // 跳过反斜杠
-            
-            if (buffer == NULL) {
-                // 首次分配缓冲区，大小设为估计值
-                buffer_size = 128;
-                buffer = (char *)malloc(buffer_size);
-                if (!buffer) {
-                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-                    exit(1);
-                }
-                // 复制之前的字符，注意这里的偏移量是lexer->current - start - 1
-                // 因为我们已经advance了一步（跳过了反斜杠）
-                strncpy(buffer, start, lexer->current - start - 1);
-                length = lexer->current - start - 1;
-            }
-            
-            // 确保缓冲区足够大
-            if (length + 1 >= buffer_size) {
-                buffer_size *= 2;
-                buffer = (char *)realloc(buffer, buffer_size);
-                if (!buffer) {
-                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-                    exit(1);
-                }
-            }
-            
-            // 处理常见的转义字符
-            switch (peek(lexer)) {
-                case 'n':
-                    buffer[length++] = '\n';
-                    break;
-                case 't':
-                    buffer[length++] = '\t';
-                    break;
-                case '\\':
-                    buffer[length++] = '\\';
-                    break;
-                case '"':
-                    buffer[length++] = '"';
-                    break;
-                default:
-                    // 对于不支持的转义序列，直接添加字符
-                    buffer[length++] = peek(lexer);
-                    break;
-            }
+            if (is_at_end(lexer)) break;
+            count = decode_escape(lexer, bytes);
+        } else if (peek(lexer) == '\n') {
+            // 裸换行：字符串里允许，但要维护行列，否则后续诊断全偏。
             advance(lexer);
+            lexer->line++;
+            lexer->column = 1;
+            bytes[0] = '\n';
+            count = 1;
         } else {
-            if (peek(lexer) == '\n') {
-                advance(lexer);
-                lexer->line++;
-                lexer->column = 1;
-            } else {
-                advance(lexer);
+            bytes[0] = advance(lexer);
+            count = 1;
+        }
+
+        if (length + (size_t)count + 1 > capacity) {
+            while (length + (size_t)count + 1 > capacity) capacity *= 2;
+            char *grown = (char *)realloc(buffer, capacity);
+            if (!grown) {
+                free(buffer);
+                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                exit(1);
             }
+            buffer = grown;
+        }
+        for (int index = 0; index < count; index++) {
+            buffer[length++] = bytes[index];
         }
     }
-    free(buffer);
-    
+
     if (is_at_end(lexer)) {
-        print_diagnostic(stderr, "error", lexer->filename, lexer->line, lexer->column,
+        free(buffer);
+        print_diagnostic(stderr, "error", lexer->filename, start_line, start_column,
                          "unterminated string"); // 中文：未闭合的字符串
         exit(1);
     }
-    
     advance(lexer); // 跳过结尾的引号
-    
-    // 创建token时，确保lexeme包含完整的字符串内容
+
+    buffer[length] = '\0';
+
     Token *token = create_token(lexer, TOKEN_STRING, start, lexer->current - 1);
-    
-    // 确保value.string_value包含完整的字符串，包括第一个字符
-    token->value.string_value = strdup(token->lexeme);
-    
-    // 如果有转义字符，我们需要重新处理
-    if (strchr(token->lexeme, '\\') != NULL) {
-        // 释放之前分配的空间
-        free(token->value.string_value);
-        
-        // 重新处理转义字符
-        buffer_size = 128;
-        buffer = (char *)malloc(buffer_size);
-        if (!buffer) {
-            fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-            exit(1);
-        }
-        
-        length = 0;
-        const char *str = token->lexeme;
-        while (*str) {
-            if (length + 1 >= buffer_size) {
-                buffer_size *= 2;
-                char *expanded = (char *)realloc(buffer, buffer_size);
-                if (!expanded) {
-                    free(buffer);
-                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-                    exit(1);
-                }
-                buffer = expanded;
-            }
-            if (*str == '\\' && *(str + 1)) {
-                str++;
-                switch (*str) {
-                    case 'n':
-                        buffer[length++] = '\n';
-                        break;
-                    case 't':
-                        buffer[length++] = '\t';
-                        break;
-                    case '\\':
-                        buffer[length++] = '\\';
-                        break;
-                    case '"':
-                        buffer[length++] = '"';
-                        break;
-                    default:
-                        buffer[length++] = *str;
-                        break;
-                }
-            } else {
-                buffer[length++] = *str;
-            }
-            str++;
-        }
-        buffer[length] = '\0';
-        token->value.string_value = buffer;
-    }
-    
+    token->line = start_line;
+    token->column = start_column;
+    token->value.string_value = buffer;
+    token->string_length = length;
     return token;
 }
-
 // 获取下一个标记
 Token *get_next_token(Lexer *lexer) {
     skip_whitespace(lexer);

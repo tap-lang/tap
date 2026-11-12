@@ -1,0 +1,57 @@
+fn main(): i32 {
+    // 短形式：\n \r \t \b \f \v \\ \" \' \/
+    let newline: String = "a\nb";
+    print("newline len=%u\n", newline.len());
+
+    let controls: String = "\r\t\b\f\v";
+    print("controls len=%u cr=%u tab=%u bell=%u\n",
+          controls.len(), controls.byte_at(0), controls.byte_at(1), controls.byte_at(4));
+
+    let quotes: String = "\"\\\'";
+    print("quotes=%s len=%u\n", quotes, quotes.len());
+
+    let slash: String = "\/";
+    print("slash=%s\n", slash);
+
+    // \xNN：两位十六进制，产出单字节
+    let hex: String = "\x41\x42\x43";
+    print("hex=%s len=%u\n", hex, hex.len());
+
+    // ANSI 转义序列就是这么写的
+    let escape: String = "\x1b[31mRED\x1b[0m";
+    print("ansi first=%u len=%u\n", escape.byte_at(0), escape.len());
+
+    // 转义可以产出 NUL，长度由字面量自己记着，不会被截断
+    let nul: String = "a\x00b";
+    print("nul len=%u last=%u\n", nul.len(), nul.byte_at(2));
+
+    // \u{...}：码点按 UTF-8 展开
+    let han: String = "\u{4E2D}\u{6587}";
+    print("han=%s len=%u\n", han, han.len());
+
+    let emoji: String = "\u{1F600}";
+    print("emoji len=%u\n", emoji.len());
+
+    // 反斜杠续行：换行和下一行开头的空白一起吞掉
+    let joined: String = "one\
+                         two";
+    print("joined=%s len=%u\n", joined, joined.len());
+
+    return 0;
+}
+
+/** -- test
+- .stdout
+newline len=3
+controls len=5 cr=13 tab=9 bell=11
+quotes="\' len=3
+slash=/
+hex=ABC len=3
+ansi first=27 len=12
+nul len=3 last=98
+han=中文 len=6
+emoji len=4
+joined=onetwo len=6
+- .exit
+0
+-- */

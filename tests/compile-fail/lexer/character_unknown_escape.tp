@@ -1,0 +1,12 @@
+fn main(): i32 {
+    let bad: char = '\q';
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: unknown escape sequence '\q'
+character_unknown_escape.tp:2:23
+- .exit
+1
+-- */

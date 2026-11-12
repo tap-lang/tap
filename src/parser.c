@@ -1448,7 +1448,9 @@ static ASTNode *parse_primary(Parser *parser) {
         return (ASTNode *)bool_literal;
     }
     if (token->type == TOKEN_STRING && token->value.string_value) {
-        LiteralNode *string_literal = create_string_literal(token->value.string_value);
+        // 长度从 token 里拿：转义可以产出 NUL，strlen 会在那里截断。
+        LiteralNode *string_literal = create_string_literal_bytes(
+            token->value.string_value, token->string_length);
         consume(parser, TOKEN_STRING);
         return (ASTNode *)string_literal;
     }

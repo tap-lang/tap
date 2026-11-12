@@ -140,6 +140,11 @@ static LLVMValueRef string_value(
     return LLVMBuildInsertValue(context->builder, value, length, 1, name);
 }
 
+// 生成字符串常量的字节数组（显式长度 + 尾部 NUL）并返回首元素指针。
+// 定义在文件后半段，这里先声明 —— 字符串字面量表达式要用它。
+static LLVMValueRef string_constant_data(
+    CodeGenContext *context, const char *text, size_t length, size_t *length_out);
+
 // String 隐式传给 c_string 时只借出第 0 项 data，不分配也不复制。
 static LLVMValueRef string_data(
     CodeGenContext *context, LLVMValueRef value, const char *name) {
@@ -3772,11 +3777,14 @@ static LLVMValueRef generate_expression(CodeGenContext *context, ASTNode *expres
             }
             if (literal->literal_type == LITERAL_STRING) {
                 // 字面量底层仍生成带尾部 NUL 的全局数组，再把编译期已知的字节数装进 length。
-                size_t length = strlen(literal->value.string_value);
-                LLVMValueRef data = LLVMBuildGlobalStringPtr(
-                    context->builder, literal->value.string_value, "string_literal_data");
+                // 必须走 string_constant_data（显式长度）而不是 LLVMBuildGlobalStringPtr：
+                // 转义可以产出 NUL，按 C 字符串生成会在第一个 NUL 处把数组截断。
+                LLVMValueRef data = string_constant_data(
+                    context, literal->value.string_value,
+                    literal->string_length, NULL);
                 LLVMValueRef byte_length = LLVMConstInt(
-                    LLVMInt64TypeInContext(context->context), (uint64_t)length, 0);
+                    LLVMInt64TypeInContext(context->context),
+                    (uint64_t)literal->string_length, 0);
                 return string_value(
                     context, data, byte_length, "string_literal");
             }
@@ -5658,10 +5666,9 @@ static FunctionNode *find_user_main(ProgramNode *program) {
 // `LLVMBuildGlobalStringPtr`（那会生成一条指令，需要函数上下文）。所以这里手工
 // 落成两块：一个私有的字节数组全局，加一个指向它首元素的常量 GEP。
 static LLVMValueRef string_constant_data(
-    CodeGenContext *context, const char *text, size_t *length_out) {
+    CodeGenContext *context, const char *text, size_t length, size_t *length_out) {
     LLVMContextRef llvm = context->context;
     LLVMTypeRef byte_type = LLVMInt8TypeInContext(llvm);
-    size_t length = strlen(text);
     if (length_out) *length_out = length;
     LLVMTypeRef array_type = LLVMArrayType(byte_type, (uint64_t)length + 1);
 
@@ -5679,10 +5686,9 @@ static LLVMValueRef string_constant_data(
 }
 
 static LLVMValueRef string_constant_initializer(
-    CodeGenContext *context, const char *text) {
+    CodeGenContext *context, const char *text, size_t length) {
     // String 常量在相同 data 指针之外再携带编译期计算出的长度。
-    size_t length = 0;
-    LLVMValueRef data = string_constant_data(context, text, &length);
+    LLVMValueRef data = string_constant_data(context, text, length, NULL);
     LLVMValueRef values[2] = {
         data,
         LLVMConstInt(LLVMInt64TypeInContext(context->context), (uint64_t)length, 0)
@@ -5716,12 +5722,14 @@ static LLVMValueRef constant_initializer(
     }
     if (constant->type->type == LITERAL_STRING &&
         literal->literal_type == LITERAL_STRING) {
-        return string_constant_initializer(context, literal->value.string_value);
+        return string_constant_initializer(
+            context, literal->value.string_value, literal->string_length);
     }
     if (constant->type->type == LITERAL_C_STRING &&
         literal->literal_type == LITERAL_STRING) {
         // c_string 常量保持 C ABI，只用零结尾数组的首地址，不生成 `{data, length}`。
-        return string_constant_data(context, literal->value.string_value, NULL);
+        return string_constant_data(
+            context, literal->value.string_value, literal->string_length, NULL);
     }
     report_error((const ASTNode *)constant, "global constant '%s' initializer type mismatch",
             constant->name); // 中文：全局常量初始化类型不匹配
