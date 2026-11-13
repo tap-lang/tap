@@ -52,6 +52,7 @@ Windows 用 `scripts\mingw-build.bat install [目录]` 或 `scripts\msvc-build.b
 
 **语言**
 
+- [单文件语法参考](docs/tap-syntax.md) —— 一份文件覆盖全部语法（喂给 AI 用）
 - [控制流](docs/control-flow.md) —— `if` / `while` / `for`、`break` / `continue`、块作用域
 - [数据类型](docs/data-types.md) —— 整数、浮点、字符串、结构体、枚举、泛型、trait
 - [借用与引用](docs/borrow.md) —— `&T` / `&mut T`、借用检查、与 `*T` 的分工
