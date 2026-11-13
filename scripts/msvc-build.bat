@@ -19,7 +19,22 @@ REM   scripts\msvc-build.bat test-native   full run-pass/compile-fail suite (REC
 REM   scripts\msvc-build.bat test          same suite, fast mode (lli; unreliable here)
 REM   scripts\msvc-build.bat ctest         CMake CTest (fast mode, needs lli)
 REM   scripts\msvc-build.bat package       build + bundle a redistributable folder and .zip
+REM   scripts\msvc-build.bat install [dir] build + install into <dir> (default %LOCALAPPDATA%\tap)
 REM   scripts\msvc-build.bat clean         remove build outputs
+REM
+REM install layout (same as `make install` / mingw-build.bat install, so no
+REM environment variable is needed):
+REM   <prefix>\bin\tap.exe
+REM   <prefix>\bin\LLVM-C.dll               tap.exe imports it; must stay next to the exe
+REM   <prefix>\bin\tap_runtime.dll          DLL next to the exe: Windows looks there first
+REM   <prefix>\lib\tap_runtime.lib
+REM   <prefix>\include\tap\tap_runtime.h
+REM   <prefix>\share\tap\std\*.tp
+REM Prefix resolution: command-line argument, then the PREFIX environment variable,
+REM then %LOCALAPPDATA%\tap. Add <prefix>\bin to PATH to call `tap` from anywhere.
+REM Like the MinGW install this is a development install: it does not bundle a
+REM linker (bin\lld-link.exe) or compiler-rt builtins, so `tap run` still needs
+REM LLVM's bin (lld-link, or the MSVC tools for the clang-cl fallback) on PATH.
 REM
 REM package layout (dist\tap-<ver>-win64-msvc\):
 REM   bin\tap.exe  bin\LLVM-C.dll  bin\vcruntime140.dll  bin\lld-link.exe
@@ -101,10 +116,11 @@ if "%1"=="rebuild"     goto rebuild
 if "%1"=="ctest"       goto ctest
 if "%1"=="test"        goto test
 if "%1"=="test-native" goto test-native
+if "%1"=="install"     goto install
 if "%1"=="package"     goto package
 if "%1"=="clean"       goto clean
 
-echo Usage: %0 [configure^|build^|rebuild^|ctest^|test^|test-native^|package^|clean]
+echo Usage: %0 [configure^|build^|rebuild^|ctest^|test^|test-native^|install^|package^|clean]
 goto end
 
 :configure
@@ -149,6 +165,14 @@ set "TEST_RUN_MODE=native"
 "%MSYS_SH%" "%PROJ_POSIX%/tests/run-tests.sh" "%PROJ_POSIX%/out/build/x64-Release/tap.exe"
 goto end
 
+:install
+call :ensure_configured
+if errorlevel 1 goto end
+call :build_impl
+if errorlevel 1 goto end
+call :install_impl "%~2"
+goto end
+
 :package
 call :ensure_configured
 if errorlevel 1 goto end
@@ -191,6 +215,124 @@ REM ----------------------------------------------------------------------------
 "%NINJA%" -C %BUILD_DIR% tap tap_runtime tap_runtime_shared
 if errorlevel 1 exit /b 1
 exit /b 0
+
+REM ----------------------------------------------------------------------------
+REM Subroutine: install the built compiler, Runtime and std into a prefix.
+REM
+REM Same layout as the Makefile's `install` target, the CMake install rules and
+REM mingw-build.bat install, so the installed compiler finds everything without
+REM TAP_STD_PATH / TAP_RUNTIME_PATH:
+REM   bin\tap.exe             start point: <exe>/../lib and <exe>/../share/tap/std
+REM   bin\LLVM-C.dll          tap.exe imports it from its own directory
+REM   bin\tap_runtime.dll     loaded by lli (native programs link the static lib)
+REM   lib\tap_runtime.lib     static Runtime linked into native programs
+REM   include\tap\*.h         Runtime header, for programs that extend it from C
+REM   share\tap\std\*.tp      standard library (prelude included)
+REM
+REM Only files this target owns are overwritten; anything else already under the
+REM prefix is left alone. Unlike `package`, this is a development install: no
+REM lld-link.exe and no compiler-rt builtins, so `tap run` still needs LLVM's bin
+REM on PATH (or the MSVC tools, which the clang-cl fallback uses).
+REM ----------------------------------------------------------------------------
+:install_impl
+set "DEST=%~1"
+if not defined DEST set "DEST=%PREFIX%"
+if not defined DEST set "DEST=%LOCALAPPDATA%\tap"
+if not defined DEST set "DEST=%USERPROFILE%\tap"
+if not defined DEST (
+    echo [msvc-build] ERROR: cannot determine the install prefix.
+    echo [msvc-build] Pass one explicitly: scripts\msvc-build.bat install D:\dev\tap
+    exit /b 1
+)
+
+REM Normalize separators so the echoed paths never mix styles.
+set "DEST=%DEST:/=\%"
+REM Strip the trailing backslash but keep a drive root (D:) intact.
+REM The naive comparison against a backslash literal never fires: a backslash
+REM right before the closing quote reads as an escaped quote. A sentinel char
+REM keeps the compared slice away from that edge.
+set "CHK=%DEST%#"
+if "%CHK:~-2%"=="\#" if not "%CHK:~-3%"==":\#" set "DEST=%DEST:~0,-1%"
+set "CHK=%DEST%#"
+if "%CHK:~-2%"=="\#" if not "%CHK:~-3%"==":\#" set "DEST=%DEST:~0,-1%"
+
+echo [msvc-build] Installing to %DEST% ...
+
+mkdir "%DEST%\bin" 2>nul
+mkdir "%DEST%\lib" 2>nul
+mkdir "%DEST%\include\tap" 2>nul
+mkdir "%DEST%\share\tap\std" 2>nul
+if not exist "%DEST%\bin" (
+    echo [msvc-build] ERROR: cannot create "%DEST%\bin".
+    echo [msvc-build] Check that the path is writable, or pass another directory:
+    echo [msvc-build]   scripts\msvc-build.bat install D:\dev\tap
+    exit /b 1
+)
+
+copy /y "%BUILD_DIR%\tap.exe" "%DEST%\bin\tap.exe" >nul
+if errorlevel 1 goto install_copy_failed
+
+REM LLVM-C.dll is not optional: without it tap.exe exits before main. CMake drops
+REM it into the build dir next to the exe; fall back to the LLVM-C package.
+set "NO_LLVM_C="
+if exist "%BUILD_DIR%\LLVM-C.dll" (
+    copy /y "%BUILD_DIR%\LLVM-C.dll" "%DEST%\bin\" >nul
+) else if exist "%LLVM_C_ROOT%\bin\LLVM-C.dll" (
+    copy /y "%LLVM_C_ROOT%\bin\LLVM-C.dll" "%DEST%\bin\" >nul
+) else (
+    set "NO_LLVM_C=1"
+    echo [msvc-build] WARNING: LLVM-C.dll not found; tap.exe will not start
+    echo [msvc-build]          unless LLVM's bin is on PATH.
+)
+if errorlevel 1 goto install_copy_failed
+
+copy /y "%BUILD_DIR%\tap_runtime.dll" "%DEST%\bin\" >nul
+if errorlevel 1 goto install_copy_failed
+copy /y "%BUILD_DIR%\tap_runtime.lib" "%DEST%\lib\" >nul
+if errorlevel 1 goto install_copy_failed
+copy /y "runtime\include\tap_runtime.h" "%DEST%\include\tap\" >nul
+if errorlevel 1 goto install_copy_failed
+
+xcopy /y /q "std\*.tp" "%DEST%\share\tap\std\" >nul
+if errorlevel 1 goto install_copy_failed
+if exist "std\*.tap" (
+    xcopy /y /q "std\*.tap" "%DEST%\share\tap\std\" >nul
+    if errorlevel 1 goto install_copy_failed
+)
+
+echo [msvc-build] Installed:
+echo   %DEST%\bin\tap.exe
+if not defined NO_LLVM_C echo   %DEST%\bin\LLVM-C.dll
+echo   %DEST%\bin\tap_runtime.dll
+echo   %DEST%\lib\tap_runtime.lib
+echo   %DEST%\include\tap\tap_runtime.h
+echo   %DEST%\share\tap\std\*.tp
+
+REM Self-check: a missing DLL shows up here instead of on the user's first compile.
+"%DEST%\bin\tap.exe" --version >nul 2>nul
+if errorlevel 1 (
+    echo [msvc-build] WARNING: "%DEST%\bin\tap.exe" did not run; the install is incomplete.
+) else (
+    for /f "usebackq delims=" %%v in (`"%DEST%\bin\tap.exe" --version`) do (
+        echo [msvc-build] Verified: %%v
+    )
+)
+
+REM `tap run` shells out to a linker; it is deliberately not installed here, so say
+REM where the user still has to point PATH.
+if exist "%LLVM_BIN%\lld-link.exe" (
+    echo [msvc-build] NOTE: `tap run` still needs a linker. Add "%LLVM_BIN%" to PATH so
+    echo [msvc-build]       lld-link.exe resolves, or use `package`, which bundles it.
+) else (
+    echo [msvc-build] NOTE: `tap run` still needs a linker ^(lld-link, or the MSVC tools
+    echo [msvc-build]       for the clang-cl fallback^); `package` bundles lld-link.exe.
+)
+echo [msvc-build] Add "%DEST%\bin" to PATH to run `tap` from any directory.
+exit /b 0
+
+:install_copy_failed
+echo [msvc-build] ERROR: copy into "%DEST%" failed.
+exit /b 1
 
 REM ----------------------------------------------------------------------------
 REM Subroutine: bundle a redistributable folder plus a .zip under dist\.

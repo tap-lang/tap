@@ -38,8 +38,8 @@ cmake --build .
 Windows 上不用手拼 `PATH` 和 `LIBS`，`scripts\` 下有两个封装脚本：
 
 ```bat
-scripts\mingw-build.bat build | rebuild | test | test-native | package | clean
-scripts\msvc-build.bat  build | rebuild | test | test-native | ctest | package | clean
+scripts\mingw-build.bat build | rebuild | test | test-native | install | package | clean
+scripts\msvc-build.bat  build | rebuild | test | test-native | ctest | install | package | clean
 ```
 
 详见[测试文档](test.md#windows-上的一键脚本)。
@@ -55,12 +55,30 @@ make install PREFIX=$HOME/.local # 装到不需要权限的位置
 
 CMake 构建则用 `cmake --install build`（可配 `--prefix`）。
 
+Windows 下两个脚本都有 `install [目录]`，走同一套布局（先构建再复制，已存在的其他
+文件不会被删）：
+
+```bat
+scripts\mingw-build.bat install                 :: 默认 %LOCALAPPDATA%\tap
+scripts\mingw-build.bat install D:\dev\tap      :: 指定前缀
+scripts\msvc-build.bat  install D:\dev\tap      :: MSVC 工具链，同一个布局
+set PREFIX=D:\dev\tap && scripts\mingw-build.bat install
+```
+
+前缀按「命令行参数 → `PREFIX` 环境变量 → `%LOCALAPPDATA%\tap`」解析。装完把
+`<prefix>\bin` 加入 `PATH`。与 `package` 不同，install 是开发安装：**不携带链接器和
+compiler-rt builtins**，`tap run` 仍然需要 PATH 上的 `lld-link`（MinGW 是
+`ld.lld`，也可以走 clang-cl 回退）。MSVC 那份唯一多带的是 `LLVM-C.dll`——`tap.exe`
+的导入表里就有它，不放在 exe 旁边根本起不来。
+
 装出来的结构：
 
 ```text
 <prefix>/bin/tap                       编译器
-<prefix>/lib/libtap_runtime.a          原生可执行文件链接的静态 Runtime
-<prefix>/lib/libtap_runtime.{dylib,so} fast 模式给 lli 加载的共享 Runtime
+<prefix>/bin/tap_runtime.dll           Windows：fast 模式给 lli 加载的 Runtime DLL
+<prefix>/bin/LLVM-C.dll                仅 MSVC 安装：tap.exe 的硬依赖
+<prefix>/lib/libtap_runtime.a          原生可执行文件链接的静态 Runtime（MSVC 叫 tap_runtime.lib）
+<prefix>/lib/tap_runtime.dll           Unix 上共享 Runtime 落在 lib（Windows 放 bin）
 <prefix>/include/tap/tap_runtime.h     Runtime 头文件
 <prefix>/share/tap/std/*.tp            标准库
 ```

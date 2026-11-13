@@ -113,8 +113,8 @@ CMake 构建下它注册成 ctest 用例 `cli-smoke-tests`，和 `language-tests
 `scripts\` 下有两个 bat，各自封装一条工具链，省得手拼 PATH 和 `LIBS`：
 
 ```bat
-scripts\mingw-build.bat build | rebuild | test | test-native | package | clean
-scripts\msvc-build.bat  build | rebuild | test | test-native | ctest | package | clean
+scripts\mingw-build.bat build | rebuild | test | test-native | install | package | clean
+scripts\msvc-build.bat  build | rebuild | test | test-native | ctest | install | package | clean
 ```
 
 - `scripts\mingw-build.bat`：MSYS2 + GCC，走 Makefile。会从 `libLLVM-<ver>.dll.a` 自动读出

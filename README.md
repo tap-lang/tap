@@ -23,7 +23,9 @@ make
 ./build/tap run examples/hello.tp
 ```
 
-`make install` 默认装到 `/usr/local`（`PREFIX=` 可改），装完不需要设置任何环境变量。
+`make install` 默认装到 `/usr/local`（`PREFIX=` 可改），装完不需要设置任何环境变量；
+Windows 用 `scripts\mingw-build.bat install [目录]` 或 `scripts\msvc-build.bat install [目录]`，
+装出来的布局一致。
 构建选项、安装布局、Windows 一键脚本见[构建与安装](docs/build.md)。
 
 ## 语言特性

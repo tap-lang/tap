@@ -13,7 +13,17 @@ REM   scripts\mingw-build.bat rebuild       clean + build
 REM   scripts\mingw-build.bat test-native   full run-pass/compile-fail suite (RECOMMENDED)
 REM   scripts\mingw-build.bat test          same suite, fast mode (lli; unreliable here)
 REM   scripts\mingw-build.bat package       build + bundle a self-contained folder and .zip
+REM   scripts\mingw-build.bat install [dir] build + install into <dir> (default %LOCALAPPDATA%\tap)
 REM   scripts\mingw-build.bat clean         remove build outputs
+REM
+REM install layout (same as `make install`, so no environment variable is needed):
+REM   <prefix>\bin\tap.exe
+REM   <prefix>\bin\tap_runtime.dll          DLL next to the exe: Windows looks there first
+REM   <prefix>\lib\libtap_runtime.a
+REM   <prefix>\include\tap\tap_runtime.h
+REM   <prefix>\share\tap\std\*.tp
+REM Prefix resolution: command-line argument, then the PREFIX environment variable,
+REM then %LOCALAPPDATA%\tap. Add <prefix>\bin to PATH to call `tap` from anywhere.
 REM
 REM package layout (dist\tap-<ver>-win64-mingw\):
 REM   bin\tap.exe  bin\ld.lld.exe
@@ -111,10 +121,11 @@ if "%1"=="build"       goto build
 if "%1"=="rebuild"     goto rebuild
 if "%1"=="test"        goto test
 if "%1"=="test-native" goto test-native
+if "%1"=="install"     goto install
 if "%1"=="package"     goto package
 if "%1"=="clean"       goto clean
 
-echo Usage: %0 [build^|rebuild^|test^|test-native^|package^|clean]
+echo Usage: %0 [build^|rebuild^|test^|test-native^|install^|package^|clean]
 echo.
 echo   MSYS_ENV=%MSYS_ENV%  LLVM=%LLVM_VERSION%  LIBS=%TAP_LIBS%
 goto end
@@ -145,6 +156,12 @@ goto end
 
 :clean
 call :clean_impl
+goto end
+
+:install
+call :build_impl
+if errorlevel 1 goto end
+call :install_impl "%~2"
 goto end
 
 :package
@@ -186,6 +203,97 @@ echo [mingw-build] Cleaning build outputs ...
 "%MSYS_MAKE%" clean
 if errorlevel 1 exit /b 1
 exit /b 0
+
+REM ----------------------------------------------------------------------------
+REM Subroutine: install the built compiler, Runtime and std into a prefix.
+REM
+REM Same layout as the Makefile's `install` target and the CMake install rules,
+REM so the installed compiler finds everything without TAP_STD_PATH /
+REM TAP_RUNTIME_PATH:
+REM   bin\tap.exe             start point: <exe>/../lib and <exe>/../share/tap/std
+REM   bin\tap_runtime.dll     Windows loads DLLs from the exe's own directory
+REM   lib\libtap_runtime.a    static Runtime linked into native programs
+REM   include\tap\*.h         Runtime header, for programs that extend it from C
+REM   share\tap\std\*.tp      standard library (prelude included)
+REM
+REM Only files this target owns are overwritten; anything else already under the
+REM prefix is left alone. Unlike `package`, this is a development install: it
+REM links against the MSYS2 LLVM / linker on PATH instead of shipping them.
+REM ----------------------------------------------------------------------------
+:install_impl
+set "DEST=%~1"
+if not defined DEST set "DEST=%PREFIX%"
+if not defined DEST set "DEST=%LOCALAPPDATA%\tap"
+if not defined DEST set "DEST=%USERPROFILE%\tap"
+if not defined DEST (
+    echo [mingw-build] ERROR: cannot determine the install prefix.
+    echo [mingw-build] Pass one explicitly: scripts\mingw-build.bat install D:\dev\tap
+    exit /b 1
+)
+
+REM Normalize separators so the echoed paths never mix styles.
+set "DEST=%DEST:/=\%"
+REM Strip the trailing backslash but keep a drive root (D:) intact.
+REM The naive comparison against a backslash literal never fires: a backslash
+REM right before the closing quote reads as an escaped quote. A sentinel char
+REM keeps the compared slice away from that edge.
+set "CHK=%DEST%#"
+if "%CHK:~-2%"=="\#" if not "%CHK:~-3%"==":\#" set "DEST=%DEST:~0,-1%"
+set "CHK=%DEST%#"
+if "%CHK:~-2%"=="\#" if not "%CHK:~-3%"==":\#" set "DEST=%DEST:~0,-1%"
+
+echo [mingw-build] Installing to %DEST% ...
+
+mkdir "%DEST%\bin" 2>nul
+mkdir "%DEST%\lib" 2>nul
+mkdir "%DEST%\include\tap" 2>nul
+mkdir "%DEST%\share\tap\std" 2>nul
+if not exist "%DEST%\bin" (
+    echo [mingw-build] ERROR: cannot create "%DEST%\bin".
+    echo [mingw-build] Check that the path is writable, or pass another directory:
+    echo [mingw-build]   scripts\mingw-build.bat install D:\dev\tap
+    exit /b 1
+)
+
+copy /y "%TAP_EXE%" "%DEST%\bin\tap.exe" >nul
+if errorlevel 1 goto install_copy_failed
+copy /y "build\tap_runtime.dll" "%DEST%\bin\" >nul
+if errorlevel 1 goto install_copy_failed
+copy /y "build\libtap_runtime.a" "%DEST%\lib\" >nul
+if errorlevel 1 goto install_copy_failed
+copy /y "runtime\include\tap_runtime.h" "%DEST%\include\tap\" >nul
+if errorlevel 1 goto install_copy_failed
+
+xcopy /y /q "std\*.tp" "%DEST%\share\tap\std\" >nul
+if errorlevel 1 goto install_copy_failed
+if exist "std\*.tap" (
+    xcopy /y /q "std\*.tap" "%DEST%\share\tap\std\" >nul
+    if errorlevel 1 goto install_copy_failed
+)
+
+echo [mingw-build] Installed:
+echo   %DEST%\bin\tap.exe
+echo   %DEST%\bin\tap_runtime.dll
+echo   %DEST%\lib\libtap_runtime.a
+echo   %DEST%\include\tap\tap_runtime.h
+echo   %DEST%\share\tap\std\*.tp
+
+REM Self-check: a missing DLL shows up here instead of on the user's first compile.
+"%DEST%\bin\tap.exe" --version >nul 2>nul
+if errorlevel 1 (
+    echo [mingw-build] WARNING: "%DEST%\bin\tap.exe" did not run.
+    echo [mingw-build] This install is not self-contained: libLLVM / ld.lld must be on PATH.
+) else (
+    for /f "usebackq delims=" %%v in (`"%DEST%\bin\tap.exe" --version`) do (
+        echo [mingw-build] Verified: %%v
+    )
+)
+echo [mingw-build] Add "%DEST%\bin" to PATH to run `tap` from any directory.
+exit /b 0
+
+:install_copy_failed
+echo [mingw-build] ERROR: copy into "%DEST%" failed.
+exit /b 1
 
 REM ----------------------------------------------------------------------------
 REM Subroutine: bundle a self-contained folder + zip.
