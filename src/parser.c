@@ -334,6 +334,105 @@ static char *parse_qualified_name(Parser *parser, const char *expected) {
     return name;
 }
 
+// `import a.b.{self, X, Y as Z, *};` 展开成多条 ImportNode，用 base.next 串起来。
+//
+// 展开后仍然写**完整点分路径**（`a.b.X`），让 Module Loader 沿用原来的
+// 「整条路径优先、否则最后一段当成员」两段解析 —— 不在 parser 里复制那套
+// 文件系统判断。
+//
+// `self` 表示模块本身（名称空间导入）。它是普通标识符，所以模块里真有个叫
+// `self` 的成员时拿不到 —— 和 Rust 一样，`self` 在组内保留。
+//
+// 组内允许尾逗号；空组报错（写了个 `{}` 什么都没导入，几乎肯定是手误）。
+static ImportNode *parse_import_group(Parser *parser, char *module_name,
+                                      int line, int column) {
+    consume(parser, TOKEN_LBRACE);
+
+    ImportNode *head = NULL;
+    ImportNode *tail = NULL;
+    int count = 0;
+
+    while (parser->current_token->type != TOKEN_RBRACE) {
+        int is_wildcard = 0;
+        int is_self = 0;
+        char *member_name = NULL;
+        char *full_name = NULL;
+        char *alias = NULL;
+
+        if (parser->current_token->type == TOKEN_MULTIPLY) {
+            consume(parser, TOKEN_MULTIPLY);
+            is_wildcard = 1;
+            full_name = strdup(module_name);
+        } else {
+            if (!is_module_component(parser->current_token)) {
+                free(module_name);
+                parser_error(parser, "expected module member in import group"); // 中文：期望导入组成员
+            }
+            member_name = strdup(parser->current_token->lexeme);
+            is_self = strcmp(member_name, "self") == 0;
+            if (is_self) {
+                full_name = strdup(module_name);
+            } else {
+                full_name = append_name_component(strdup(module_name), member_name);
+            }
+            consume(parser, parser->current_token->type);
+        }
+
+        if (!is_wildcard) {
+            if (is_self) {
+                // 和 `import a.b;` 一致：裸名取模块名最后一段。
+                const char *last_dot = strrchr(module_name, '.');
+                alias = strdup(last_dot ? last_dot + 1 : module_name);
+            } else {
+                alias = strdup(member_name);
+            }
+            if (parser->current_token->type == TOKEN_AS) {
+                consume(parser, TOKEN_AS);
+                if (!is_module_component(parser->current_token)) {
+                    free(alias);
+                    free(full_name);
+                    free(member_name);
+                    free(module_name);
+                    parser_error(parser, "expected module alias"); // 中文：期望模块别名
+                }
+                free(alias);
+                alias = strdup(parser->current_token->lexeme);
+                consume(parser, parser->current_token->type);
+            }
+        }
+
+        ImportNode *node = create_import(full_name, NULL, alias, is_wildcard,
+                                         parser->lexer->filename, line, column);
+        if (tail) {
+            tail->base.next = (ASTNode *)node;
+        } else {
+            head = node;
+        }
+        tail = node;
+        count++;
+
+        free(alias);
+        free(member_name);
+        free(full_name);
+
+        if (parser->current_token->type == TOKEN_COMMA) {
+            consume(parser, TOKEN_COMMA);
+            continue;
+        }
+        break;
+    }
+
+    if (count == 0) {
+        free(module_name);
+        parser_error(parser, "import group needs at least one member"); // 中文：导入组不能为空
+    }
+
+    consume(parser, TOKEN_RBRACE);
+    consume(parser, TOKEN_SEMICOLON);
+    free(module_name);
+    return head;
+}
+
 static ImportNode *parse_import(Parser *parser) {
     consume(parser, TOKEN_IMPORT);
     if (!is_module_component(parser->current_token)) {
@@ -349,9 +448,16 @@ static ImportNode *parse_import(Parser *parser) {
     // `mod.member` 的成员段这里无法和模块路径区分（两者都是标识符），
     // 留给 Module Loader 按文件系统解析：整条路径优先当模块名，找不到时
     // 再把最后一段当成员名（见 module.c 的 build_bindings）。
+    //
+    // 读到 `.{` 说明是分组导入：前面的路径就是模块名，交给 parse_import_group。
     int is_wildcard = 0;
+    int is_group = 0;
     while (parser->current_token->type == TOKEN_DOT) {
         consume(parser, TOKEN_DOT);
+        if (parser->current_token->type == TOKEN_LBRACE) {
+            is_group = 1;
+            break;
+        }
         if (parser->current_token->type == TOKEN_MULTIPLY) {
             consume(parser, TOKEN_MULTIPLY);
             is_wildcard = 1;
@@ -364,6 +470,10 @@ static ImportNode *parse_import(Parser *parser) {
 
         module_name = append_name_component(module_name, parser->current_token->lexeme);
         consume(parser, parser->current_token->type);
+    }
+
+    if (is_group) {
+        return parse_import_group(parser, module_name, line, column);
     }
 
     // 默认裸名取路径最后一段：整模块导入时是模块名，单成员导入时正好是成员名。
@@ -2127,7 +2237,14 @@ ProgramNode *parse_program(Parser *parser) {
         }
 
         if (parser->current_token->type == TOKEN_IMPORT) {
-            add_import(program, parse_import(parser));
+            // 分组导入会展开成多条节点，逐条挂到 program->imports。
+            ImportNode *imports = parse_import(parser);
+            while (imports) {
+                ImportNode *next = (ImportNode *)imports->base.next;
+                imports->base.next = NULL;
+                add_import(program, imports);
+                imports = next;
+            }
         } else if (parser->current_token->type == TOKEN_ENUM) {
             EnumNode *enum_node = parse_enum(parser);
             enum_node->is_pub = is_pub;

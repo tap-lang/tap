@@ -1,0 +1,13 @@
+// 空分组没有任何意义，几乎肯定是手误，直接报错。
+import modules.math.{};
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: import group needs at least one member
+- .exit
+1
+-- */

@@ -1,0 +1,16 @@
+// 分组导入 `import a.b.{self, X}`：self 是模块本身（名称空间），X 是单成员导入，
+// 组内可以照常写 as。展开后等价于四条独立的 import。
+import modules.math.{self, double};
+import modules.math.{self as m, double as twice};
+
+fn main(): i32 {
+    print("%d %d %d %d\n", double(21), twice(21), m.double(3), math.double(10));
+    return 0;
+}
+
+/** -- test
+- .stdout
+42 42 6 20
+- .exit
+0
+-- */

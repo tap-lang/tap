@@ -1,0 +1,14 @@
+// 分组导入里的 `*`：等价于 `import modules.math.*;`，pub 成员按裸名访问。
+import modules.math.{*};
+
+fn main(): i32 {
+    print("%d\n", double(21));
+    return 0;
+}
+
+/** -- test
+- .stdout
+42
+- .exit
+0
+-- */

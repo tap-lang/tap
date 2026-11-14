@@ -14,13 +14,14 @@ import modules.helpers as helper; // 名称空间导入并改名
 import std.math.*;               // 通配导入，pub 成员按裸名访问
 import std.math.square;          // 单成员导入，按裸名 square(...) 访问
 import std.math.square as sq;    // 单成员导入并改名，按 sq(...) 访问
+import std.math.{self, square};  // 分组导入，等价于上面第一条 + 第四条
 
 fn main(): i32 {
     return math.square(5);
 }
 ```
 
-四种写法的详细语义见[通配导入与单成员导入](#通配导入与单成员导入)。
+这几种写法的详细语义见[通配导入与单成员导入](#通配导入与单成员导入)和[分组导入](#分组导入)。
 
 模块路径段允许使用标识符形式的关键字，例如 `import std.match;`。
 模块名中的 `.` 会转换为目录分隔符，并自动追加 `.tp`：
@@ -29,6 +30,31 @@ fn main(): i32 {
 std.math       -> std/math.tp
 modules.helper -> modules/helper.tp
 ```
+
+### 分组导入
+
+同一个模块要同时拿名称空间和若干成员时，用花括号把条目收在一起：
+
+```text
+import std.vec.{self, Vec};
+```
+
+等价于两条独立的导入：
+
+```text
+import std.vec;      // 名称空间，按 vec.new(...) 访问
+import std.vec.Vec;  // 单成员，按裸名 Vec 访问
+```
+
+- `self` 表示模块本身，裸名取模块名最后一段；可以写 `self as v` 改名。
+- 其余标识符是单成员导入，可以 `X as Y` 改名。
+- `*` 是通配导入，可以和 `self` 混用：`import std.math.{self, *};`。
+- 允许尾逗号；空组 `{}` 报错（几乎肯定是手误）。
+- `self` 在组内是保留名：模块里真有个叫 `self` 的成员时，组内拿不到它，
+  得写单成员导入 `import a.b.self;`。
+
+解析上分组导入**不引入新机制**：parser 把它展开成多条 `ImportNode`，后续的名称空间
+绑定、冲突检查、模块去重全部沿用单条导入的逻辑。
 
 ## 可见性：pub
 
@@ -526,6 +552,11 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 
 普通编译、`run`、`-ir` 和 `-run-lli` 都会实际加载模块。项目中的模块回归用例包括：
 
+- [`group_import.tp`](../tests/run-pass/modules/group_import.tp)：分组导入
+  `import a.b.{self, X as Y}`，含 `self` 和组内 `as`
+- [`group_import_wildcard.tp`](../tests/run-pass/modules/group_import_wildcard.tp)：
+  分组里的 `*` 通配
+- [`group_import_empty.tp`](../tests/compile-fail/modules/group_import_empty.tp)：空组诊断
 - [`alias_root.tp`](../tests/run-pass/modules/alias_root.tp)：`TAP_MODULE_PATH` 的根别名
   （`aliasmod=fixtures/aliasroot`），并验证别名独占、不被同名普通根抢先
 - [`alias_not_plain_root.tp`](../tests/compile-fail/modules/alias_not_plain_root.tp)：
