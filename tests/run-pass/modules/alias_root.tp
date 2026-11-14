@@ -1,0 +1,18 @@
+// TAP_MODULE_PATH 的别名条目（`name=path`）：`aliasmod=fixtures/aliasroot` 让
+// `import aliasmod.only` 到 fixtures/aliasroot/ 下找 only.tp。名称空间仍是最后一段。
+//
+// 这里故意让 fixtures/aliasmod/only.tp 也存在（返回 99）：别名必须**独占**，
+// 不能被同名的普通根抢先，否则输出会变成 99。
+import aliasmod.only;
+
+fn main(): i32 {
+    print("%d\n", only.marker());
+    return 0;
+}
+
+/** -- test
+- .stdout
+42
+- .exit
+0
+-- */

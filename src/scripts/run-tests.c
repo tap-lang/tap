@@ -1002,12 +1002,17 @@ int main(int argc, char **argv) {
     char module_path[PATH_MAX * 2];
     char fixtures[PATH_MAX];
     char fixtures_extra[PATH_MAX];
+    char alias_root[PATH_MAX];
     path_join(fixtures, sizeof(fixtures), test_root, "fixtures");
     path_join(fixtures_extra, sizeof(fixtures_extra), test_root, "fixtures-extra");
+    // 第三个条目是别名（`name=path`），覆盖 TAP_MODULE_PATH 的前缀映射。
+    path_join(alias_root, sizeof(alias_root), fixtures, "aliasroot");
 #ifdef _WIN32
-    snprintf(module_path, sizeof(module_path), "%s;%s", fixtures, fixtures_extra);
+    snprintf(module_path, sizeof(module_path), "%s;%s;aliasmod=%s",
+             fixtures, fixtures_extra, alias_root);
 #else
-    snprintf(module_path, sizeof(module_path), "%s:%s", fixtures, fixtures_extra);
+    snprintf(module_path, sizeof(module_path), "%s:%s:aliasmod=%s",
+             fixtures, fixtures_extra, alias_root);
 #endif
     char std_path[PATH_MAX];
     path_join(std_path, sizeof(std_path), project_root, "std");

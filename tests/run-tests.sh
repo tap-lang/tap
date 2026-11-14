@@ -76,8 +76,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
     fi
 fi
 
-# 两个根：第二个用来覆盖 TAP_MODULE_PATH 的多目录支持。
-MODULE_PATH="$TEST_ROOT/fixtures:$TEST_ROOT/fixtures-extra"
+# 两个普通根：第二个用来覆盖 TAP_MODULE_PATH 的多目录支持。
+# 第三个是别名条目（`name=path`）：`aliasmod` 前缀映射到 fixtures/aliasroot。
+MODULE_PATH="$TEST_ROOT/fixtures:$TEST_ROOT/fixtures-extra:aliasmod=$TEST_ROOT/fixtures/aliasroot"
 STD_PATH="$PROJECT_ROOT/std"
 EXE_SUFFIX=
 case $(uname -s) in

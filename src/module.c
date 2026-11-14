@@ -538,7 +538,73 @@ static void free_search_roots(ModuleSearchRoots *roots) {
     roots->capacity = 0;
 }
 
+// 识别 TAP_MODULE_PATH 里的别名条目 `name=path`。
+//
+// 别名是「模块名首段 → 目录」的映射：`test=tests` 让 `import test.lib` 到
+// `tests/` 下找 `lib.tp`。这和 std 的处理同构（都是剥掉前缀、再在专用根上找），
+// 区别只是前缀来自环境变量而不是硬编码在 is_std_module 里。
+//
+// 判据要严：`=` 必须出现在第一段，且左边是合法标识符。POSIX 的目录名允许含
+// `=`（例如 /opt/foo=bar/baz），放宽判据会把普通路径误当成别名。
+static int parse_alias_entry(const char *start, size_t length,
+                             size_t *name_length, const char **path_start) {
+    size_t index = 0;
+    while (index < length && start[index] != '=') {
+        char character = start[index];
+        int valid = character == '_' ||
+                    (character >= 'a' && character <= 'z') ||
+                    (character >= 'A' && character <= 'Z') ||
+                    (index > 0 && character >= '0' && character <= '9');
+        if (!valid) return 0; // 撞上 '/' 或别的字符：这是普通路径
+        index++;
+    }
+    if (index == 0 || index + 1 >= length) return 0; // 缺名字或缺路径
+    *name_length = index;
+    *path_start = start + index + 1;
+    return 1;
+}
+
+// 在 TAP_MODULE_PATH 里找与当前模块名首段匹配的别名条目。
+//
+// 返回 1 表示命中（roots 里已经加入该别名根），调用方应当跳过其余搜索根：
+// 别名是用户显式声明的映射，找不到就是找不到，不该被同名的本地目录静默遮蔽。
+static int add_alias_roots(ModuleSearchRoots *roots, const char *module_path,
+                           const char *module_name) {
+    const char *start = module_path;
+    int matched = 0;
+    for (;;) {
+        const char *end = strchr(start, MODULE_PATH_SEPARATOR);
+        size_t length = end ? (size_t)(end - start) : strlen(start);
+        if (length > 0) {
+            size_t name_length = 0;
+            const char *path_start = NULL;
+            if (parse_alias_entry(start, length, &name_length, &path_start) &&
+                strncmp(module_name, start, name_length) == 0 &&
+                module_name[name_length] == '.' &&
+                module_name[name_length + 1] != '\0') {
+                // 只剥第一段：`test.lib.Case` 变成在别名根下找 lib/Case。
+                // 剩余部分仍是原串的指针偏移，不需要额外内存。
+                size_t path_length = length - name_length - 1;
+                char *root = malloc(path_length + 1);
+                if (!root) {
+                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                    exit(1);
+                }
+                memcpy(root, path_start, path_length);
+                root[path_length] = '\0';
+                add_search_root(roots, root, module_name + name_length + 1);
+                matched = 1;
+            }
+        }
+        if (!end) return matched;
+        start = end + 1;
+    }
+}
+
 // TAP_MODULE_PATH 的每一段都是一个搜索根。
+//
+// `name=path` 形式的段是别名，由 add_alias_roots 单独处理，这里跳过 —— 否则
+// `test=tests` 会让 `import lib` 也命中 tests/lib.tp，同一个文件有了两个名字。
 static void add_module_path_roots(ModuleSearchRoots *roots,
                                   const char *module_path,
                                   const char *module_name) {
@@ -547,14 +613,18 @@ static void add_module_path_roots(ModuleSearchRoots *roots,
         const char *end = strchr(start, MODULE_PATH_SEPARATOR);
         size_t length = end ? (size_t)(end - start) : strlen(start);
         if (length > 0) {
-            char *root = malloc(length + 1);
-            if (!root) {
-                fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
-                exit(1);
+            size_t alias_name_length = 0;
+            const char *alias_path = NULL;
+            if (!parse_alias_entry(start, length, &alias_name_length, &alias_path)) {
+                char *root = malloc(length + 1);
+                if (!root) {
+                    fprintf(stderr, "Out of memory\n"); // 中文：内存分配失败
+                    exit(1);
+                }
+                memcpy(root, start, length);
+                root[length] = '\0';
+                add_search_root(roots, root, module_name);
             }
-            memcpy(root, start, length);
-            root[length] = '\0';
-            add_search_root(roots, root, module_name);
         }
         if (!end) return;
         start = end + 1;
@@ -593,32 +663,45 @@ static char *resolve_module_path(const char *module_name, const char *filename,
         }
     }
 
-    // 2. 导入声明所在文件的目录。
-    add_search_root(&roots, path_directory(filename), module_name);
-
-    // 3. TAP_MODULE_PATH，支持多个根（Unix 冒号分隔，Windows 分号）。
+    // 2. TAP_MODULE_PATH 里的别名条目（`name=path`）。命中就**独占**：别名是
+    // 显式映射，只在该根下找，不再回退到其余根。否则 `test=tests` 会被同名的
+    // 本地 test/ 目录静默遮蔽，别名等于没生效。
+    //
+    // std 例外：`std.` 已经由第 1 步接管，不让别名插手（否则 TAP_MODULE_PATH
+    // 里写 `std=...` 就能悄悄换掉标准库）。
     const char *module_path = getenv("TAP_MODULE_PATH");
-    if (module_path && module_path[0] != '\0') {
-        add_module_path_roots(&roots, module_path, module_name);
+    int alias_matched = 0;
+    if (!is_std_module(module_name) && module_path && module_path[0] != '\0') {
+        alias_matched = add_alias_roots(&roots, module_path, module_name);
     }
 
-    // 4. 包根下的 packages/：依赖装在这里，编译器自己认，不依赖 tapm 设环境变量。
-    char *package_root = package_root_of(filename);
-    if (package_root) {
-        char *dependencies = join_path(package_root, "packages");
-        free(package_root);
-        add_search_root(&roots, dependencies, module_name);
-    }
+    if (!alias_matched) {
+        // 3. 导入声明所在文件的目录。
+        add_search_root(&roots, path_directory(filename), module_name);
 
-    // 5. 当前工作目录。
-    add_search_root(&roots, copy_string("."), module_name);
+        // 4. TAP_MODULE_PATH 的普通根（Unix 冒号分隔，Windows 分号）。
+        if (module_path && module_path[0] != '\0') {
+            add_module_path_roots(&roots, module_path, module_name);
+        }
 
-    // 6. 编译器相邻的源码目录，以及安装前缀下的 share/tap。
-    char *directory = compiler_directory(compiler_path);
-    if (directory) {
-        add_search_root(&roots, join_path(directory, ".."), module_name);
-        add_search_root(&roots, join_path(directory, "../share/tap"), module_name);
-        free(directory);
+        // 5. 包根下的 packages/：依赖装在这里，编译器自己认，不依赖 tapm 设环境变量。
+        char *package_root = package_root_of(filename);
+        if (package_root) {
+            char *dependencies = join_path(package_root, "packages");
+            free(package_root);
+            add_search_root(&roots, dependencies, module_name);
+        }
+
+        // 6. 当前工作目录。
+        add_search_root(&roots, copy_string("."), module_name);
+
+        // 7. 编译器相邻的源码目录，以及安装前缀下的 share/tap。
+        char *directory = compiler_directory(compiler_path);
+        if (directory) {
+            add_search_root(&roots, join_path(directory, ".."), module_name);
+            add_search_root(&roots, join_path(directory, "../share/tap"), module_name);
+            free(directory);
+        }
     }
 
     char *resolved = NULL;

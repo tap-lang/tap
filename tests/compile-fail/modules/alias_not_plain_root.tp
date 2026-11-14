@@ -1,0 +1,15 @@
+// 别名条目只做前缀映射，不当普通根：aliasroot/only.tp 确实存在，但 `import only`
+// 不该命中它 —— 否则同一个文件会有两个名字（only 和 aliasmod.only）。
+import only;
+
+fn main(): i32 {
+    return 0;
+}
+
+/** -- test
+- .stderr
+error: module 'only' not found
+--> tests/compile-fail/modules/alias_not_plain_root.tp:3:8
+- .exit
+1
+-- */

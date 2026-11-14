@@ -331,17 +331,51 @@ error: 'make' in module 'modules.a' is not a type
 
 普通模块按以下顺序查找：
 
-1. 导入声明所在文件的目录
-2. `TAP_MODULE_PATH`（支持多个根，Unix 用 `:` 分隔，Windows 用 `;`）
-3. 包根下的 `packages/`（从导入文件所在目录向上找到含 `package.toml` 的那一层，
+1. `TAP_MODULE_PATH` 里的别名条目（`name=path`，见[根目录别名](#根目录别名)）——
+   首段命中就**独占**，只在这个根下找
+2. 导入声明所在文件的目录
+3. `TAP_MODULE_PATH` 的普通根（支持多个，Unix 用 `:` 分隔，Windows 用 `;`）
+4. 包根下的 `packages/`（从导入文件所在目录向上找到含 `package.toml` 的那一层，
    那一层就是包根；依赖装在这里，编译器自己认，不需要设环境变量）
-4. 当前工作目录
-5. 编译器可执行文件相邻的源码目录
-6. 安装前缀下的 `share/tap`
+5. 当前工作目录
+6. 编译器可执行文件相邻的源码目录
+7. 安装前缀下的 `share/tap`
 
 ```bash
 env TAP_MODULE_PATH=/path/to/project:/another/root ./build/tap run app/main.tp
 ```
+
+### 根目录别名
+
+`TAP_MODULE_PATH` 里的条目可以写成 `name=path`，把模块名的**第一段**映射到任意目录：
+
+```bash
+env TAP_MODULE_PATH="util=libs:test=tests" ./build/tap run app/main.tp
+```
+
+```text
+import util.helper;    ->  libs/helper.tp
+import test.lib;       ->  tests/lib.tp
+import test.lib.Case;  ->  tests/lib.tp 的成员 Case
+```
+
+规则：
+
+- **只剥第一段**。`test.lib.Case` 剥掉 `test` 后在别名根下找 `lib/Case.tp`；整条路径
+  解析不到时照常退一步把最后一段当成员名（单成员导入）。
+- **只认首段**。`import a.test.lib` 里的 `test` 不触发别名，别名不会变成路径中任意位置的
+  替换。
+- **独占**。首段命中别名后只在这个根下找，不回退到其余搜索根。别名是显式映射，
+  找不到就是 `module not found`，不会被同名的本地目录静默遮蔽。
+- **别名条目不当普通根**。`test=tests` 不会让 `import lib` 命中 `tests/lib.tp` —— 否则
+  同一个文件会有两个名字。两者都要就显式写两次：`tests:test=tests`。
+- **单段不命中**。`import test;` 里 `test` 后面没有模块段，报 `module 'test' not found`。
+- **`std` 保留**。`std.` 由标准库专用根接管，别名不能覆盖它。
+- **名称空间不变**。`import test.lib;` 的名称空间仍是最后一段 `lib`，代码里写 `lib.case()`
+  —— `test` 只是路径前缀，不是调用前缀。要改调用前缀用 `as`：`import test.lib as t;`。
+
+目录名本身含 `=` 时（`/opt/foo=bar`）不会被误判成别名：`=` 必须出现在第一段且左边是
+合法标识符。相对路径加 `./` 前缀也能强制按普通根处理（`./a=b`）。
 
 ### 包边界
 
@@ -488,6 +522,10 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 
 普通编译、`run`、`-ir` 和 `-run-lli` 都会实际加载模块。项目中的模块回归用例包括：
 
+- [`alias_root.tp`](../tests/run-pass/modules/alias_root.tp)：`TAP_MODULE_PATH` 的根别名
+  （`aliasmod=fixtures/aliasroot`），并验证别名独占、不被同名普通根抢先
+- [`alias_not_plain_root.tp`](../tests/compile-fail/modules/alias_not_plain_root.tp)：
+  别名条目不当普通根，`import only` 不命中别名根下的文件
 - [`imports.tp`](../tests/run-pass/modules/imports.tp)：默认名称空间、`as`、多别名、递归导入和标准库模块
 - [`wildcard_import.tp`](../tests/run-pass/modules/wildcard_import.tp)：通配导入 `import mod.*`
 - [`member_import.tp`](../tests/run-pass/modules/member_import.tp)：单成员导入 `import mod.member`
@@ -572,8 +610,8 @@ note: rename one of them, or import the module as a namespace and qualify the ca
 
 **其他**
 
-- `TAP_MODULE_PATH` 支持多个根（Unix `:`、Windows `;`）；`TAP_STD_PATH` 仍是单个目录——
-  标准库天然只有一个根。
+- `TAP_MODULE_PATH` 支持多个根（Unix `:`、Windows `;`），每个根还可以是 `name=path` 形式的
+  别名；`TAP_STD_PATH` 仍是单个目录——标准库天然只有一个根，且 `std.` 不能被别名覆盖。
 - 模块文件后缀接受 `.tp` 和 `.tap`。扩展名在**每个搜索根内部**判断：同一个根里先试 `.tp`
   再试 `.tap`，两者都有时以 `.tp` 为准；这个顺序不跨根，高优先级根的 `.tap` 胜过低优先级
   根的 `.tp`。
