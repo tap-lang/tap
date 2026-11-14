@@ -377,6 +377,10 @@ import test.lib.Case;  ->  tests/lib.tp 的成员 Case
 目录名本身含 `=` 时（`/opt/foo=bar`）不会被误判成别名：`=` 必须出现在第一段且左边是
 合法标识符。相对路径加 `./` 前缀也能强制按普通根处理（`./a=b`）。
 
+包的 `package.toml` 可以声明 `[modules]` 段，但**编译器不解析 TOML** —— 由 `tapm` 把它
+翻译成上面的 `name=path` 条目再交给编译器。目前 `tapm test` 会自动带上清单里的别名；
+直接 `tap build` / `tap run` 不经过 tapm，需要自己设 `TAP_MODULE_PATH`。
+
 ### 包边界
 
 **在每一个搜索根里**，解析会试两次：
